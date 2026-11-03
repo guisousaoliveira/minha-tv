@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalFoundationApi::class)
+@file:OptIn(ExperimentalFoundationApi::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
 
 package dev.guisousa.minhatv.ui
 
@@ -38,6 +38,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
@@ -230,6 +233,10 @@ fun <T> MediaRow(
     item: @Composable (Int, T) -> Unit,
 ) {
     LazyRow(
+        // no fim da fileira, ◀ ▶ param ali em vez de pular para o menu do topo
+        modifier = Modifier.focusProperties {
+            exit = { dir -> if (dir == FocusDirection.Left || dir == FocusDirection.Right) FocusRequester.Cancel else FocusRequester.Default }
+        },
         contentPadding = PaddingValues(horizontal = 48.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
