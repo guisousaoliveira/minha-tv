@@ -148,6 +148,10 @@ class PlayerActivity : ComponentActivity() {
     private var reconnecting = false
     /** Se a fonte atual já chegou a tocar (para saber se o erro foi na abertura). */
     private var readyOnce = false
+    /** Alguma fonte deste canal já mostrou imagem (então erro depois é sessão vencida, não canal morto). */
+    private var sourcePlayed = false
+    private var reopenFails = 0
+    private var wraps = 0
     @Volatile private var lastReopenAt = 0L
     private var lastReconnectAt = 0L
     private var limitRetried = false
@@ -205,7 +209,7 @@ class PlayerActivity : ComponentActivity() {
         // ao vivo: reserva pequena (10 s) e começa rápido, como os apps de IPTV; filme: reserva grande
         val live = items[index].type == ContentType.LIVE
         val loadControl = DefaultLoadControl.Builder()
-            .apply { if (live) setBufferDurationsMs(8_000, 8_000, 2_000, 3_000) else setBufferDurationsMs(40_000, 40_000, 1_500, 3_000) }
+            .apply { if (live) setBufferDurationsMs(30_000, 30_000, 2_500, 4_000) else setBufferDurationsMs(40_000, 40_000, 1_500, 3_000) }
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
         val exo = ExoPlayer.Builder(this).setLoadControl(loadControl).build()
@@ -242,6 +246,9 @@ class PlayerActivity : ComponentActivity() {
                         retries = 0
                         limitRetried = false
                         readyOnce = true
+                        sourcePlayed = true
+                        reopenFails = 0
+                        wraps = 0
                         hideLoading()
                         playing?.url?.let { if (it != markedWorking) { markedWorking = it; Repository.markWorking(it) } }
                     }
@@ -381,6 +388,7 @@ class PlayerActivity : ComponentActivity() {
         syncQueue()
         index = ((i % items.size) + items.size) % items.size
         retries = 0
+        sourcePlayed = false; reopenFails = 0; wraps = 0
         val e = current
         Repository.addRecent(e)
         if (isLive) Repository.lastChannelUrl = e.url
@@ -460,11 +468,7 @@ class PlayerActivity : ComponentActivity() {
         val factory = DefaultMediaSourceFactory(base).setLoadErrorHandlingPolicy(retry404)
         val item = MediaItem.Builder()
             .setUri(url)
-            .apply {
-                if (isLive) setLiveConfiguration(
-                    MediaItem.LiveConfiguration.Builder().setTargetOffsetMs(8_000).setMaxOffsetMs(15_000).build(),
-                )
-            }
+
             .setMediaMetadata(MediaMetadata.Builder().setTitle(src.name).build())
             .apply {
                 when {
@@ -497,14 +501,16 @@ class PlayerActivity : ComponentActivity() {
             error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS && (http == null || http in 400..499) ||
             error.errorCode in PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED..PlaybackException.ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED
         android.util.Log.w("MinhaTV", "player: erro ${error.errorCodeName} http=$http morto=$dead")
-        // ao vivo que já estava tocando e de repente dá 404/403/410: é o link com prazo vencido no servidor,
-        // não canal morto. Reabre o mesmo canal do zero (link novo), sem trocar de fonte nem marcar falha.
-        if (isLive && readyOnce && (http in 400..499 || error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS)) {
-            android.util.Log.w("MinhaTV", "player: link do ao vivo venceu (http=$http), reabrindo o mesmo canal")
+        // ao vivo que já estava tocando e dá qualquer erro (404, playlist estranha, rede): é sessão vencida
+        // no servidor, não canal morto. Reabre a MESMA fonte do zero. Só troca de fonte se a reabertura
+        // falhar duas vezes seguidas antes de mostrar imagem.
+        if (isLive && (readyOnce || (sourcePlayed && reopenFails < 2))) {
+            if (!readyOnce) reopenFails++
+            android.util.Log.w("MinhaTV", "player: erro no meio do ao vivo (${error.errorCodeName}), reabrindo a mesma fonte (tentativa ${reopenFails + 1})")
             loadingText.text = "Reconectando…"
             loadingBox.visibility = View.VISIBLE
             val src = playing ?: current
-            handler.postDelayed({ playSource(src, resume = false) }, 300)
+            handler.postDelayed({ playSource(src, resume = false) }, if (reopenFails == 0) 300L else 1500L)
             return
         }
         // a versão HLS não abriu: tenta o link original (.ts) antes de qualquer outra coisa
@@ -523,10 +529,11 @@ class PlayerActivity : ComponentActivity() {
             return
         }
         if (dead) {
-            playing?.let { Repository.markFailed(it.url) }
+            if (!sourcePlayed) playing?.let { Repository.markFailed(it.url) }
             if (nextSource()) return
+            if (isLive) { retryFromStart(); return }
             hideLoading()
-            notice(if (isLive) "Canal fora do ar agora. Aperte OK e escolha outro em Canais." else "Este conteúdo está fora do ar em todas as fontes.", 8000)
+            notice("Este conteúdo está fora do ar em todas as fontes.", 8000)
             return
         }
         if (retries < 2) {
@@ -537,8 +544,26 @@ class PlayerActivity : ComponentActivity() {
             return
         }
         if (nextSource()) return
+        if (isLive) { retryFromStart(); return }
         hideLoading()
-        notice(if (isLive) "Canal fora do ar agora. Aperte OK e escolha outro em Canais." else "Não foi possível abrir este conteúdo.", 8000)
+        notice("Não foi possível abrir este conteúdo.", 8000)
+    }
+
+    /** Todas as fontes do canal falharam: nunca fica tela preta parada. Recomeça da primeira, esperando cada vez mais. */
+    private fun retryFromStart() {
+        wraps++
+        val wait = (5_000L * wraps).coerceAtMost(30_000L)
+        android.util.Log.w("MinhaTV", "player: todas as fontes falharam, tentando de novo em ${wait / 1000}s")
+        loadingText.text = "Canal instável, tentando de novo em ${wait / 1000} s"
+        loadingBox.visibility = View.VISIBLE
+        notice("Aperte OK e escolha outro em Canais, se preferir.", 6000)
+        val mine = index
+        handler.postDelayed({
+            if (index != mine || isFinishing) return@postDelayed
+            sourceIndex = -1
+            reopenFails = 0
+            if (!nextSource()) playSource(current, resume = false)
+        }, wait)
     }
 
     /** Pula para a próxima fonte do mesmo item. Devolve false se não houver mais. */
