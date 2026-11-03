@@ -169,7 +169,7 @@ class PlayerActivity : ComponentActivity() {
         loadingText.text = message
         loadingBox.visibility = View.VISIBLE
         val src = playing ?: current
-        handler.postDelayed({ reconnecting = false; playSource(src, resume = !isLive) }, 500)
+        handler.postDelayed({ reconnecting = false; playSource(src, resume = !isLive) }, 300)
     }
 
     private var items: List<Entry> = emptyList()
@@ -203,7 +203,7 @@ class PlayerActivity : ComponentActivity() {
         // ao vivo: reserva pequena (10 s) e começa rápido, como os apps de IPTV; filme: reserva grande
         val live = items[index].type == ContentType.LIVE
         val loadControl = DefaultLoadControl.Builder()
-            .apply { if (live) setBufferDurationsMs(10_000, 10_000, 1_000, 2_000) else setBufferDurationsMs(40_000, 40_000, 1_500, 3_000) }
+            .apply { if (live) setBufferDurationsMs(15_000, 15_000, 2_500, 4_000) else setBufferDurationsMs(40_000, 40_000, 1_500, 3_000) }
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
         val exo = ExoPlayer.Builder(this).setLoadControl(loadControl).build()
@@ -409,12 +409,10 @@ class PlayerActivity : ComponentActivity() {
         val base = DefaultDataSource.Factory(this, http)
         // ao vivo em .ts direto (não HLS): emenda a conexão quando o servidor fecha
         val progressiveLive = isLive && !path.endsWith(".m3u8") && !path.endsWith(".mpd") && !path.contains("/hls/")
-        val factory = DefaultMediaSourceFactory(
-            if (progressiveLive) LiveDataSource.Factory(base) {
-                lastReopenAt = System.currentTimeMillis()
-                android.util.Log.w("MinhaTV", "player: servidor fechou a conexão, emendando")
-            } else base,
-        )
+        // emendar a conexão no meio do .ts bagunçava o tempo do áudio; agora, se o servidor fechar,
+        // o player recomeça a fonte limpa (reconnect em STATE_ENDED), com uma recarga curta
+        if (progressiveLive) lastReopenAt = 0L
+        val factory = DefaultMediaSourceFactory(base)
         val item = MediaItem.Builder()
             .setUri(src.url)
             .setMediaMetadata(MediaMetadata.Builder().setTitle(src.name).build())
