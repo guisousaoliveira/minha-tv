@@ -21,6 +21,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.focus.FocusRequester
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -130,6 +133,8 @@ fun VodGridScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
         }
     }
     val gridState = rememberLazyGridState()
+    val firstPoster = remember { FocusRequester() }
+    var focusedOnce by rememberSaveable(type, group) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val groups = if (type == ContentType.SERIES) lib.showGroups else lib.movieGroups
     val title = when { genre != null -> genre!!; else -> "Todos ${if (type == ContentType.SERIES) "as séries" else "os filmes"}" }
@@ -167,6 +172,10 @@ fun VodGridScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
             }
             if (items == null) { Loading(); return@Row }
             if (items.isEmpty()) { Message("Nada nesta categoria"); return@Row }
+            // ao abrir a grade, o foco começa na primeira capa (e não fica perdido no menu)
+            LaunchedEffect(items.isNotEmpty()) {
+                if (!focusedOnce) { delay(80); runCatching { firstPoster.requestFocus() }; focusedOnce = true }
+            }
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(POSTER_SAIMO_W),
                 state = gridState,
@@ -175,8 +184,11 @@ fun VodGridScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                itemsIndexed(items, key = { i, it -> "$i:${it.title}" }) { _, it ->
-                    PosterCard(it.title, it.image, onFocused = { header.show(it.title, it.subtitle, it.image) }, onClick = it.open, onLongClick = it.fav)
+                itemsIndexed(items, key = { i, it -> "$i:${it.title}" }) { i, it ->
+                    PosterCard(
+                        it.title, it.image, onFocused = { header.show(it.title, it.subtitle, it.image) }, onClick = it.open, onLongClick = it.fav,
+                        requester = if (i == 0) firstPoster else null,
+                    )
                 }
             }
         }

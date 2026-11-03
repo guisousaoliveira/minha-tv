@@ -532,9 +532,8 @@ class PlayerActivity : ComponentActivity() {
                 sourceIndex = sources.indexOfFirst { it.url == playing?.url }.coerceAtLeast(0)
                 // filme/série: se a versão preferida (ex.: Dublado) está em outra fonte, já abre nela
                 if (!isLive && !readyOnce && sources[0].url != playing?.url) switchSource(0)
-                val barOpen = controls.visible && !controls.panelVisible
-                setupControls()
-                if (barOpen) controls.show(firstButton)
+                // não remonta a barra (tirava o foco de quem estava navegando): só atualiza os textos
+                updateButtons()
             }
         }
     }
@@ -942,7 +941,7 @@ class PlayerActivity : ComponentActivity() {
         val right = mutableListOf<View>()
         right += c.textButton("Legendas") { pickTrack(C.TRACK_TYPE_TEXT) }
         right += c.textButton("Áudio") { pickTrack(C.TRACK_TYPE_AUDIO) }
-        if (!isLive && sources.mapNotNull { Repository.versionOf(it) }.toSet().size > 1) right += c.textButton("Versão") { versionPanel() }
+        if (!isLive) right += c.textButton("Versão") { versionPanel() }
         btnSource = c.textButton("Fonte") { sourceDialog() }.also { right += it }
         right += c.textButton("Tela") { resizePanel() }
         if (!isLive) right += c.textButton("Velocidade") { speedDialog() }
@@ -994,6 +993,8 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private fun showControls(ms: Long = 8000) {
+        // com um painel aberto (ex.: "Continuar de..."), a barra não pode roubar o foco dele
+        if (controls.panelVisible) return
         infoPanel.visibility = View.GONE
         updateButtons()
         val wasVisible = controls.visible
@@ -1063,13 +1064,20 @@ class PlayerActivity : ComponentActivity() {
                 if (!down) controls.hidePanel()
                 return true
             }
+            // o painel é uma lista vertical: ◀ ▶ não deixam o foco sair dele
+            if (code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT) return true
             return super.dispatchKeyEvent(event)
         }
 
         if (controls.visible) {
             // com a barra aberta, as setas andam entre os botões e o OK aperta
             if (code == KeyEvent.KEYCODE_BACK) {
-                if (!down) controls.hide()
+                // fecha a barra e já conta como o primeiro VOLTAR: o segundo sai do vídeo
+                if (!down) {
+                    controls.hide()
+                    lastBackAt = System.currentTimeMillis()
+                    notice("Aperte VOLTAR de novo para sair", 3000)
+                }
                 return true
             }
             if (down) { handler.removeCallbacks(hideControlsTask); handler.postDelayed(hideControlsTask, 8000) }

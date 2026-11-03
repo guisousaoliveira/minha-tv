@@ -283,11 +283,14 @@ fun PosterCard(
     onLongClick: (() -> Unit)? = null,
     onFocused: (() -> Unit)? = null,
     progress: Float? = null,
+    requester: FocusRequester? = null,
 ) {
     Column {
         FocusBox(
             onClick = onClick, onLongClick = onLongClick, onFocused = onFocused,
-            frame = true, focusScale = 1.07f, modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f), focusKey = "p:$title",
+            frame = true, focusScale = 1.07f,
+            modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f).then(if (requester != null) Modifier.focusRequester(requester) else Modifier),
+            focusKey = "p:$title",
         ) {
             Logo(image, Modifier.fillMaxSize(), fallback = "", crop = true)
             if (image.isNullOrBlank()) {

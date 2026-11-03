@@ -20,6 +20,10 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -68,8 +72,16 @@ private fun Backdrop(image: String?) {
 }
 
 @Composable
-private fun BigButton(text: String, onClick: () -> Unit) {
-    FocusBox(onClick = onClick, shape = RoundedCornerShape(6.dp), modifier = Modifier.height(52.dp)) { focused ->
+private fun BigButton(text: String, requester: FocusRequester? = null, onClick: () -> Unit) {
+    // ao abrir a tela, o foco já começa no botão principal (Assistir/Continuar)
+    if (requester != null) {
+        var done by rememberSaveable { mutableStateOf(false) }
+        LaunchedEffect(Unit) { if (!done) { delay(80); runCatching { requester.requestFocus() }; done = true } }
+    }
+    FocusBox(
+        onClick = onClick, shape = RoundedCornerShape(6.dp),
+        modifier = Modifier.height(52.dp).then(if (requester != null) Modifier.focusRequester(requester) else Modifier),
+    ) { focused ->
         Text(
             text, Modifier.align(Alignment.Center).padding(horizontal = 26.dp),
             fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = textOn(focused), maxLines = 1,
@@ -128,7 +140,7 @@ fun MovieDetailScreen(e: Entry, nav: Nav) {
                     "Filme", e.name, e.logo,
                     listOfNotNull(e.group, e.quality, if (e.url.hashCode().toString() in watched) "Visto" else null),
                 ) {
-                    BigButton(if (resume > 0) "Continuar de ${clock(resume)}" else "Assistir") { PlaybackQueue.start(context, listOf(e), 0) }
+                    BigButton(if (resume > 0) "Continuar de ${clock(resume)}" else "Assistir", remember { FocusRequester() }) { PlaybackQueue.start(context, listOf(e), 0) }
                     VersionButton(e, versions.orEmpty())
                     BigButton(if (e.url in favs) "Na Minha lista" else "+ Minha lista") { toggleFav(context, e) }
                 }
@@ -182,7 +194,7 @@ fun SeriesDetailScreen(show: Show) {
                         show.group,
                     ),
                 ) {
-                    BigButton((if (Repository.progress(target.url) != null) "Continuar" else "Assistir") + ep) { play(target) }
+                    BigButton((if (Repository.progress(target.url) != null) "Continuar" else "Assistir") + ep, remember { FocusRequester() }) { play(target) }
                     VersionButton(target, versions)
                     BigButton(if (target.url in favs) "Na Minha lista" else "+ Minha lista") { toggleFav(context, target) }
                 }
