@@ -31,7 +31,9 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8 deixa o Compose bem mais leve na TV (tira checagens de depuração das bibliotecas)
+            isMinifyEnabled = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.getByName("release")
         }
         debug {
@@ -59,6 +61,8 @@ android {
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2024.12.01")
     implementation(composeBom)
+    // instala os perfis prontos do Compose: as telas já abrem compiladas, sem travar nas primeiras vezes
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")

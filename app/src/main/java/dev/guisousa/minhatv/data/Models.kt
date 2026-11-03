@@ -86,7 +86,18 @@ object Normalize {
     private fun base(s: String) = accents.replace(java.text.Normalizer.normalize(s.lowercase(), java.text.Normalizer.Form.NFD), "")
 
     /** Chave para juntar itens iguais: "A&E FHD H.265" e "A&E" viram "ae". */
+    private val nameCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /** Chave para juntar itens iguais (com cache: a tela chama isso muitas vezes por segundo). */
     fun name(s: String): String {
+        nameCache[s]?.let { return it }
+        val v = nameUncached(s)
+        if (nameCache.size > 20_000) nameCache.clear()
+        nameCache[s] = v
+        return v
+    }
+
+    private fun nameUncached(s: String): String {
         val tokens = nonAlnum.split(codec.replace(base(s), " ")).filter { it.isNotEmpty() }
         val kept = tokens.filter { it !in dropTokens }
         return (kept.ifEmpty { tokens }).joinToString("")
