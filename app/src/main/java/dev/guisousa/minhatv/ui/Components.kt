@@ -360,48 +360,49 @@ fun FocusHeader(
     detail: String? = null,
     logo: Boolean = false,
 ) {
-    Row(
-        modifier
-            .fillMaxWidth()
-            .height(if (tall) 210.dp else 110.dp)
-            .background(Brush.horizontalGradient(listOf(Palette.Background, Palette.Background, Color(0xFF1A1A1A))))
-            .padding(start = 48.dp, end = 48.dp, top = 12.dp, bottom = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(40.dp),
-    ) {
-        Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.Bottom) {
-            if (!subtitle.isNullOrBlank()) {
-                Text(
-                    subtitle.uppercase(), fontSize = 12.sp, letterSpacing = 2.sp, fontWeight = FontWeight.SemiBold,
-                    color = Palette.TextDim, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.height(8.dp))
+    val backdrop = tall && !image.isNullOrBlank() && !logo
+    Box(modifier.fillMaxWidth().height(if (tall) 240.dp else 110.dp)) {
+        if (backdrop) {
+            // destaque estilo Prime Video: a capa ocupando a direita, sumindo no preto
+            androidx.compose.animation.Crossfade(image, animationSpec = tween(220), label = "hero", modifier = Modifier.align(Alignment.CenterEnd).fillMaxWidth(0.62f).fillMaxHeight()) { img ->
+                AsyncImage(model = img, contentDescription = null, contentScale = ContentScale.Crop, alignment = Alignment.TopCenter, alpha = 0.6f, modifier = Modifier.fillMaxSize())
             }
-            androidx.compose.animation.AnimatedContent(
-                title ?: "",
-                transitionSpec = { androidx.compose.animation.fadeIn(tween(160)) togetherWith androidx.compose.animation.fadeOut(tween(120)) },
-                label = "title",
-            ) { t ->
-                Text(
-                    t, fontSize = if (tall) 36.sp else 28.sp, fontWeight = FontWeight.Bold, color = Palette.Text,
-                    lineHeight = if (tall) 42.sp else 34.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                )
-            }
-            if (!detail.isNullOrBlank()) {
-                Spacer(Modifier.height(8.dp))
-                Text(detail, fontSize = 15.sp, color = Palette.TextDim, lineHeight = 22.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            }
+            Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0.30f to Palette.Background, 0.62f to Color(0x99000000), 1f to Color.Transparent)))
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.55f to Color.Transparent, 1f to Palette.Background)))
         }
-        if (tall) {
-            Box(Modifier.width(420.dp).fillMaxHeight().clip(RoundedCornerShape(6.dp)).background(Color(0xFF1B1B1B))) {
-                if (!image.isNullOrBlank()) {
-                    if (logo) {
+        Row(
+            Modifier.fillMaxSize().padding(start = 48.dp, end = 48.dp, top = 12.dp, bottom = 14.dp),
+            horizontalArrangement = Arrangement.spacedBy(40.dp),
+        ) {
+            Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.Bottom) {
+                if (!subtitle.isNullOrBlank()) {
+                    Text(
+                        subtitle.uppercase(), fontSize = 12.sp, letterSpacing = 2.sp, fontWeight = FontWeight.SemiBold,
+                        color = Palette.TextDim, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+                androidx.compose.animation.AnimatedContent(
+                    title ?: "",
+                    transitionSpec = { androidx.compose.animation.fadeIn(tween(160)) togetherWith androidx.compose.animation.fadeOut(tween(120)) },
+                    label = "title",
+                ) { t ->
+                    Text(
+                        t, fontSize = if (tall) 38.sp else 28.sp, fontWeight = FontWeight.Bold, color = Palette.Text,
+                        lineHeight = if (tall) 44.sp else 34.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth(if (backdrop) 0.75f else 1f),
+                    )
+                }
+                if (!detail.isNullOrBlank()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(detail, fontSize = 15.sp, color = Palette.TextDim, lineHeight = 22.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            if (tall && !backdrop) {
+                Box(Modifier.width(420.dp).fillMaxHeight().clip(RoundedCornerShape(6.dp)).background(Color(0xFF111111))) {
+                    if (!image.isNullOrBlank()) {
                         // logo de canal: inteira, sem cortar nem esticar
                         AsyncImage(model = image, contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize().padding(36.dp))
-                    } else {
-                        // capa vertical: inteira à direita, com a própria capa ampliada e escurecida atrás
-                        AsyncImage(model = image, contentDescription = null, contentScale = ContentScale.Crop, alpha = 0.25f, modifier = Modifier.fillMaxSize())
-                        AsyncImage(model = image, contentDescription = null, contentScale = ContentScale.Fit, alignment = Alignment.CenterEnd, modifier = Modifier.fillMaxSize())
-                        Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(Color(0xCC000000), Color.Transparent))))
                     }
                 }
             }

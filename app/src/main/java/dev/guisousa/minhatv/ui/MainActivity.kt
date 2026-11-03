@@ -154,6 +154,19 @@ fun AppRoot(onLoaded: () -> Unit) {
     }
 
     BackHandler(enabled = stack.isNotEmpty()) { stack.removeAt(stack.lastIndex) }
+    // nas abas: VOLTAR vai para o Início; no Início, precisa apertar de novo para sair do app
+    var lastBack by remember { mutableStateOf(0L) }
+    BackHandler(enabled = stack.isEmpty()) {
+        val now = System.currentTimeMillis()
+        when {
+            tab != Tab.HOME.ordinal -> { tab = Tab.HOME.ordinal; runCatching { firstTab.requestFocus() } }
+            now - lastBack < 4000 -> (context as? android.app.Activity)?.finish()
+            else -> {
+                lastBack = now
+                Toast.makeText(context, "Aperte VOLTAR de novo para sair", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     val nav = Nav(
         openShow = { stack.add(Detail.OfShow(it)) },
@@ -175,6 +188,7 @@ fun AppRoot(onLoaded: () -> Unit) {
             )
             Spacer(Modifier.width(28.dp))
             Tab.entries.forEachIndexed { i, t ->
+                if (t == Tab.SEARCH || t == Tab.SETTINGS) return@forEachIndexed
                 NavItem(
                     t.title,
                     selected = tab == i,
@@ -184,6 +198,10 @@ fun AppRoot(onLoaded: () -> Unit) {
             }
             Spacer(Modifier.weight(1f))
             StatusText()
+            Spacer(Modifier.width(12.dp))
+            // busca (lupa) e ajustes (engrenagem) como ícones, à direita
+            IconNav(androidx.compose.material.icons.Icons.Filled.Search, "Buscar", selected = Tab.entries[tab] == Tab.SEARCH) { tab = Tab.SEARCH.ordinal; stack.clear() }
+            IconNav(androidx.compose.material.icons.Icons.Filled.Settings, "Ajustes", selected = Tab.entries[tab] == Tab.SETTINGS) { tab = Tab.SETTINGS.ordinal; stack.clear() }
         }
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -215,6 +233,17 @@ fun AppRoot(onLoaded: () -> Unit) {
 }
 
 class Nav(val openShow: (Show) -> Unit, val openMovie: (dev.guisousa.minhatv.data.Entry) -> Unit, val openCategory: (ContentType, String) -> Unit)
+
+@Composable
+private fun IconNav(icon: androidx.compose.ui.graphics.vector.ImageVector, description: String, selected: Boolean, onClick: () -> Unit) {
+    FocusBox(onClick = onClick, focusScale = 1f, background = if (selected) Palette.SurfaceHigh else androidx.compose.ui.graphics.Color.Transparent, shape = RoundedCornerShape(50)) { focused ->
+        androidx.compose.material3.Icon(
+            icon, contentDescription = description,
+            tint = if (focused) Palette.OnFocus else if (selected) Palette.Text else Palette.TextDim,
+            modifier = Modifier.padding(9.dp).size(22.dp),
+        )
+    }
+}
 
 @Composable
 private fun NavItem(title: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {

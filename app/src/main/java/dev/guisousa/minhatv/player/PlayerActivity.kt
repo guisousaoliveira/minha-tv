@@ -1078,7 +1078,7 @@ class PlayerActivity : ComponentActivity() {
                 if (!down) {
                     controls.hide()
                     lastBackAt = System.currentTimeMillis()
-                    notice("Aperte VOLTAR de novo para sair", 3000)
+                    notice("Aperte VOLTAR de novo para sair", 4000)
                 }
                 return true
             }
@@ -1112,9 +1112,9 @@ class PlayerActivity : ComponentActivity() {
                 infoPanel.visibility = View.GONE
                 // igual ao Saimo: precisa apertar VOLTAR duas vezes para sair do vídeo
                 val now = System.currentTimeMillis()
-                if (now - lastBackAt < 3000) { saveResume(); finish(); return true }
+                if (now - lastBackAt < 4000) { saveResume(); finish(); return true }
                 lastBackAt = now
-                notice("Aperte VOLTAR de novo para sair", 3000)
+                notice("Aperte VOLTAR de novo para sair", 4000)
                 return true
             }
         }
