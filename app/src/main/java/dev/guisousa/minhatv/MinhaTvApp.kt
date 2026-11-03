@@ -8,6 +8,7 @@ class MinhaTvApp : Application() {
     override fun onCreate() {
         super.onCreate()
         Repository.init(this)
-        RefreshWorker.schedule(this, Repository.refreshHours)
+        // WorkManager demora para iniciar: agenda fora da thread principal
+        Thread { runCatching { RefreshWorker.schedule(this, Repository.refreshHours) } }.start()
     }
 }

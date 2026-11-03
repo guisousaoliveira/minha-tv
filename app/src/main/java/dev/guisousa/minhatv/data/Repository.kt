@@ -78,10 +78,21 @@ object Repository {
         db = Db(app)
         _favorites.value = prefs.getStringSet("favorites", emptySet())!!.toSet()
         scope.launch {
+            // 1) rápido: listas salvas + resumo das categorias da última vez -> a tela abre na hora
             try {
                 mutex.withLock {
                     _playlists.value = readList(file("playlists.json"), Playlist.serializer())
                     _sources.value = readList(file("sources.json"), Source.serializer())
+                }
+                readLibraryCache()?.let { _library.value = it }
+            } finally {
+                _isLoading.value = false
+            }
+            // 2) em segundo plano: abre o banco, arruma o que precisar e carrega o guia
+            try {
+                val hadCache = _library.value !== Library.EMPTY
+                if (!hadCache) _status.value = "Preparando…"
+                mutex.withLock {
                     // versão 1.0.1 guardava os itens em JSON: apaga e força baixar de novo para o banco
                     val legacy = app.filesDir.listFiles { f -> f.name.startsWith("items_") }.orEmpty()
                     if (legacy.isNotEmpty()) {
@@ -98,12 +109,41 @@ object Repository {
                     }
                     db.deleteExcept(_playlists.value.map { it.id })
                 }
-                rebuild()
+                if (!hadCache || db.wasReset) rebuild() else loadEpg()
+            } catch (e: Exception) {
+                android.util.Log.e("MinhaTV", "init", e)
             } finally {
-                _isLoading.value = false
+                _status.value = null
                 loaded.complete(Unit)
             }
         }
+    }
+
+    @kotlinx.serialization.Serializable
+    private data class LibraryCache(val live: List<GroupInfo>, val movie: List<GroupInfo>, val show: List<GroupInfo>)
+
+    private fun readLibraryCache(): Library? = runCatching {
+        val f = file("library_cache.json")
+        if (!f.exists()) return null
+        val c = f.inputStream().buffered().use { json.decodeFromStream(LibraryCache.serializer(), it) }
+        Library(++version, c.live, c.movie, c.show)
+    }.getOrNull()
+
+    private fun writeLibraryCache(l: Library) = runCatching {
+        val tmp = file("library_cache.json.tmp")
+        tmp.outputStream().buffered().use { json.encodeToStream(LibraryCache.serializer(), LibraryCache(l.liveGroups, l.movieGroups, l.showGroups), it) }
+        tmp.renameTo(file("library_cache.json"))
+    }
+
+    private fun loadEpg() {
+        var epg = EpgData.EMPTY
+        for (p in _playlists.value) {
+            val f = file("epg_${p.id}.json")
+            if (f.exists()) runCatching {
+                f.inputStream().buffered().use { json.decodeFromStream(EpgData.serializer(), it) }
+            }.getOrNull()?.let { epg = epg.merge(it) }
+        }
+        _epg.value = epg
     }
 
     suspend fun awaitLoaded() = loaded.await()
@@ -392,23 +432,17 @@ object Repository {
     }
 
     private suspend fun rebuild() = withContext(Dispatchers.IO) {
-        val lists = _playlists.value
-        var epg = EpgData.EMPTY
-        for (p in lists) {
-            val f = file("epg_${p.id}.json")
-            if (f.exists()) runCatching {
-                f.inputStream().buffered().use { json.decodeFromStream(EpgData.serializer(), it) }
-            }.getOrNull()?.let { epg = epg.merge(it) }
-        }
         val hide = hideAdult
         fun List<GroupInfo>.visible() = Library.sortGroups(if (hide) filterNot { Library.isAdult(it.name) } else this) { it.name }
-        _library.value = Library(
+        val lib = Library(
             version = ++version,
             liveGroups = db.groups(ContentType.LIVE).visible(),
             movieGroups = db.groups(ContentType.MOVIE).visible(),
             showGroups = db.showGroups().visible(),
         )
-        _epg.value = epg
+        _library.value = lib
+        writeLibraryCache(lib)
+        loadEpg()
     }
 
     // ---------- Consultas para as telas (rodam fora da thread principal) ----------

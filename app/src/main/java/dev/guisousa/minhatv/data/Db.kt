@@ -5,6 +5,7 @@ import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 
+@kotlinx.serialization.Serializable
 data class GroupInfo(val name: String, val count: Int)
 
 /** Série (episódios ficam no banco e são lidos ao abrir). */
@@ -95,10 +96,10 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
         writableDatabase.delete("entries", "playlist = ?", arrayOf(playlistId))
     }
 
+    /** Apaga itens de playlists que não existem mais (só olha o índice, é rápido). */
     fun deleteExcept(keep: Collection<String>) {
-        if (keep.isEmpty()) { writableDatabase.delete("entries", null, null); return }
-        val marks = keep.joinToString(",") { "?" }
-        writableDatabase.delete("entries", "playlist NOT IN ($marks)", keep.toTypedArray())
+        val present = readableDatabase.rawQuery("SELECT DISTINCT playlist FROM entries", null).use { c -> c.map { it.getString(0) } }
+        present.filter { it !in keep }.forEach { deletePlaylist(it) }
     }
 
     fun groups(type: ContentType): List<GroupInfo> = readableDatabase.rawQuery(
