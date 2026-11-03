@@ -1,5 +1,7 @@
 package dev.guisousa.minhatv.ui
 
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
