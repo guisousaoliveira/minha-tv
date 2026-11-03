@@ -275,19 +275,25 @@ object Repository {
         scope.launch {
             awaitLoaded()
             val limit = System.currentTimeMillis() - refreshHours * 3_600_000L
-            if (_playlists.value.any { it.lastUpdated < limit } || _sources.value.any { it.lastChecked < limit }) refreshAll()
+            if (_playlists.value.any { it.lastUpdated < limit } || _sources.value.any { it.lastChecked < limit }) refreshAll(onlyStale = true)
         }
     }
 
     private val refreshLock = Mutex()
 
-    suspend fun refreshAll() {
+    /**
+     * Atualiza páginas e playlists. Com [onlyStale], pula as que foram atualizadas há pouco:
+     * se o sistema interromper no meio, a próxima rodada continua de onde parou.
+     */
+    suspend fun refreshAll(onlyStale: Boolean = false) {
         awaitLoaded()
         if (refreshLock.isLocked) return
         refreshLock.withLock {
             try {
-                _sources.value.forEach { scanSource(it) }
-                refreshPlaylists(_playlists.value.map { it.id }, locked = true)
+                val limit = System.currentTimeMillis() - (refreshHours * 3_600_000L - 3_600_000L).coerceAtLeast(3_600_000L)
+                _sources.value.filter { !onlyStale || it.lastChecked < limit }.forEach { scanSource(it) }
+                val ids = _playlists.value.filter { !onlyStale || it.lastUpdated < limit }.map { it.id }
+                if (ids.isNotEmpty()) refreshPlaylists(ids, locked = true)
             } finally {
                 _status.value = null
             }
