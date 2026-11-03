@@ -116,21 +116,36 @@ fun VodGridScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
     var newest by rememberSaveable(type, group) { mutableStateOf(false) }
     var picking by rememberSaveable(type, group) { mutableStateOf(false) }
     val kind = if (type == ContentType.SERIES) "Série" else "Filme"
-    val raw = load(lib.version, type, genre) {
-        if (type == ContentType.SERIES) Repository.shows(genre).take(20_000).mapIndexed { i, s ->
-            GridItem(s.key, s.name, s.logo, "Série · ${s.group}", yearRe.find(s.name)?.value?.toInt() ?: 0, i, { nav.openShow(s) }, null)
-        } else Repository.entries(ContentType.MOVIE, genre, 20_000).mapIndexed { i, e ->
-            GridItem(e.url, e.name, e.logo, "Filme · ${e.group}", yearRe.find(e.name)?.value?.toInt() ?: 0, i, { nav.openMovie(e) }, { toggleFav(context, e) })
+    val groups0 = if (type == ContentType.SERIES) lib.showGroups else lib.movieGroups
+    val size = genre?.let { g -> groups0.firstOrNull { it.name == g }?.count } ?: groups0.sumOf { it.count }
+    // muita coisa (ex.: "Todos", 120 mil filmes): uma letra por vez, direto do banco; senão, tudo de uma vez
+    val paged = size > 2000
+    var letter by rememberSaveable(type, group) { mutableStateOf('A') }
+    val items = load(lib.version, type, genre, newest, if (paged) letter else null) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            val list = if (type == ContentType.SERIES) {
+                val shows = if (paged) Repository.showsPage(genre, if (newest) null else letter) else Repository.shows(genre)
+                shows.mapIndexed { i, s -> GridItem(s.key, s.name, s.logo, "Série · ${s.group}", yearRe.find(s.name)?.value?.toInt() ?: 0, i, { nav.openShow(s) }, null) }
+            } else {
+                val movies = if (paged) Repository.moviesPage(genre, if (newest) null else letter) else Repository.entries(ContentType.MOVIE, genre, 3000)
+                movies.mapIndexed { i, e -> GridItem(e.url, e.name, e.logo, "Filme · ${e.group}", yearRe.find(e.name)?.value?.toInt() ?: 0, i, { nav.openMovie(e) }, { toggleFav(context, e) }) }
+            }
+            // ordena fora da tela principal, calculando a chave uma vez só por item
+            if (newest) list.sortedWith(compareByDescending<GridItem> { it.year }.thenBy { if (paged) it.order else -it.order })
+            else list.map { sortKey(it.title) to it }.sortedBy { it.first }.map { it.second }
         }
     }
-    val items = remember(raw, newest) {
-        raw?.let { l -> if (newest) l.sortedWith(compareByDescending<GridItem> { it.year }.thenByDescending { it.order }) else l.sortedBy { sortKey(it.title) } }
-    }
-    val letters = remember(items, newest) {
-        if (items == null || newest) emptyList() else {
-            val firsts = LinkedHashMap<Char, Int>()
-            items.forEachIndexed { i, it -> firsts.putIfAbsent(initialOf(it.title), i) }
-            firsts.toList()
+    val letters = remember(items, newest, paged) {
+        when {
+            newest -> emptyList()
+            // paginado: as letras trocam a página (índice -1 = escolher a letra)
+            paged -> ("#" + ('A'..'Z').joinToString("")).map { it to -1 }
+            items == null -> emptyList()
+            else -> {
+                val firsts = LinkedHashMap<Char, Int>()
+                items.forEachIndexed { i, it -> firsts.putIfAbsent(initialOf(it.title), i) }
+                firsts.toList()
+            }
         }
     }
     val gridState = rememberLazyGridState()
@@ -143,7 +158,7 @@ fun VodGridScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
     Column(Modifier.fillMaxSize()) {
         FocusHeader(header.title ?: title, header.subtitle ?: (if (isAll) "De A a Z" else kind + "s"), image = header.image, tall = false)
         Row(Modifier.padding(start = 48.dp, end = 48.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(items?.let { "${it.size} títulos" } ?: "Carregando…", fontSize = 15.sp, color = Palette.TextDim, modifier = Modifier.width(130.dp))
+            Text(if (paged) "$size títulos" else items?.let { "${it.size} títulos" } ?: "Carregando…", fontSize = 15.sp, color = Palette.TextDim, modifier = Modifier.width(130.dp))
             TvButton("Gênero: ${genre ?: "Todos"}", selected = picking, onClick = { picking = !picking })
             TvButton("A–Z", selected = !newest, onClick = { newest = false; scope.launch { gridState.scrollToItem(0) } })
             TvButton("Mais novos", selected = newest, onClick = { newest = true; scope.launch { gridState.scrollToItem(0) } })
@@ -158,8 +173,9 @@ fun VodGridScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
                 ) {
                     items(letters) { (c, idx) ->
                         FocusBox(
-                            onClick = { scope.launch { gridState.scrollToItem(idx) } },
-                            onFocused = { scope.launch { gridState.scrollToItem(idx) } },
+                            onClick = { if (idx < 0) { letter = c; scope.launch { gridState.scrollToItem(0) } } else scope.launch { gridState.scrollToItem(idx) } },
+                            onFocused = { if (idx >= 0) scope.launch { gridState.scrollToItem(idx) } },
+                            selected = paged && c == letter,
                             modifier = Modifier.fillMaxWidth().height(30.dp), focusScale = 1f, background = Color.Transparent, shape = RoundedCornerShape(4.dp),
                         ) { focused ->
                             Text(

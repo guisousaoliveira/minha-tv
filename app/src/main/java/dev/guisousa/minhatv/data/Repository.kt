@@ -751,6 +751,18 @@ object Repository {
     /** Filmes/episódios começados e não terminados. */
     fun continueWatching(): List<Entry> = readRecent("recent_vod").filter { getResume(it.url) > 0 }
 
+    /** Página da grade: uma letra (null = os mais novos). */
+    suspend fun moviesPage(group: String?, letter: Char?, limit: Int = 1500): List<Entry> = withContext(Dispatchers.IO) {
+        runCatching {
+            (if (letter == null) db.moviesNewest(group, limit) else db.moviesByLetter(group, letter, limit)).visible().unique()
+        }.getOrDefault(emptyList())
+    }
+
+    suspend fun showsPage(group: String?, letter: Char?, limit: Int = 1500): List<Show> = withContext(Dispatchers.IO) {
+        runCatching { db.showsPage(group, letter, limit).let { l -> if (hideAdult) l.filterNot { Library.isAdult(it.group) } else l } }
+            .getOrDefault(emptyList())
+    }
+
     suspend fun recentMovies(limit: Int = 30): List<Entry> = withContext(Dispatchers.IO) {
         runCatching { db.recent(limit * 3).visible().unique().take(limit) }.getOrDefault(emptyList())
     }

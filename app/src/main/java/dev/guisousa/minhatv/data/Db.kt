@@ -150,6 +150,31 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
         ).use { c -> c.map { Show(it.getString(0), Normalize.displayCached(it.getString(1)).title, it.getString(2), it.getStringOrNull(3), it.getInt(4)) } }
     }
 
+    private fun letterWhere(col: String, letter: Char): Pair<String, Array<String>> =
+        if (letter == '#') "NOT (upper(substr($col, 1, 1)) BETWEEN 'A' AND 'Z')" to emptyArray()
+        else "$col LIKE ?" to arrayOf("$letter%")
+
+    /** Grade "Todos": só os filmes de uma letra (uma página), para não carregar 100 mil itens de uma vez. */
+    fun moviesByLetter(group: String?, letter: Char, limit: Int): List<Entry> {
+        val (lw, la) = letterWhere("COALESCE(title, name)", letter)
+        val (gw, ga) = if (group == null) "" to emptyArray<String>() else " AND grp = ?" to arrayOf(group)
+        return query("type = 1$gw AND $lw ORDER BY COALESCE(title, name) COLLATE NOCASE LIMIT $limit", ga + la)
+    }
+
+    fun moviesNewest(group: String?, limit: Int): List<Entry> =
+        if (group == null) query("type = 1 ORDER BY id DESC LIMIT $limit", emptyArray())
+        else query("type = 1 AND grp = ? ORDER BY id DESC LIMIT $limit", arrayOf(group))
+
+    fun showsPage(group: String?, letter: Char?, limit: Int): List<Show> {
+        val (lw, la) = if (letter == null) "1" to emptyArray<String>() else letterWhere("series", letter)
+        val (gw, ga) = if (group == null) "" to emptyArray<String>() else " AND grp = ?" to arrayOf(group)
+        val order = if (letter == null) "MAX(id) DESC" else "MIN(series) COLLATE NOCASE"
+        return readableDatabase.rawQuery(
+            "SELECT show_key, MIN(series), MIN(grp), MAX(logo), COUNT(*) FROM entries WHERE type = 2$gw AND $lw GROUP BY show_key ORDER BY $order LIMIT $limit",
+            ga + la,
+        ).use { c -> c.map { Show(it.getString(0), Normalize.displayCached(it.getString(1)).title, it.getString(2), it.getStringOrNull(3), it.getInt(4)) } }
+    }
+
     /** Lançamentos: filmes com o ano atual ou o anterior no nome, os adicionados por último primeiro. */
     fun recent(limit: Int): List<Entry> {
         val y = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
