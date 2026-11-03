@@ -289,8 +289,13 @@ fun PosterCard(
             onClick = onClick, onLongClick = onLongClick, onFocused = onFocused,
             frame = true, focusScale = 1.07f, modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f), focusKey = "p:$title",
         ) {
-            Logo(image, Modifier.fillMaxSize(), fallback = title, crop = true)
+            Logo(image, Modifier.fillMaxSize(), fallback = "", crop = true)
             if (image.isNullOrBlank()) {
+                // sem capa: inicial grande, como no Saimo
+                Text(
+                    title.trimStart { !it.isLetterOrDigit() }.take(1).uppercase(), Modifier.align(Alignment.Center),
+                    fontSize = 52.sp, fontWeight = FontWeight.Black, color = Palette.TextFaint,
+                )
                 Text(
                     title, color = Palette.TextDim, fontSize = 13.sp, maxLines = 4, overflow = TextOverflow.Ellipsis,
                     textAlign = TextAlign.Center, modifier = Modifier.align(Alignment.BottomCenter).padding(10.dp),
@@ -393,10 +398,10 @@ fun FocusHeader(
 
 /** Coluna de categorias à esquerda (Ao vivo e grades). "Todos" só aparece se [total] não for gigante. */
 @Composable
-fun GroupColumn(groups: List<GroupInfo>, total: Int, selected: String?, onSelect: (String?) -> Unit) {
+fun GroupColumn(groups: List<GroupInfo>, total: Int, selected: String?, alwaysAll: Boolean = false, onSelect: (String?) -> Unit) {
     val rows = remember(groups, total) {
         val list = groups.map<GroupInfo, Pair<String?, Int>> { it.name to it.count }
-        if (total <= Library.ALL_LIMIT) listOf<Pair<String?, Int>>(null to total) + list else list
+        if (alwaysAll || total <= Library.ALL_LIMIT) listOf<Pair<String?, Int>>(null to total) + list else list
     }
     LazyColumn(
         Modifier.width(290.dp).fillMaxHeight(),

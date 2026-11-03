@@ -54,7 +54,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private val POSTER_W = 150.dp
+private val POSTER_W = 136.dp
 private val CHANNEL_W = 210.dp
 private const val ROW_ITEMS = 25
 
@@ -102,7 +102,7 @@ private fun kindOf(type: ContentType) = when (type) {
 }
 
 /** Estado do cabeçalho que mostra o item focado. */
-private class HeaderState {
+internal class HeaderState {
     var title by mutableStateOf<String?>(null)
     var subtitle by mutableStateOf<String?>(null)
     var image by mutableStateOf<String?>(null)
@@ -252,12 +252,15 @@ fun RowsScreen(lib: Library, type: ContentType, nav: Nav) {
     Column(Modifier.fillMaxSize()) {
         FocusHeader(header.title ?: (if (type == ContentType.SERIES) "Séries" else "Filmes"), header.subtitle ?: "${groups.size} categorias", image = header.image, detail = header.detail, logo = header.isLogo)
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 48.dp)) {
+            // igual ao Saimo: Lançamentos, uma fileira por gênero e no fim "Todos de A a Z"
+            item("releases") { ReleasesRow(lib, type, nav, header) }
             groups.forEach { g ->
                 item(g.name) {
                     if (type == ContentType.SERIES) ShowRow(lib, g.name, g.count, nav, header)
                     else EntryRow(lib, type, g.name, g.count, nav, header)
                 }
             }
+            item("all-az") { AllAzRow(type, groups.sumOf { it.count }, nav) }
         }
     }
 }
@@ -265,6 +268,7 @@ fun RowsScreen(lib: Library, type: ContentType, nav: Nav) {
 /** Grade com tudo de uma categoria ("Ver tudo"). */
 @Composable
 fun CategoryScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
+    if (type != ContentType.LIVE) { VodGridScreen(lib, type, group, nav); return }
     val context = LocalContext.current
     val header = remember(group) { HeaderState() }
     Column(Modifier.fillMaxSize()) {
@@ -461,7 +465,7 @@ fun SearchScreen(lib: Library, nav: Nav) {
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.padding(start = 48.dp, end = 48.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             FocusBox(
-                onClick = { showSearchDialog(context, query) { query = it } },
+                onClick = { showSearchDialog(context, query) { query = it; Repository.addRecentSearch(it) } },
                 modifier = Modifier.width(520.dp), focusScale = 1.01f, shape = RoundedCornerShape(4.dp),
             ) { focused ->
                 Text(
@@ -473,7 +477,15 @@ fun SearchScreen(lib: Library, nav: Nav) {
             }
         }
         if (query.isBlank()) {
-            Message("O que você quer assistir?", "Aperte OK no campo acima e digite parte do nome.")
+            val recent = remember { Repository.recentSearches() }
+            if (recent.isNotEmpty()) {
+                SectionTitle("Buscas recentes")
+                LazyRow(contentPadding = PaddingValues(horizontal = 48.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(recent) { r -> TvButton(r, onClick = { query = r; Repository.addRecentSearch(r) }) }
+                }
+            } else {
+                Message("O que você quer assistir?", "Aperte OK no campo acima e digite parte do nome.")
+            }
             return@Column
         }
         if (results == null) { Message("Carregando resultados para \"$query\"…"); return@Column }

@@ -737,6 +737,23 @@ object Repository {
     /** Filmes/episódios começados e não terminados. */
     fun continueWatching(): List<Entry> = readRecent("recent_vod").filter { getResume(it.url) > 0 }
 
+    suspend fun recentMovies(limit: Int = 30): List<Entry> = withContext(Dispatchers.IO) {
+        runCatching { db.recent(limit * 3).visible().unique().take(limit) }.getOrDefault(emptyList())
+    }
+
+    suspend fun recentShows(limit: Int = 30): List<Show> = withContext(Dispatchers.IO) {
+        runCatching { db.recentShows(limit).let { l -> if (hideAdult) l.filterNot { Library.isAdult(it.group) } else l } }.getOrDefault(emptyList())
+    }
+
+    // ---- Buscas recentes ----
+    fun recentSearches(): List<String> = prefs.getString("recent_searches", "")!!.split('\n').filter { it.isNotBlank() }
+    fun addRecentSearch(q: String) {
+        val t = q.trim()
+        if (t.length < 2) return
+        val list = (listOf(t) + recentSearches().filterNot { it.equals(t, ignoreCase = true) }).take(8)
+        prefs.edit().putString("recent_searches", list.joinToString("\n")).apply()
+    }
+
     suspend fun shows(group: String?): List<Show> = withContext(Dispatchers.IO) {
         runCatching { db.shows(group).let { l -> if (hideAdult) l.filterNot { Library.isAdult(it.group) } else l } }
             .getOrDefault(emptyList())

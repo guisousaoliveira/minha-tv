@@ -149,6 +149,21 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
         ).use { c -> c.map { Show(it.getString(0), Normalize.displayCached(it.getString(1)).title, it.getString(2), it.getStringOrNull(3), it.getInt(4)) } }
     }
 
+    /** Lançamentos: filmes com o ano atual ou o anterior no nome, os adicionados por último primeiro. */
+    fun recent(limit: Int): List<Entry> {
+        val y = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+        return query("type = 1 AND (name LIKE ? OR name LIKE ?) ORDER BY id DESC LIMIT $limit", arrayOf("%$y%", "%${y - 1}%"))
+    }
+
+    /** Séries com o ano atual ou o anterior no nome. */
+    fun recentShows(limit: Int): List<Show> {
+        val y = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+        return readableDatabase.rawQuery(
+            "SELECT show_key, MIN(series), MIN(grp), MAX(logo), COUNT(*) FROM entries WHERE type = 2 AND (series LIKE ? OR series LIKE ?) GROUP BY show_key ORDER BY MAX(id) DESC LIMIT $limit",
+            arrayOf("%$y%", "%${y - 1}%"),
+        ).use { c -> c.map { Show(it.getString(0), Normalize.displayCached(it.getString(1)).title, it.getString(2), it.getStringOrNull(3), it.getInt(4)) } }
+    }
+
     fun episodes(showKey: String): List<Entry> =
         query("show_key = ? ORDER BY COALESCE(season, 0), COALESCE(episode, 99999), id", arrayOf(showKey))
 
