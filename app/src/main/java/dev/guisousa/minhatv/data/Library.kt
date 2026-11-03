@@ -43,7 +43,7 @@ class Library(
         /** "AU: Canal", "[UY] Canal", "|AR| Canal", "ES - Canal" (código de país no começo). */
         private val codePrefix = Regex("""^\s*[\[(|]?\s*(?:$CODES)\s*(?:[\])|:»>·\-]|\s\|)""")
         private val countryWords = Regex(
-            """\b(australia|bolivia|uruguai|uruguay|paraguai|paraguay|argentina|chile|colombia|peru|mexico|venezuela|equador|ecuador|espanha|espana|spain|portugal|italia|italy|franca|france|alemanha|germany|deutsch|deutschland|reino unido|united kingdom|england|estados unidos|united states|canada|india|arabe|arabic|arabia|turquia|turkey|turk|africa|asia|latino|latam|latin|caribe|caribbean|dominicana|dominican|cuba|honduras|guatemala|costa rica|panama|nicaragua|el salvador|coreia|korea|japao|japan|china|russia|polonia|poland|holanda|netherlands|nederland|belgica|belgium|suica|switzerland|grecia|greece|albania|romania|israel|iran|pakistan|filipinas|philippines|nova zelandia|new zealand|irlanda|ireland|ex yu|balkan|balcas|croacia|croatia|servia|serbia|ucrania|ukraine|suecia|sweden|noruega|norway|dinamarca|denmark|finlandia|finland|austria|hungria|hungary|bulgaria|marrocos|morocco|egito|egypt|nigeria|kenya|vietnam|thailand|tailandia|indonesia|malaysia|malasia)\b"""
+            """\b(australia|bolivia|uruguai|uruguay|paraguai|paraguay|argentina|chile|colombia|peru|mexico|venezuela|equador|ecuador|espanha|espana|spain|portugal|italia|italy|franca|france|alemanha|germany|deutsch|deutschland|reino unido|united kingdom|england|estados unidos|united states|canada|india|arabe|arabic|arabia|turquia|turkey|turk|africa|asia|latino|latinos|latina|latinas|latam|latin|hispano|hispanic|usa|eua|new york|miami|los angeles|telemundo|univision|galavision|unimas|caribe|caribbean|uruguaio|uruguaios|argentino|argentinos|mexicano|mexicanos|espanhol|espanhois|frances|franceses|portugues|portugueses|dominicana|dominican|cuba|honduras|guatemala|costa rica|panama|nicaragua|el salvador|coreia|korea|japao|japan|china|russia|polonia|poland|holanda|netherlands|nederland|belgica|belgium|suica|switzerland|grecia|greece|albania|romania|israel|iran|pakistan|filipinas|philippines|nova zelandia|new zealand|irlanda|ireland|ex yu|balkan|balcas|croacia|croatia|servia|serbia|ucrania|ukraine|suecia|sweden|noruega|norway|dinamarca|denmark|finlandia|finland|austria|hungria|hungary|bulgaria|marrocos|morocco|egito|egypt|nigeria|kenya|vietnam|thailand|tailandia|indonesia|malaysia|malasia)\b"""
         )
         /** Esporte e luta ficam mesmo sendo de fora (UFC da Espanha, ESPN gringa...). */
         private val sporty = Regex(
@@ -66,7 +66,7 @@ class Library(
         fun isForeignLiveEntry(e: Entry): Boolean {
             val n = Normalize.search(e.name)
             if (sporty.containsMatchIn(n) || sporty.containsMatchIn(Normalize.search(e.group))) return false
-            if (codePrefix.containsMatchIn(n)) return true
+            if (codePrefix.containsMatchIn(n) || countryWords.containsMatchIn(n)) return true
             val tvg = e.tvgId?.lowercase() ?: return false
             val code = tvgCountry.find(tvg)?.groupValues?.get(1) ?: return false
             return code in foreignCodes
