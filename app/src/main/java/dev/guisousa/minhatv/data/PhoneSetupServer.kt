@@ -89,7 +89,7 @@ class PhoneSetupServer(private val onAdd: (url: String, name: String?, epg: Stri
     companion object {
         private const val FORM = """
             <h1>📺 Minha TV</h1>
-            <p>Cole o link de uma playlist M3U <b>ou</b> de uma página que tenha várias playlists (ex.: um README do GitHub). A TV encontra todas sozinha.</p>
+            <p>Cole o link de uma playlist M3U, de uma página com várias playlists ou de um repositório do GitHub. A TV encontra todas as listas sozinha.</p>
             <form method="post">
               <label>Link</label>
               <input name="url" type="url" placeholder="https://..." required autofocus>

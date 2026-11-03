@@ -17,6 +17,9 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.decodeFromStream
 import kotlinx.serialization.json.encodeToStream
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.BufferedInputStream
@@ -38,6 +41,8 @@ object Repository {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutex = Mutex()
     private val loaded = CompletableDeferred<Unit>()
+    private lateinit var db: Db
+    private var version = 0L
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = false }
 
     private val http: OkHttpClient by lazy {
@@ -70,12 +75,22 @@ object Repository {
         if (::app.isInitialized) return
         app = context.applicationContext
         prefs = app.getSharedPreferences("minhatv", Context.MODE_PRIVATE)
+        db = Db(app)
         _favorites.value = prefs.getStringSet("favorites", emptySet())!!.toSet()
         scope.launch {
             try {
                 mutex.withLock {
                     _playlists.value = readList(file("playlists.json"), Playlist.serializer())
                     _sources.value = readList(file("sources.json"), Source.serializer())
+                    // versão 1.0.1 guardava os itens em JSON: apaga e força baixar de novo para o banco
+                    val legacy = app.filesDir.listFiles { f -> f.name.startsWith("items_") }.orEmpty()
+                    if (legacy.isNotEmpty()) {
+                        legacy.forEach { it.delete() }
+                        _playlists.value = _playlists.value.map { it.copy(lastUpdated = 0) }
+                        _sources.value = _sources.value.map { it.copy(lastChecked = 0) }
+                        savePlaylists(); saveSources()
+                    }
+                    db.deleteExcept(_playlists.value.map { it.id })
                 }
                 rebuild()
             } finally {
@@ -90,7 +105,7 @@ object Repository {
     // ---------- Configurações ----------
 
     var refreshHours: Int
-        get() = prefs.getInt("refresh_hours", 6)
+        get() = prefs.getInt("refresh_hours", 12)
         set(v) { prefs.edit().putInt("refresh_hours", v).apply() }
 
     fun toggleFavorite(url: String): Boolean {
@@ -116,6 +131,11 @@ object Repository {
     var autoplayLast: Boolean
         get() = prefs.getBoolean("autoplay_last", false)
         set(v) { prefs.edit().putBoolean("autoplay_last", v).apply() }
+
+    /** Esconde categorias adultas (ligado por padrão). */
+    var hideAdult: Boolean
+        get() = prefs.getBoolean("hide_adult", true)
+        set(v) { prefs.edit().putBoolean("hide_adult", v).apply(); scope.launch { rebuild() } }
 
     var lastChannelUrl: String?
         get() = prefs.getString("last_channel", null)
@@ -177,8 +197,14 @@ object Repository {
     private suspend fun scanSource(src: Source): List<String> {
         return try {
             _status.value = "Procurando playlists na página…"
-            val text = fetchText(src.url, maxChars = 2_000_000)
-            val links = LinkExtractor.extract(src.url, text)
+            val links = LinkedHashSet<String>()
+            LinkExtractor.githubRepo(src.url)?.let { (owner, repo) ->
+                links += githubPlaylists(owner, repo)
+            }
+            val pageError = runCatching {
+                links += LinkExtractor.extract(src.url, fetchText(src.url, maxChars = 2_000_000))
+            }.exceptionOrNull()
+            if (links.isEmpty() && pageError != null) throw pageError
             val known = _playlists.value.map { it.url }.toSet()
             val fresh = links.filter { it !in known }.map {
                 Playlist(UUID.randomUUID().toString(), LinkExtractor.nameFromUrl(it), it, sourceId = src.id)
@@ -200,12 +226,24 @@ object Repository {
         }
     }
 
+    /** Lista os arquivos .m3u/.m3u8 de um repositório do GitHub (pela API pública). */
+    private fun githubPlaylists(owner: String, repo: String): List<String> = runCatching {
+        val text = fetchText(LinkExtractor.githubTreeApi(owner, repo), maxChars = 5_000_000)
+        Json.parseToJsonElement(text).jsonObject["tree"]!!.jsonArray.mapNotNull { node ->
+            val o = node.jsonObject
+            val path = o["path"]?.jsonPrimitive?.content ?: return@mapNotNull null
+            if (o["type"]?.jsonPrimitive?.content != "blob") return@mapNotNull null
+            val lower = path.lowercase()
+            if (lower.endsWith(".m3u") || lower.endsWith(".m3u8")) LinkExtractor.githubRawFile(owner, repo, path) else null
+        }
+    }.getOrDefault(emptyList())
+
     fun removePlaylist(id: String) {
         scope.launch {
             mutex.withLock {
                 _playlists.value = _playlists.value.filterNot { it.id == id }
                 savePlaylists()
-                file("items_$id.json").delete()
+                db.deletePlaylist(id)
                 file("epg_$id.json").delete()
             }
             rebuild()
@@ -217,7 +255,7 @@ object Repository {
         scope.launch {
             mutex.withLock {
                 val gone = _playlists.value.filter { it.sourceId == id }
-                gone.forEach { file("items_${it.id}.json").delete(); file("epg_${it.id}.json").delete() }
+                gone.forEach { db.deletePlaylist(it.id); file("epg_${it.id}.json").delete() }
                 _playlists.value = _playlists.value.filterNot { it.sourceId == id }
                 _sources.value = _sources.value.filterNot { it.id == id }
                 savePlaylists(); saveSources()
@@ -278,67 +316,110 @@ object Repository {
 
     private suspend fun refreshOne(p: Playlist): Playlist = withContext(Dispatchers.IO) {
         try {
-            val entries: List<Entry>
             var detectedEpg: String? = null
             val head = fetchHead(p.url)
+            val counts: Db.Counts
             if (M3uParser.isHlsStream(head)) {
                 // o link é um único canal (stream HLS), não uma lista
-                entries = listOf(Entry(name = p.name, url = p.url, group = p.name, playlistId = p.id))
+                counts = db.replacePlaylist(p.id) { add -> add(Entry(name = p.name, url = p.url, group = p.name, playlistId = p.id)) }
             } else {
                 if (!M3uParser.isChannelPlaylist(head)) throw IOException("não parece uma playlist M3U")
-                val result = open(p.url) { input ->
-                    input.bufferedReader(Charsets.UTF_8).useLines { M3uParser.parse(it, p.id) }
+                val label = _status.value ?: "Atualizando ${p.name}"
+                counts = open(p.url) { input ->
+                    input.bufferedReader(Charsets.UTF_8).useLines { lines ->
+                        db.replacePlaylist(p.id) { add ->
+                            var n = 0
+                            detectedEpg = M3uParser.parseTo(lines, p.id) { e ->
+                                add(e)
+                                if (++n % 5000 == 0) _status.value = "$label · $n itens"
+                            }
+                        }
+                    }
                 }
-                entries = result.entries
-                detectedEpg = result.epgUrl
             }
-            if (entries.isEmpty()) throw IOException("lista vazia")
-            mutex.withLock { writeList(file("items_${p.id}.json"), Entry.serializer(), entries) }
+            if (counts.live + counts.movie + counts.series == 0) throw IOException("lista vazia")
 
             val epgUrl = p.epgUrl ?: detectedEpg
-            if (epgUrl != null) {
+            if (epgUrl != null && counts.live > 0) {
                 _status.value = "Baixando guia de programação de ${p.name}…"
-                runCatching { downloadEpg(p.id, epgUrl, entries) }
+                runCatching { downloadEpg(p.id, epgUrl) }
             }
             p.copy(
                 lastUpdated = System.currentTimeMillis(),
                 lastError = null,
                 detectedEpgUrl = detectedEpg,
-                liveCount = entries.count { it.type == ContentType.LIVE },
-                movieCount = entries.count { it.type == ContentType.MOVIE },
-                seriesCount = entries.count { it.type == ContentType.SERIES },
+                liveCount = counts.live,
+                movieCount = counts.movie,
+                seriesCount = counts.series,
             )
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             // mantém os canais antigos se a atualização falhar
             p.copy(lastError = e.message ?: e.javaClass.simpleName, lastUpdated = System.currentTimeMillis())
         }
     }
 
-    private fun downloadEpg(id: String, url: String, entries: List<Entry>) {
-        val live = entries.filter { it.type == ContentType.LIVE }
-        if (live.isEmpty()) return
-        val ids = live.mapNotNull { it.tvgId }.toSet()
-        val names = live.map { Normalize.name(it.name) }.filter { it.isNotEmpty() }.toSet()
+    private fun downloadEpg(id: String, url: String) {
+        val (ids, names) = db.liveKeys(id)
         val now = System.currentTimeMillis()
         val data = open(url) { EpgParser.parse(it, ids, names, now - 2 * 3_600_000L, now + 24 * 3_600_000L) }
         file("epg_$id.json").outputStream().buffered().use { json.encodeToStream(EpgData.serializer(), data, it) }
     }
 
-    private suspend fun rebuild() {
+    private suspend fun rebuild() = withContext(Dispatchers.IO) {
         val lists = _playlists.value
-        val all = ArrayList<Entry>()
         var epg = EpgData.EMPTY
-        mutex.withLock {
-            for (p in lists) {
-                all += readList(file("items_${p.id}.json"), Entry.serializer())
-                val f = file("epg_${p.id}.json")
-                if (f.exists()) runCatching {
-                    f.inputStream().buffered().use { json.decodeFromStream(EpgData.serializer(), it) }
-                }.getOrNull()?.let { epg = epg.merge(it) }
-            }
+        for (p in lists) {
+            val f = file("epg_${p.id}.json")
+            if (f.exists()) runCatching {
+                f.inputStream().buffered().use { json.decodeFromStream(EpgData.serializer(), it) }
+            }.getOrNull()?.let { epg = epg.merge(it) }
         }
-        _library.value = Library.build(all)
+        val hide = hideAdult
+        fun List<GroupInfo>.visible() = if (hide) filterNot { Library.isAdult(it.name) } else this
+        _library.value = Library(
+            version = ++version,
+            liveGroups = db.groups(ContentType.LIVE).visible(),
+            movieGroups = db.groups(ContentType.MOVIE).visible(),
+            showGroups = db.showGroups().visible(),
+        )
         _epg.value = epg
+    }
+
+    // ---------- Consultas para as telas (rodam fora da thread principal) ----------
+
+    private fun List<Entry>.visible() = if (hideAdult) filterNot { Library.isAdult(it.group) } else this
+
+    suspend fun entries(type: ContentType, group: String?): List<Entry> = withContext(Dispatchers.IO) {
+        runCatching { db.entries(type, group).visible() }.getOrDefault(emptyList())
+    }
+
+    suspend fun shows(group: String?): List<Show> = withContext(Dispatchers.IO) {
+        runCatching { db.shows(group).let { l -> if (hideAdult) l.filterNot { Library.isAdult(it.group) } else l } }
+            .getOrDefault(emptyList())
+    }
+
+    suspend fun episodes(show: Show): List<Entry> = withContext(Dispatchers.IO) {
+        runCatching { db.episodes(show.key) }.getOrDefault(emptyList())
+    }
+
+    suspend fun search(q: String): Pair<List<Entry>, List<Show>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val (e, s) = db.search(q)
+            e.visible() to (if (hideAdult) s.filterNot { Library.isAdult(it.group) } else s)
+        }.getOrDefault(emptyList<Entry>() to emptyList())
+    }
+
+    suspend fun favoriteEntries(): List<Entry> = withContext(Dispatchers.IO) {
+        runCatching { db.byUrls(_favorites.value) }.getOrDefault(emptyList())
+    }
+
+    /** Último canal assistido + a categoria dele (para trocar de canal com ▲▼). */
+    suspend fun lastChannelQueue(): Pair<List<Entry>, Int>? = withContext(Dispatchers.IO) {
+        val url = lastChannelUrl ?: return@withContext null
+        val e = runCatching { db.firstByUrl(url) }.getOrNull() ?: return@withContext null
+        val list = db.entries(ContentType.LIVE, e.group)
+        val i = list.indexOfFirst { it.url == url }
+        if (i < 0) null else list to i
     }
 
     // ---------- Rede ----------

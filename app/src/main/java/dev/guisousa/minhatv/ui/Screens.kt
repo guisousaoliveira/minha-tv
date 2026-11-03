@@ -41,14 +41,11 @@ import androidx.compose.ui.unit.sp
 import dev.guisousa.minhatv.data.ContentType
 import dev.guisousa.minhatv.data.Entry
 import dev.guisousa.minhatv.data.Library
-import dev.guisousa.minhatv.data.Normalize
 import dev.guisousa.minhatv.data.Repository
 import dev.guisousa.minhatv.data.Show
 import dev.guisousa.minhatv.player.PlaybackQueue
 import dev.guisousa.minhatv.work.RefreshWorker
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -68,16 +65,24 @@ private fun toggleFav(context: android.content.Context, e: Entry) {
 
 // ---------------- Ao vivo ----------------
 
+/** Carrega uma lista do banco sem travar a tela. null = carregando. */
+@Composable
+private fun <T> load(vararg keys: Any?, loader: suspend () -> T): T? {
+    val v by produceState<T?>(null, *keys) { value = null; value = loader() }
+    return v
+}
+
+@Composable
+private fun Loading() = Message("Carregando…")
+
 @Composable
 fun LiveScreen(lib: Library) {
-    if (lib.live.isEmpty()) { Message("Nenhum canal ao vivo", "As playlists adicionadas não têm canais ao vivo."); return }
-    var group by rememberSaveable { mutableStateOf<String?>(null) }
-    val channels = remember(lib, group) {
-        if (group == null) lib.live else lib.liveGroups.firstOrNull { it.first == group }?.second.orEmpty()
-    }
+    if (lib.liveTotal == 0) { Message("Nenhum canal ao vivo", "As playlists adicionadas não têm canais ao vivo (ou ainda estão carregando)."); return }
+    var group by rememberSaveable(lib.version) { mutableStateOf(defaultGroup(lib.liveGroups, lib.liveTotal)) }
+    val channels = load(lib.version, group) { Repository.entries(ContentType.LIVE, group) }
     Row(Modifier.fillMaxSize()) {
-        GroupColumn(lib.liveGroups.map { it.first to it.second.size }, lib.live.size, group) { group = it }
-        ChannelList(channels)
+        GroupColumn(lib.liveGroups, lib.liveTotal, group) { group = it }
+        if (channels == null) Loading() else ChannelList(channels)
     }
 }
 
@@ -131,14 +136,12 @@ fun ChannelList(channels: List<Entry>, modifier: Modifier = Modifier) {
 
 @Composable
 fun MoviesScreen(lib: Library) {
-    if (lib.movies.isEmpty()) { Message("Nenhum filme", "As playlists adicionadas não têm filmes."); return }
-    var group by rememberSaveable { mutableStateOf<String?>(null) }
-    val movies = remember(lib, group) {
-        if (group == null) lib.movies else lib.movieGroups.firstOrNull { it.first == group }?.second.orEmpty()
-    }
+    if (lib.movieTotal == 0) { Message("Nenhum filme", "As playlists adicionadas não têm filmes (ou ainda estão carregando)."); return }
+    var group by rememberSaveable(lib.version) { mutableStateOf(defaultGroup(lib.movieGroups, lib.movieTotal)) }
+    val movies = load(lib.version, group) { Repository.entries(ContentType.MOVIE, group) }
     Row(Modifier.fillMaxSize()) {
-        GroupColumn(lib.movieGroups.map { it.first to it.second.size }, lib.movies.size, group) { group = it }
-        EntryGrid(movies)
+        GroupColumn(lib.movieGroups, lib.movieTotal, group) { group = it }
+        if (movies == null) Loading() else EntryGrid(movies)
     }
 }
 
@@ -162,14 +165,12 @@ fun EntryGrid(items: List<Entry>) {
 
 @Composable
 fun SeriesScreen(lib: Library, onOpen: (Show) -> Unit) {
-    if (lib.shows.isEmpty()) { Message("Nenhuma série", "As playlists adicionadas não têm séries."); return }
-    var group by rememberSaveable { mutableStateOf<String?>(null) }
-    val shows = remember(lib, group) {
-        if (group == null) lib.shows else lib.showGroups.firstOrNull { it.first == group }?.second.orEmpty()
-    }
+    if (lib.showTotal == 0) { Message("Nenhuma série", "As playlists adicionadas não têm séries (ou ainda estão carregando)."); return }
+    var group by rememberSaveable(lib.version) { mutableStateOf(defaultGroup(lib.showGroups, lib.showTotal)) }
+    val shows = load(lib.version, group) { Repository.shows(group) }
     Row(Modifier.fillMaxSize()) {
-        GroupColumn(lib.showGroups.map { it.first to it.second.size }, lib.shows.size, group) { group = it }
-        ShowGrid(shows, onOpen)
+        GroupColumn(lib.showGroups, lib.showTotal, group) { group = it }
+        if (shows == null) Loading() else ShowGrid(shows, onOpen)
     }
 }
 
@@ -183,7 +184,7 @@ fun ShowGrid(shows: List<Show>, onOpen: (Show) -> Unit) {
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         itemsIndexed(shows) { _, s ->
-            PosterCard(s.name, s.logo, subtitle = "${s.episodes.size} episódios", onClick = { onOpen(s) })
+            PosterCard(s.name, s.logo, subtitle = "${s.episodeCount} episódios", onClick = { onOpen(s) })
         }
     }
 }
@@ -191,8 +192,12 @@ fun ShowGrid(shows: List<Show>, onOpen: (Show) -> Unit) {
 @Composable
 fun SeriesDetailScreen(show: Show) {
     val context = LocalContext.current
-    var season by remember(show) { mutableStateOf(show.seasons.first().first) }
-    val episodes = show.seasons.firstOrNull { it.first == season }?.second.orEmpty()
+    val all = load(show.key) { Repository.episodes(show) }
+    if (all == null) { Loading(); return }
+    if (all.isEmpty()) { Message("Nenhum episódio encontrado"); return }
+    val seasons = remember(all) { all.groupBy { it.season ?: 0 }.toSortedMap().toList() }
+    var season by remember(show) { mutableStateOf(seasons.first().first) }
+    val episodes = seasons.firstOrNull { it.first == season }?.second.orEmpty()
     Row(Modifier.fillMaxSize()) {
         Column(Modifier.width(300.dp).padding(start = 24.dp, end = 12.dp)) {
             Logo(show.logo, Modifier.fillMaxWidth().height(200.dp).clip(RoundedCornerShape(10.dp)), fallback = show.name)
@@ -201,7 +206,7 @@ fun SeriesDetailScreen(show: Show) {
             Text("Voltar: botão ⟵ do controle", fontSize = 12.sp, color = Palette.TextDim)
             Spacer(Modifier.height(10.dp))
             LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(show.seasons) { (s, eps) ->
+                items(seasons) { (s, eps) ->
                     FocusBox(onClick = { season = s }, selected = s == season, modifier = Modifier.fillMaxWidth(), focusScale = 1.02f) {
                         Text(
                             (if (s == 0) "Episódios" else "Temporada $s") + "  (${eps.size})",
@@ -234,12 +239,15 @@ fun SeriesDetailScreen(show: Show) {
 @Composable
 fun FavoritesScreen(lib: Library) {
     val favorites by Repository.favorites.collectAsState()
-    val items = remember(lib, favorites) { lib.all.filter { it.url in favorites } }
-    if (items.isEmpty()) {
-        Message("Nenhum favorito ainda", "Segure o botão OK em um canal ou filme para favoritar.\nDurante o vídeo, o botão MENU também favorita.")
-        return
+    val items = load(lib.version, favorites) { Repository.favoriteEntries() }
+    when {
+        items == null -> Loading()
+        items.isEmpty() -> Message(
+            "Nenhum favorito ainda",
+            "Segure o botão OK em um canal ou filme para favoritar.\nDurante o vídeo, o botão MENU também favorita.",
+        )
+        else -> ChannelList(items, Modifier.padding(start = 12.dp))
     }
-    ChannelList(items, Modifier.padding(start = 12.dp))
 }
 
 // ---------------- Buscar ----------------
@@ -248,16 +256,10 @@ fun FavoritesScreen(lib: Library) {
 fun SearchScreen(lib: Library, onOpen: (Show) -> Unit) {
     val context = LocalContext.current
     var query by rememberSaveable { mutableStateOf("") }
-    val results by produceState<Pair<List<Entry>, List<Show>>>(emptyList<Entry>() to emptyList(), lib, query) {
-        val q = Normalize.search(query.trim())
-        value = if (q.isEmpty()) emptyList<Entry>() to emptyList() else withContext(Dispatchers.Default) {
-            val entries = lib.all.asSequence()
-                .filter { it.type != ContentType.SERIES && Normalize.search(it.name).contains(q) }
-                .take(300).toList()
-            val shows = lib.shows.filter { Normalize.search(it.name).contains(q) }.take(100)
-            entries to shows
-        }
-    }
+    val results = load(lib.version, query) {
+        val q = query.trim()
+        if (q.isEmpty()) emptyList<Entry>() to emptyList() else Repository.search(q)
+    } ?: (emptyList<Entry>() to emptyList())
     Column(Modifier.fillMaxSize().padding(horizontal = 24.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             TvButton("🔍  Digitar busca", onClick = { showSearchDialog(context, query) { query = it } })
@@ -278,7 +280,7 @@ fun SearchScreen(lib: Library, onOpen: (Show) -> Unit) {
                         Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
                             Logo(s.logo, Modifier.size(width = 52.dp, height = 72.dp).clip(RoundedCornerShape(6.dp)), fallback = s.name, crop = true)
                             Spacer(Modifier.width(14.dp))
-                            Text("Série · ${s.name}  (${s.episodes.size} episódios)", fontSize = 16.sp, color = Palette.Text)
+                            Text("Série · ${s.name}  (${s.episodeCount} episódios)", fontSize = 16.sp, color = Palette.Text)
                         }
                     }
                 }
@@ -311,6 +313,7 @@ fun SettingsScreen() {
     val status by Repository.status.collectAsState()
     var hours by remember { mutableStateOf(Repository.refreshHours) }
     var autoplay by remember { mutableStateOf(Repository.autoplayLast) }
+    var hideAdult by remember { mutableStateOf(Repository.hideAdult) }
     val address = rememberPhoneSetupServer()
     val dateFmt = remember { DateFormat.getDateFormat(context) }
     val timeFmt = remember { DateFormat.getTimeFormat(context) }
@@ -322,12 +325,20 @@ fun SettingsScreen() {
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         item {
-            Text("Adicionar canais", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Palette.Text)
-            Text(
-                "Pelo celular (mesmo Wi-Fi): abra ${address ?: "(TV sem Wi-Fi)"} no navegador e cole o link.\n" +
-                    "Aceita link de playlist M3U ou de uma página com várias listas (ex.: README do GitHub).",
-                fontSize = 15.sp, color = Palette.TextDim,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (address != null) {
+                    QrCode(address, Modifier.size(150.dp))
+                    Spacer(Modifier.width(20.dp))
+                }
+                Column {
+                    Text("Adicionar canais", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Palette.Text)
+                    Text(
+                        "Aponte a câmera do celular para o QR Code (mesmo Wi-Fi da TV) ou abra ${address ?: "(TV sem Wi-Fi)"}.\n" +
+                            "Aceita link de playlist M3U, de uma página com várias listas ou de um repositório do GitHub.",
+                        fontSize = 15.sp, color = Palette.TextDim,
+                    )
+                }
+            }
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 TvButton("+ Digitar link", onClick = { showAddLinkDialog(context) { u, n, e -> addLink(context, u, n, e) } })
@@ -356,6 +367,12 @@ fun SettingsScreen() {
                 (if (autoplay) "☑" else "☐") + "  Ao abrir o app, já tocar o último canal assistido",
                 selected = autoplay,
                 onClick = { autoplay = !autoplay; Repository.autoplayLast = autoplay },
+            )
+            Spacer(Modifier.height(10.dp))
+            TvButton(
+                (if (hideAdult) "☑" else "☐") + "  Esconder categorias adultas",
+                selected = hideAdult,
+                onClick = { hideAdult = !hideAdult; Repository.hideAdult = hideAdult },
             )
         }
         if (sources.isNotEmpty()) {

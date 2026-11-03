@@ -27,6 +27,29 @@ object LinkExtractor {
         return u
     }
 
+    /** Se o link aponta para um repositório do GitHub (qualquer página dele), devolve (dono, repo). */
+    fun githubRepo(url: String): Pair<String, String>? {
+        val u = url.trim()
+        Regex("""^https?://(?:www\.)?github\.com/([^/?#]+)/([^/?#]+)""").find(u)?.let {
+            val (o, r) = it.destructured
+            if (o in setOf("orgs", "settings", "topics", "search", "marketplace")) return null
+            return o to r.removeSuffix(".git")
+        }
+        Regex("""^https?://raw\.githubusercontent\.com/([^/?#]+)/([^/?#]+)/""").find(u)?.let {
+            val (o, r) = it.destructured
+            return o to r
+        }
+        return null
+    }
+
+    /** Endereço da API do GitHub que lista todos os arquivos do repositório. */
+    fun githubTreeApi(owner: String, repo: String) =
+        "https://api.github.com/repos/$owner/$repo/git/trees/HEAD?recursive=1"
+
+    fun githubRawFile(owner: String, repo: String, path: String): String =
+        "https://raw.githubusercontent.com/$owner/$repo/HEAD/" +
+            path.split('/').joinToString("/") { java.net.URLEncoder.encode(it, "UTF-8").replace("+", "%20") }
+
     fun looksLikePlaylist(url: String): Boolean {
         val l = url.lowercase()
         val path = l.substringBefore('?').substringBefore('#')

@@ -38,6 +38,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -136,20 +137,24 @@ fun Logo(url: String?, modifier: Modifier = Modifier, fallback: String = "", cro
     }
 }
 
-/** Coluna de categorias à esquerda. */
+/** Coluna de categorias à esquerda. "Todos" só aparece se [total] não for gigante. */
 @Composable
 fun GroupColumn(
-    groups: List<Pair<String, Int>>,
+    groups: List<dev.guisousa.minhatv.data.GroupInfo>,
     total: Int,
     selected: String?,
     onSelect: (String?) -> Unit,
 ) {
+    val rows = remember(groups, total) {
+        val list = groups.map<dev.guisousa.minhatv.data.GroupInfo, Pair<String?, Int>> { it.name to it.count }
+        if (total <= dev.guisousa.minhatv.data.Library.ALL_LIMIT) listOf<Pair<String?, Int>>(null to total) + list else list
+    }
     LazyColumn(
         Modifier.width(280.dp).fillMaxHeight(),
         contentPadding = PaddingValues(start = 24.dp, end = 12.dp, top = 8.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        itemsIndexed(listOf<Pair<String?, Int>>(null to total) + groups) { _, (g, count) ->
+        itemsIndexed(rows) { _, (g, count) ->
             FocusBox(onClick = { onSelect(g) }, selected = selected == g, modifier = Modifier.fillMaxWidth(), focusScale = 1.02f) {
                 Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(
@@ -165,6 +170,27 @@ fun GroupColumn(
                 }
             }
         }
+    }
+}
+
+/** Categoria inicial: "Todos" quando a lista é pequena, senão a primeira categoria. */
+fun defaultGroup(groups: List<dev.guisousa.minhatv.data.GroupInfo>, total: Int): String? =
+    if (total <= dev.guisousa.minhatv.data.Library.ALL_LIMIT) null else groups.firstOrNull()?.name
+
+/** QR Code desenhado com ZXing. */
+@Composable
+fun QrCode(text: String, modifier: Modifier = Modifier) {
+    val bitmap = remember(text) {
+        runCatching {
+            val size = 512
+            val matrix = com.google.zxing.qrcode.QRCodeWriter()
+                .encode(text, com.google.zxing.BarcodeFormat.QR_CODE, size, size, mapOf(com.google.zxing.EncodeHintType.MARGIN to 1))
+            val pixels = IntArray(size * size) { i -> if (matrix.get(i % size, i / size)) 0xFF000000.toInt() else 0xFFFFFFFF.toInt() }
+            android.graphics.Bitmap.createBitmap(pixels, size, size, android.graphics.Bitmap.Config.ARGB_8888).asImageBitmap()
+        }.getOrNull()
+    }
+    if (bitmap != null) {
+        androidx.compose.foundation.Image(bitmap, contentDescription = "QR Code", modifier = modifier.clip(RoundedCornerShape(8.dp)))
     }
 }
 

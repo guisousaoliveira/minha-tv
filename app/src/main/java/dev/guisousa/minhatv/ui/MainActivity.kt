@@ -5,6 +5,8 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,6 +15,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
@@ -61,10 +65,10 @@ class MainActivity : ComponentActivity() {
         if (autoplayDone) return
         autoplayDone = true
         if (!Repository.autoplayLast) return
-        val url = Repository.lastChannelUrl ?: return
-        val live = Repository.library.value.live
-        val i = live.indexOfFirst { it.url == url }
-        if (i >= 0) PlaybackQueue.start(this, live, i)
+        lifecycleScope.launch {
+            val (list, i) = Repository.lastChannelQueue() ?: return@launch
+            PlaybackQueue.start(this@MainActivity, list, i)
+        }
     }
 }
 
@@ -155,9 +159,17 @@ fun Welcome(onTyped: (String, String?, String?) -> Unit) {
     val address = rememberPhoneSetupServer()
     Message(
         "Bem-vindo! Vamos adicionar os canais.",
-        "No celular (no mesmo Wi-Fi), abra o navegador e digite:\n\n${address ?: "(conecte a TV ao Wi-Fi)"}\n\n" +
-            "Cole lá o link da playlist M3U ou de uma página com várias listas.\nA TV recebe na hora.",
+        "Aponte a câmera do celular para o QR Code (o celular precisa estar no mesmo Wi-Fi da TV)\n" +
+            "e cole o link da playlist, da página ou do repositório do GitHub. A TV recebe na hora.",
     ) {
+        if (address != null) {
+            QrCode(address, Modifier.size(220.dp))
+            Spacer(Modifier.height(10.dp))
+            Text(address, fontSize = 16.sp, color = Palette.TextDim)
+        } else {
+            Text("(conecte a TV ao Wi-Fi para usar o QR Code)", color = Palette.Error)
+        }
+        Spacer(Modifier.height(20.dp))
         TvButton("Ou digitar o link aqui com o controle", onClick = { showAddLinkDialog(context, onTyped) })
     }
 }

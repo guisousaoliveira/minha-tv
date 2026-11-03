@@ -29,8 +29,14 @@ object M3uParser {
             head.contains("#EXT-X-MEDIA-SEQUENCE")
 
     fun parse(lines: Sequence<String>, playlistId: String = ""): Result {
-        var epg: String? = null
         val out = ArrayList<Entry>(1024)
+        val epg = parseTo(lines, playlistId) { out += it }
+        return Result(out, epg)
+    }
+
+    /** Versão em fluxo: entrega cada item para [sink] sem guardar a lista inteira na memória. Devolve a URL do EPG. */
+    fun parseTo(lines: Sequence<String>, playlistId: String = "", sink: (Entry) -> Unit): String? {
+        var epg: String? = null
         var info: Info? = null
         var extGroup: String? = null
         var ua: String? = null
@@ -93,7 +99,7 @@ object M3uParser {
                 val (s, se, ep) = seriesInfo(name)
                 seriesName = s; season = se; episode = ep
             }
-            out += Entry(
+            sink(Entry(
                 name = name,
                 url = url,
                 group = group,
@@ -106,11 +112,11 @@ object M3uParser {
                 season = season,
                 episode = episode,
                 playlistId = playlistId,
-            )
+            ))
             info = null; extGroup = null; ua = null; ref = null
         }
         val epgUrl = epg?.split(',')?.map { it.trim() }?.firstOrNull { it.startsWith("http") }
-        return Result(out, epgUrl)
+        return epgUrl
     }
 
     fun classify(name: String, group: String, url: String, hint: String? = null): ContentType {

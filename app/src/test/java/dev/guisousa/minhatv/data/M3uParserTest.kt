@@ -29,6 +29,9 @@ class M3uParserTest {
         val r = M3uParser.parse(sample.lineSequence(), "p1")
         assertEquals("http://epg.example/guide.xml.gz", r.epgUrl)
         assertEquals(5, r.entries.size)
+        assertEquals(ContentType.LIVE, M3uParser.classify("9-1-1: 01", "24HRS =  SERIADOS", "http://h/1/2/3.ts"))
+        assertEquals(ContentType.LIVE, M3uParser.classify("A&E", "CANAIS: FILMES E SÉRIES ✨", "http://h/1/2/3.ts"))
+        assertEquals(ContentType.MOVIE, M3uParser.classify("A Casa", "FILMES | Lançamentos", "http://h/movie/a/b/1.mp4"))
 
         val live = r.entries[0]
         assertEquals("Canal 1 HD", live.name)
@@ -91,6 +94,12 @@ class M3uParserTest {
             links,
         )
         assertEquals("https://raw.githubusercontent.com/u/r/HEAD/README.md", LinkExtractor.toRaw("https://github.com/u/r"))
+        assertEquals("Ramys" to "Iptv-Brasil-2026", LinkExtractor.githubRepo("https://github.com/Ramys/Iptv-Brasil-2026/blob/master/README.md"))
+        assertEquals("u" to "r", LinkExtractor.githubRepo("https://raw.githubusercontent.com/u/r/HEAD/README.md"))
+        assertEquals(
+            "https://raw.githubusercontent.com/u/r/HEAD/listas/Filmes%20e%20S%C3%A9ries.m3u8",
+            LinkExtractor.githubRawFile("u", "r", "listas/Filmes e Séries.m3u8"),
+        )
         assertEquals("Canais Abertos", LinkExtractor.nameFromUrl("https://h/x/Canais%20Abertos.m3u"))
     }
 }
