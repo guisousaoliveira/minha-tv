@@ -589,6 +589,10 @@ object Repository {
         val hide = hideAdult
         fun List<GroupInfo>.visible() = Library.sortGroups(if (hide) filterNot { Library.isAdult(it.name) } else this) { it.name }
         val noForeign = hideForeign
+        runCatching {
+            val t0 = System.currentTimeMillis()
+            if (db.refreshShowSummary()) android.util.Log.i("MinhaTV", "resumo de séries refeito em ${System.currentTimeMillis() - t0} ms")
+        }.onFailure { android.util.Log.w("MinhaTV", "resumo de séries falhou", it) }
         val lib = Library(
             version = ++version,
             liveGroups = liveGroups(noForeign).visible(),
@@ -666,7 +670,7 @@ object Repository {
         val ck = "e|$type|$group|$limit"
         @Suppress("UNCHECKED_CAST")
         if (limit <= 50) (rowCache[ck] as? List<Entry>)?.let { return it }
-        return entriesUncached(type, group, limit).also { if (limit <= 50 && it.isNotEmpty()) rowCache[ck] = it }
+        return withContext(kotlinx.coroutines.NonCancellable) { entriesUncached(type, group, limit) }.also { if (limit <= 50 && it.isNotEmpty()) rowCache[ck] = it }
     }
 
     private suspend fun entriesUncached(type: ContentType, group: String?, limit: Int): List<Entry> = withContext(Dispatchers.IO) {
@@ -821,7 +825,7 @@ object Repository {
         val ck = "s|$group|$limit"
         @Suppress("UNCHECKED_CAST")
         if (limit <= 50) (rowCache[ck] as? List<Show>)?.let { return it }
-        return showsUncached(group, limit).also { if (limit <= 50 && it.isNotEmpty()) rowCache[ck] = it }
+        return withContext(kotlinx.coroutines.NonCancellable) { showsUncached(group, limit) }.also { if (limit <= 50 && it.isNotEmpty()) rowCache[ck] = it }
     }
 
     private suspend fun showsUncached(group: String?, limit: Int): List<Show> = withContext(Dispatchers.IO) {

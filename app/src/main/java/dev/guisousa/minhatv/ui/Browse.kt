@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+
 package dev.guisousa.minhatv.ui
 
 import androidx.compose.foundation.layout.Arrangement
@@ -23,6 +25,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.foundation.focusGroup
 import kotlinx.coroutines.delay
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -54,6 +59,9 @@ private val yearRe = Regex("""\b(19|20)\d{2}\b""")
 
 private fun sortKey(s: String): String =
     java.text.Normalizer.normalize(s.lowercase(), java.text.Normalizer.Form.NFD).replace(Regex("\\p{M}+"), "").trimStart { !it.isLetterOrDigit() }
+
+/** Chave para juntar o mesmo filme repetido: sem etiquetas (FHD, [L], Dublado), sem ano, sem acento. */
+private fun dupKey(s: String): String = dev.guisousa.minhatv.data.Normalize.name(yearRe.replace(dev.guisousa.minhatv.data.Normalize.displayCached(s).title, " "))
 
 private fun initialOf(s: String): Char {
     val c = sortKey(s).firstOrNull() ?: '#'
@@ -125,17 +133,25 @@ fun VodGridScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
             val list = if (type == ContentType.SERIES) {
                 val shows = if (paged) Repository.showsPage(genre, if (newest) null else letter) else Repository.shows(genre)
-                shows.mapIndexed { i, s -> GridItem(s.key, s.name, s.logo, "Série · ${s.group}", yearRe.find(s.name)?.value?.toInt() ?: 0, i, { nav.openShow(s) }, null) }
+                shows.mapIndexed { i, s -> GridItem(s.key, s.name, s.logo?.ifBlank { null }, "Série · ${s.group}", yearRe.find(s.name)?.value?.toInt() ?: 0, i, { nav.openShow(s) }, null) }
             } else {
                 val movies = if (paged) Repository.moviesPage(genre, if (newest) null else letter) else Repository.entries(ContentType.MOVIE, genre, 3000)
-                movies.mapIndexed { i, e -> GridItem(e.url, e.name, e.logo, "Filme · ${e.group}", yearRe.find(e.name)?.value?.toInt() ?: 0, i, { nav.openMovie(e) }, { toggleFav(context, e) }) }
+                movies.mapIndexed { i, e -> GridItem(e.url, e.name, e.logo?.ifBlank { null }, "Filme · ${e.group}", yearRe.find(e.name)?.value?.toInt() ?: 0, i, { nav.openMovie(e) }, { toggleFav(context, e) }) }
             }
             // ordena fora da tela principal, calculando a chave uma vez só por item
             if (newest) list.sortedWith(compareByDescending<GridItem> { it.year }.thenBy { if (paged) it.order else -it.order })
             else list.map { sortKey(it.title) to it }.sortedBy { it.first }.map { it.second }
         }.let { l ->
             // o mesmo título repetido (dublado e legendado, outra qualidade): um cartão só, as versões ficam nos detalhes
-            l.distinctBy { sortKey(it.title) + "|" + it.year }
+            // sem ano junta com o que tem ano; anos diferentes (refilmagem) ficam separados
+            val seen = HashMap<String, MutableSet<Int>>()
+            l.filter { it.title.isNotBlank() }.filter { item ->
+                val k = dupKey(item.title).ifEmpty { sortKey(item.title) }
+                val ys = seen[k]
+                val keep = ys == null || (item.year != 0 && item.year !in ys && ys.any { it != 0 })
+                seen.getOrPut(k) { HashSet() } += item.year
+                keep
+            }
         }
     }
     val letters = remember(items, newest, paged) {
@@ -152,6 +168,11 @@ fun VodGridScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
         }
     }
     val gridState = rememberLazyGridState()
+    // ◀ da grade cai na letra em que você está (e não na letra mais próxima na tela)
+    val letterRequesters = remember { HashMap<Char, FocusRequester>() }
+    val shownLetters = remember { HashSet<Char>() }
+    var gridLetter by remember { mutableStateOf('A') }
+    val currentLetter = if (paged && !newest) letter else gridLetter
     val firstPoster = remember { FocusRequester() }
     var focusedOnce by rememberSaveable(type, group) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -170,16 +191,19 @@ fun VodGridScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
             when {
                 picking -> GroupColumn(groups, groups.sumOf { it.count }, genre, alwaysAll = true) { g -> genre = g; picking = false }
                 letters.isNotEmpty() -> LazyColumn(
-                    Modifier.width(56.dp).fillMaxHeight().padding(start = 12.dp),
+                    Modifier.width(56.dp).fillMaxHeight().padding(start = 12.dp)
+                        .focusProperties { enter = { if (currentLetter in shownLetters) letterRequesters[currentLetter] ?: FocusRequester.Default else FocusRequester.Default } }
+                        .focusGroup(),
                     contentPadding = PaddingValues(top = 8.dp, bottom = 32.dp),
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
                     items(letters) { (c, idx) ->
+                        androidx.compose.runtime.DisposableEffect(c) { shownLetters += c; onDispose { shownLetters -= c } }
                         FocusBox(
                             onClick = { if (idx < 0) { letter = c; header.title = null; header.subtitle = null; header.image = null; scope.launch { gridState.scrollToItem(0) } } else scope.launch { gridState.scrollToItem(idx) } },
                             onFocused = { if (idx >= 0) scope.launch { gridState.scrollToItem(idx) } },
                             selected = paged && c == letter,
-                            modifier = Modifier.fillMaxWidth().height(30.dp), focusScale = 1f, background = Color.Transparent, shape = RoundedCornerShape(4.dp),
+                            modifier = Modifier.fillMaxWidth().height(30.dp).focusRequester(letterRequesters.getOrPut(c) { FocusRequester() }), focusScale = 1f, background = Color.Transparent, shape = RoundedCornerShape(4.dp),
                         ) { focused ->
                             Text(
                                 c.toString(), Modifier.align(Alignment.Center), textAlign = TextAlign.Center,
@@ -206,7 +230,7 @@ fun VodGridScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
             ) {
                 itemsIndexed(items, key = { i, it -> "$i:${it.title}" }) { i, it ->
                     PosterCard(
-                        it.title, it.image, key = "grid:${it.id}", tmdbTitle = if (type == ContentType.SERIES) it.title else null, tv = true, onFocused = { header.show(it.title, it.subtitle, it.image) }, onClick = it.open, onLongClick = it.fav,
+                        it.title, it.image, key = "grid:${it.id}", tmdbTitle = if (type == ContentType.SERIES) it.title else null, tv = true, onFocused = { header.show(it.title, it.subtitle, it.image); gridLetter = initialOf(it.title) }, onClick = it.open, onLongClick = it.fav,
                         requester = if (i == 0) firstPoster else null,
                     )
                 }

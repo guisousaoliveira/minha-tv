@@ -46,6 +46,11 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
                 checked INTEGER NOT NULL, ms INTEGER)"""
         )
         db.execSQL("CREATE TABLE IF NOT EXISTS tmdb(k TEXT PRIMARY KEY, poster TEXT, backdrop TEXT, overview TEXT, ts INTEGER NOT NULL)")
+        // resumo das séries (uma linha por série), refeito só quando as listas mudam: as fileiras leem daqui na hora
+        db.execSQL("CREATE TABLE IF NOT EXISTS show_info(show_key TEXT PRIMARY KEY, series TEXT, grp TEXT, logo TEXT, eps INTEGER, min_id INTEGER, max_id INTEGER)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS show_grp(show_key TEXT NOT NULL, grp TEXT NOT NULL, min_id INTEGER, max_id INTEGER)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_show_grp ON show_grp(grp, min_id)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT)")
     }
 
     fun tmdbGet(k: String): Array<String?>? = readableDatabase.rawQuery("SELECT poster, backdrop, overview, ts FROM tmdb WHERE k = ?", arrayOf(k)).use { c ->
@@ -148,7 +153,9 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
         }
     }
 
-    fun showGroups(): List<GroupInfo> = readableDatabase.rawQuery(
+    fun showGroups(): List<GroupInfo> = if (summaryReady) readableDatabase.rawQuery(
+        "SELECT grp, COUNT(*) FROM show_grp GROUP BY grp ORDER BY MIN(min_id)", null,
+    ).use { c -> c.map { GroupInfo(it.getString(0), it.getInt(1)) } } else readableDatabase.rawQuery(
         "SELECT grp, COUNT(DISTINCT show_key) FROM entries WHERE type = 2 GROUP BY grp ORDER BY MIN(id)", null,
     ).use { c -> c.map { GroupInfo(it.getString(0), it.getInt(1)) } }
 
@@ -164,6 +171,13 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
      */
     private fun showsByKeys(keys: List<String>): List<Show> {
         if (keys.isEmpty()) return emptyList()
+        if (summaryReady) {
+            val info = HashMap<String, Show>()
+            keys.chunked(400).forEach { chunk ->
+                summaryShows("SELECT $infoCols FROM show_info i WHERE i.show_key IN (${chunk.joinToString(",") { "?" }})", chunk.toTypedArray()).forEach { info[it.key] = it }
+            }
+            return keys.mapNotNull { info[it] }
+        }
         val info = HashMap<String, Show>()
         keys.chunked(400).forEach { chunk ->
             val marks = chunk.joinToString(",") { "?" }
@@ -181,9 +195,62 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
     }
 
     private fun keys(sql: String, args: Array<String>): List<String> =
-        readableDatabase.rawQuery(sql, args).use { c -> c.map { it.getString(0) } }
+        readableDatabase.rawQuery(sql, args).use { c -> c.map { it.getString(0) } }.filterNotNull()
+
+    /** true quando o resumo das séries bate com o que está no banco (senão as consultas antigas são usadas). */
+    @Volatile var summaryReady = false
+        private set
+
+    /**
+     * Refaz o resumo das séries se as listas mudaram (3 varreduras do banco, uma vez por importação).
+     * Depois disso cada fileira de séries é uma consulta pequena, em vez de agrupar dezenas de milhares de episódios.
+     */
+    fun refreshShowSummary(): Boolean {
+        val sig = readableDatabase.rawQuery("SELECT COUNT(*), MAX(id) FROM entries WHERE type = 2", null).use { c -> c.moveToFirst(); "${c.getLong(0)}:${c.getLong(1)}" }
+        val old = readableDatabase.rawQuery("SELECT v FROM meta WHERE k = 'show_sig'", null).use { c -> if (c.moveToFirst()) c.getString(0) else null }
+        if (old == sig) { summaryReady = true; return false }
+        summaryReady = false
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            db.execSQL("DELETE FROM show_info")
+            db.execSQL("DELETE FROM show_grp")
+            db.execSQL("INSERT INTO show_grp SELECT show_key, grp, MIN(id), MAX(id) FROM entries WHERE +type = 2 AND show_key IS NOT NULL GROUP BY show_key, grp")
+            db.execSQL(
+                "INSERT INTO show_info(show_key, series, grp, eps, min_id, max_id) SELECT show_key, MIN(series), MIN(grp), " +
+                    "COUNT(DISTINCT CASE WHEN episode IS NULL THEN 'u' || id ELSE COALESCE(season, 0) || 'x' || episode END), MIN(id), MAX(id) " +
+                    "FROM entries WHERE +type = 2 AND show_key IS NOT NULL GROUP BY show_key"
+            )
+            // capa = a imagem que mais se repete entre os episódios (as outras costumam ser quadros do episódio)
+            val upd = db.compileStatement("UPDATE show_info SET logo = ? WHERE show_key = ?")
+            var key: String? = null; var best: String? = null; var bestN = -1
+            fun flush() { val k = key; val b = best; if (k != null && b != null) { upd.bindString(1, b); upd.bindString(2, k); upd.executeUpdateDelete() } }
+            db.rawQuery("SELECT show_key, logo, COUNT(*) FROM entries WHERE +type = 2 AND show_key IS NOT NULL AND logo IS NOT NULL GROUP BY show_key, logo ORDER BY show_key", null).use { c ->
+                while (c.moveToNext()) {
+                    val k = c.getString(0)
+                    if (k != key) { flush(); key = k; best = null; bestN = -1 }
+                    val n = c.getInt(2)
+                    if (n > bestN) { bestN = n; best = c.getString(1) }
+                }
+            }
+            flush()
+            db.execSQL("INSERT OR REPLACE INTO meta(k, v) VALUES ('show_sig', ?)", arrayOf(sig))
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+        summaryReady = true
+        return true
+    }
+
+    private fun summaryShows(sql: String, args: Array<String>): List<Show> =
+        readableDatabase.rawQuery(sql, args).use { c ->
+            c.map { Show(it.getString(0), Normalize.displayCached(it.getString(1) ?: "").title, it.getString(2), if (it.isNull(3)) null else it.getString(3), it.getInt(4)) }
+        }
+
+    private val infoCols = "i.show_key, i.series, i.grp, i.logo, i.eps"
 
     fun shows(group: String?, limit: Int = 20_000): List<Show> {
+        if (summaryReady) return if (group == null) summaryShows("SELECT $infoCols FROM show_info i ORDER BY i.min_id LIMIT $limit", emptyArray())
+        else summaryShows("SELECT $infoCols FROM show_grp g JOIN show_info i ON i.show_key = g.show_key WHERE g.grp = ? ORDER BY g.min_id LIMIT $limit", arrayOf(group))
         val (where, args) = if (group == null) "type = 2" to emptyArray<String>() else "type = 2 AND grp = ?" to arrayOf(group)
         return showsByKeys(keys("SELECT show_key FROM entries INDEXED BY idx_type_grp WHERE $where GROUP BY show_key ORDER BY MIN(id) LIMIT $limit", args))
     }
@@ -204,6 +271,12 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
         else query("type = 1 AND grp = ? ORDER BY id DESC LIMIT $limit", arrayOf(group))
 
     fun showsPage(group: String?, letter: Char?, limit: Int): List<Show> {
+        if (summaryReady) {
+            val (lw, la) = if (letter == null) "1" to emptyArray<String>() else letterWhere("i.series", letter)
+            val order = if (letter == null) "i.max_id DESC" else "i.series COLLATE NOCASE"
+            return if (group == null) summaryShows("SELECT $infoCols FROM show_info i WHERE $lw ORDER BY $order LIMIT $limit", la)
+            else summaryShows("SELECT $infoCols FROM show_grp g JOIN show_info i ON i.show_key = g.show_key WHERE g.grp = ? AND $lw ORDER BY $order LIMIT $limit", arrayOf(group) + la)
+        }
         val (lw, la) = if (letter == null) "1" to emptyArray<String>() else letterWhere("series", letter)
         val (gw, ga) = if (group == null) "" to emptyArray<String>() else " AND grp = ?" to arrayOf(group)
         val order = if (letter == null) "MAX(id) DESC" else "MIN(series) COLLATE NOCASE"
@@ -219,6 +292,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
     /** Séries com o ano atual ou o anterior no nome. */
     fun recentShows(limit: Int): List<Show> {
         val y = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+        if (summaryReady) return summaryShows("SELECT $infoCols FROM show_info i WHERE i.series LIKE ? OR i.series LIKE ? ORDER BY i.max_id DESC LIMIT $limit", arrayOf("%$y%", "%${y - 1}%"))
         return showsByKeys(keys(
             "SELECT show_key FROM entries INDEXED BY idx_type_grp WHERE type = 2 AND (series LIKE ? OR series LIKE ?) GROUP BY show_key ORDER BY MAX(id) DESC LIMIT $limit",
             arrayOf("%$y%", "%${y - 1}%"),

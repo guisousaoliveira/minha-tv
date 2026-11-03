@@ -149,9 +149,11 @@ fun MovieDetailScreen(e: Entry, nav: Nav) {
     val similar = load(e.group, e.url) { Repository.entries(ContentType.MOVIE, e.group, 30).filter { it.url != e.url }.take(24) }
     val resume = Repository.getResume(e.url)
     // capa, fundo e sinopse oficiais (TMDB), quando houver
-    val tmdb = load("tmdb-m", e.name) { dev.guisousa.minhatv.data.Tmdb.lookup(e.name, tv = false) }
+    // procura pelo nome limpo (sem FHD, [L], Dublado...), senão o TMDB não acha e só sobra a capa esticada
+    val tmdb = load("tmdb-m", e.name) { dev.guisousa.minhatv.data.Tmdb.lookup(dev.guisousa.minhatv.data.Normalize.displayCached(e.name).title, tv = false) }
     Box(Modifier.fillMaxSize()) {
-        Backdrop(tmdb?.backdrop ?: e.logo)
+        // só imagem horizontal de verdade; a capa em pé esticada fica feia
+        Backdrop(tmdb?.backdrop)
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 48.dp)) {
             item("top") {
                 DetailTop(
