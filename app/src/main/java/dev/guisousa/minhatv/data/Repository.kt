@@ -53,7 +53,7 @@ object Repository {
 
     /** Status da importação no máximo uma vez por segundo. */
     private var lastStatusAt = 0L
-    private fun progress(text: String) {
+    private fun importStatus(text: String) {
         val now = android.os.SystemClock.uptimeMillis()
         if (now - lastStatusAt >= 1000) { lastStatusAt = now; _status.value = text }
     }
@@ -445,7 +445,7 @@ object Repository {
                             var n = 0
                             detectedEpg = M3uParser.parseTo(lines, p.id) { e ->
                                 add(e)
-                                if (++n % 2000 == 0) progress("$label · $n itens")
+                                if (++n % 2000 == 0) importStatus("$label · $n itens")
                             }
                         }
                     }
