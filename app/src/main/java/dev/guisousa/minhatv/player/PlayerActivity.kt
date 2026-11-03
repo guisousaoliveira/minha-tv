@@ -226,6 +226,22 @@ class PlayerActivity : ComponentActivity() {
                 matchFrameRate(f.frameRate)
                 android.util.Log.w("MinhaTV", "player: vídeo ${f.width}x${f.height} ${f.frameRate} fps ${f.sampleMimeType}")
             }
+            override fun onLoadError(
+                t: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
+                info: androidx.media3.exoplayer.source.LoadEventInfo,
+                data: androidx.media3.exoplayer.source.MediaLoadData,
+                error: java.io.IOException,
+                wasCanceled: Boolean,
+            ) {
+                val kind = when (data.dataType) {
+                    C.DATA_TYPE_MANIFEST -> "playlist"
+                    C.DATA_TYPE_MEDIA -> "pedaço de vídeo"
+                    C.DATA_TYPE_MEDIA_INITIALIZATION -> "início do vídeo"
+                    else -> "tipo ${data.dataType}"
+                }
+                val code = (error as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)?.responseCode
+                android.util.Log.w("MinhaTV", "player: falha ao baixar $kind (http=$code ${error.javaClass.simpleName})")
+            }
             override fun onPlaybackStateChanged(t: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime, state: Int) {
                 if (state == Player.STATE_BUFFERING) android.util.Log.w("MinhaTV", "player: carregando (buffer)")
             }
@@ -468,6 +484,14 @@ class PlayerActivity : ComponentActivity() {
         val factory = DefaultMediaSourceFactory(base).setLoadErrorHandlingPolicy(retry404)
         val item = MediaItem.Builder()
             .setUri(url)
+            .apply {
+                // ao vivo: fica uns 15 s atrás do "agora". Com 30 s (padrão) o servidor já tinha apagado
+                // os pedaços pedidos (404 a cada 33 s); com 6-8 s ficava sem folga e engasgava.
+                if (isLive) setLiveConfiguration(
+                    MediaItem.LiveConfiguration.Builder()
+                        .setTargetOffsetMs(15_000).setMinOffsetMs(10_000).setMaxOffsetMs(20_000).build(),
+                )
+            }
 
             .setMediaMetadata(MediaMetadata.Builder().setTitle(src.name).build())
             .apply {
