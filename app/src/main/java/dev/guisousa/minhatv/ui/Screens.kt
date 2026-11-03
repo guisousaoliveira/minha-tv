@@ -414,6 +414,8 @@ fun SeriesDetailScreen(show: Show) {
     val seasons = remember(all) { all.groupBy { it.season ?: 0 }.toSortedMap().toList() }
     var season by rememberSaveable(show.key) { mutableStateOf(seasons.first().first) }
     val episodes = seasons.firstOrNull { it.first == season }?.second.orEmpty()
+    // fila do player: todas as temporadas em ordem (o próximo episódio passa para a temporada seguinte)
+    val queue = remember(seasons) { seasons.filter { it.first != 0 }.flatMap { it.second } + seasons.filter { it.first == 0 }.flatMap { it.second } }
     Row(Modifier.fillMaxSize().padding(start = 48.dp, top = 12.dp)) {
         Column(Modifier.width(240.dp)) {
             Logo(show.logo, Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(6.dp)), fallback = show.name, crop = true)
@@ -438,8 +440,7 @@ fun SeriesDetailScreen(show: Show) {
                 (if (target.season != null && target.episode != null) " T${target.season}:E${target.episode}" else "")
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 TvButton(label, onClick = {
-                    val list = seasons.firstOrNull { it.first == (target.season ?: 0) }?.second ?: all
-                    PlaybackQueue.start(context, list, list.indexOfFirst { it.url == target.url }.coerceAtLeast(0))
+                    PlaybackQueue.start(context, queue, queue.indexOfFirst { it.url == target.url }.coerceAtLeast(0))
                 })
                 val favs by Repository.favorites.collectAsState()
                 TvButton(if (target.url in favs) "Na Minha lista" else "+ Minha lista", onClick = { toggleFav(context, target) })
@@ -460,7 +461,7 @@ fun SeriesDetailScreen(show: Show) {
             ) {
                 itemsIndexed(episodes) { i, e ->
                     FocusBox(
-                        onClick = { PlaybackQueue.start(context, episodes, i) },
+                        onClick = { PlaybackQueue.start(context, queue, queue.indexOfFirst { it.url == e.url }.coerceAtLeast(0)) },
                         onLongClick = { toggleFav(context, e) },
                         modifier = Modifier.fillMaxWidth(), focusScale = 1.01f, shape = RoundedCornerShape(4.dp),
                     ) { focused ->

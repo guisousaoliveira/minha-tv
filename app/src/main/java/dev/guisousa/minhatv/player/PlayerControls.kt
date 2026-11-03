@@ -237,7 +237,7 @@ class PlayerControls(private val context: Context, root: FrameLayout) {
         intArrayOf(0xFF404040.toInt(), 0xFFA3A3A3.toInt()),
     )
 
-    /** Abre o painel do lado direito. O foco começa no item escolhido agora. */
+    /** Abre o painel do lado direito. O foco começa no item escolhido agora. [onClosed] só roda se fechar com VOLTAR. */
     fun showPanel(title: String, items: List<Choice>, onClosed: (() -> Unit)? = null, onPick: (Int) -> Unit) {
         panelTitle.text = title
         panelList.removeAllViews()
@@ -252,7 +252,7 @@ class PlayerControls(private val context: Context, root: FrameLayout) {
                 isFocusable = true
                 isClickable = true
                 setPadding(dp(14), dp(11), dp(14), dp(11))
-                setOnClickListener { hidePanel(); onPick(i) }
+                setOnClickListener { onPanelClosed = null; hidePanel(); onPick(i) }
             }
             val main = label(16f, Color.WHITE, bold = c.selected).apply { text = c.label }
             val sub = c.detail?.let { d -> label(13f, 0xFFA3A3A3.toInt()).apply { text = d } }

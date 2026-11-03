@@ -171,11 +171,17 @@ class PlayerActivity : ComponentActivity() {
 
     /** 12 s sem a primeira imagem: vai para a próxima fonte. */
     private val firstFrameWatch = Runnable {
-        if (isLive && !firstFrame && !isFinishing) {
+        if (firstFrame || isFinishing) return@Runnable
+        if (isLive) {
             android.util.Log.w("MinhaTV", "player: 12 s sem imagem, próxima fonte")
             nextOrRound(frozen = true)
+        } else {
+            android.util.Log.w("MinhaTV", "player: filme 15 s sem imagem, próxima fonte")
+            if (!nextSource(frozen = true)) { hideLoading(); notice("Não foi possível abrir este conteúdo.", 8000) }
         }
     }
+    /** Filme/série: quantas vezes já reabriu na mesma posição depois de ter tocado (máx. 3). */
+    private var vodReprepares = 0
 
     /** A cada 2 s: se deveria estar tocando e a posição não andou mais de 0,5 s por 12 s, reabre a mesma fonte. */
     private fun liveWatch(exo: ExoPlayer) {
@@ -291,7 +297,8 @@ class PlayerActivity : ComponentActivity() {
                 when {
                     live && lowRam -> setBufferDurationsMs(15_000, 30_000, 1_500, 3_000).setTargetBufferBytes(32 * 1024 * 1024).setPrioritizeTimeOverSizeThresholds(false)
                     live -> setBufferDurationsMs(32_000, 120_000, 1_500, 5_000).setTargetBufferBytes(96 * 1024 * 1024).setPrioritizeTimeOverSizeThresholds(true)
-                    else -> setBufferDurationsMs(40_000, 40_000, 1_500, 3_000).setPrioritizeTimeOverSizeThresholds(true)
+                    lowRam -> setBufferDurationsMs(15_000, 30_000, 1_500, 3_000).setTargetBufferBytes(32 * 1024 * 1024).setPrioritizeTimeOverSizeThresholds(false)
+                    else -> setBufferDurationsMs(30_000, 50_000, 1_500, 3_000).setTargetBufferBytes(96 * 1024 * 1024).setPrioritizeTimeOverSizeThresholds(true)
                 }
             }
             .build()
@@ -374,7 +381,8 @@ class PlayerActivity : ComponentActivity() {
                             if (!reopenSame("Reconectando…")) nextOrRound(frozen = true)
                         } else {
                             hideLoading()
-                            if (index < items.size - 1) play(index + 1)
+                            saveResume()
+                            onVodEnded()
                         }
                     }
                     Player.STATE_IDLE -> hideLoading()
@@ -449,6 +457,7 @@ class PlayerActivity : ComponentActivity() {
         root.addView(toast, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.END).apply {
             setMargins(dp(320), dp(88), dp(40), 0)
         })
+        buildNextCard(root)
         setContentView(root)
     }
 
@@ -503,7 +512,8 @@ class PlayerActivity : ComponentActivity() {
         syncQueue()
         index = ((i % items.size) + items.size) % items.size
         retries = 0
-        sourcePlayed = false; reopenFails = 0; wraps = 0; sameReopens = 0; rounds = 0; lastPlayingAt = 0L
+        sourcePlayed = false; reopenFails = 0; wraps = 0; sameReopens = 0; rounds = 0; lastPlayingAt = 0L; vodReprepares = 0
+        hideNextCard()
         val e = current
         Repository.addRecent(e)
         if (isLive) Repository.lastChannelUrl = e.url
@@ -561,7 +571,7 @@ class PlayerActivity : ComponentActivity() {
         firstFrame = false
         livePos = -1L; liveStillMs = 0
         handler.removeCallbacks(firstFrameWatch)
-        if (isLive) handler.postDelayed(firstFrameWatch, 12_000)
+        handler.postDelayed(firstFrameWatch, if (isLive) 12_000L else 15_000L)
         // conexão igual à do Saimo: OkHttp, UA do Safari (se a lista não definir outro) e Accept */*
         val http = androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(PlayerHttp.client)
             .setUserAgent(src.userAgent ?: PlayerHttp.SAFARI_UA)
@@ -606,11 +616,13 @@ class PlayerActivity : ComponentActivity() {
             .build()
         exo.setMediaSource(factory.createMediaSource(item))
         exo.prepare()
+        var ask = false
         if (resume && !isLive) {
             val pos = Repository.getResume(current.url)
-            if (pos > 0) exo.seekTo(pos)
+            if (pos > 0) { exo.seekTo(pos); ask = true }
         }
-        exo.playWhenReady = true
+        exo.playWhenReady = !ask
+        if (ask) askResume(Repository.getResume(current.url))
         handler.postDelayed(showLoading, 400)
         updateButtons()
     }
@@ -629,6 +641,21 @@ class PlayerActivity : ComponentActivity() {
             error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS && (http == null || http in 400..499) ||
             error.errorCode in PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED..PlaybackException.ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED
         android.util.Log.w("MinhaTV", "player: erro ${error.errorCodeName} http=$http morto=$dead")
+        // já estava tocando: reabre na mesma posição até 3 vezes, depois tenta outra fonte (igual ao Saimo)
+        if (readyOnce) {
+            if (vodReprepares < 3) {
+                vodReprepares++
+                android.util.Log.w("MinhaTV", "player: erro no meio do filme, reabrindo na mesma posição ($vodReprepares de 3)")
+                loadingText.text = "Reconectando…"
+                loadingBox.visibility = View.VISIBLE
+                handler.postDelayed({ player?.prepare() }, 1000)
+                return
+            }
+            if (nextSource()) return
+            hideLoading()
+            notice("Não foi possível continuar este conteúdo.", 8000)
+            return
+        }
         // ao vivo que já estava tocando e dá qualquer erro (404, playlist estranha, rede): é sessão vencida
         // no servidor, não canal morto. Reabre a MESMA fonte do zero. Só troca de fonte se a reabertura
         // falhar duas vezes seguidas antes de mostrar imagem.
@@ -716,6 +743,7 @@ class PlayerActivity : ComponentActivity() {
     /** Pula para a próxima fonte do mesmo item. Devolve false se não houver mais. */
     private fun nextSource(frozen: Boolean = false): Boolean {
         if (sourceIndex >= sources.size - 1) return false
+        vodReprepares = 0
         handler.post { updateButtons() }
         sourceIndex++
         retries = 0
@@ -840,7 +868,10 @@ class PlayerActivity : ComponentActivity() {
         controls.showPanel("Trocar fonte", labels) { i ->
             sourceIndex = i
             retries = 0
-            playSource(sources[i], resume = true)
+            vodReprepares = 0
+            val pos = player?.currentPosition ?: 0
+            playSource(sources[i], resume = false)
+            if (!isLive && pos > 0) player?.seekTo(pos)
             updateButtons()
         }
     }
@@ -850,6 +881,7 @@ class PlayerActivity : ComponentActivity() {
     private val hideControlsTask = Runnable { controls.hide() }
     /** O Voltar que fechou um painel não pode, ao soltar a tecla, fechar o player também. */
     private var backConsumed = false
+    private var lastBackAt = 0L
     private val tick = object : Runnable {
         override fun run() {
             updateTime()
@@ -876,6 +908,7 @@ class PlayerActivity : ComponentActivity() {
         btnSource = c.textButton("Fonte") { sourceDialog() }.also { right += it }
         right += c.textButton("Tela") { resizePanel() }
         if (!isLive) right += c.textButton("Velocidade") { speedDialog() }
+        if (current.type == ContentType.SERIES && items.size > 1) right.add(0, c.textButton("Episódios") { episodesPanel() })
         btnFav = c.textButton("Minha lista") {
             val added = Repository.toggleFavorite(current.url)
             notice(if (added) "Adicionado à Minha lista" else "Removido da Minha lista")
@@ -978,6 +1011,15 @@ class PlayerActivity : ComponentActivity() {
             KeyEvent.KEYCODE_INFO, KeyEvent.KEYCODE_GUIDE -> { showControls(8000); return true }
         }
 
+        if (down) autoEpisodes = 0
+        if (::nextCard.isInitialized && nextCard.visibility == View.VISIBLE && !controls.panelVisible) {
+            if (code == KeyEvent.KEYCODE_BACK) {
+                if (!down) { hideNextCard(); finish() }
+                return true
+            }
+            return super.dispatchKeyEvent(event)
+        }
+
         if (controls.panelVisible) {
             if (code == KeyEvent.KEYCODE_BACK) {
                 if (!down) controls.hidePanel()
@@ -1008,7 +1050,16 @@ class PlayerActivity : ComponentActivity() {
             KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> { if (isLive) showInfo(8000) else showControls(); return true }
             // setas nunca avançam nem voltam sozinhas: só abrem a barra (no filme) ou o "agora passando" (ao vivo)
             KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> { if (isLive) showInfo() else showControls(); return true }
-            KeyEvent.KEYCODE_BACK -> if (infoPanel.visibility == View.VISIBLE) { infoPanel.visibility = View.GONE; backConsumed = true; return true }
+            KeyEvent.KEYCODE_BACK -> {
+                backConsumed = true
+                if (infoPanel.visibility == View.VISIBLE) { infoPanel.visibility = View.GONE; return true }
+                // igual ao Saimo: precisa apertar VOLTAR duas vezes para sair do vídeo
+                val now = System.currentTimeMillis()
+                if (now - lastBackAt < 3000) { saveResume(); finish(); return true }
+                lastBackAt = now
+                notice("Aperte VOLTAR de novo para sair", 3000)
+                return true
+            }
         }
         return super.dispatchKeyEvent(event)
     }
@@ -1032,6 +1083,126 @@ class PlayerActivity : ComponentActivity() {
         val best = modes.filter { fits(it.refreshRate) }.minByOrNull { Math.round(it.refreshRate / fps) } ?: return
         window.attributes = window.attributes.also { it.preferredDisplayModeId = best.modeId }
         android.util.Log.w("MinhaTV", "player: tela trocada para %.2f Hz".format(best.refreshRate))
+    }
+
+    private fun clock(ms: Long): String {
+        val t = ms / 1000
+        return if (t >= 3600) "%d:%02d:%02d".format(t / 3600, t / 60 % 60, t % 60) else "%02d:%02d".format(t / 60, t % 60)
+    }
+
+    /** Ao abrir algo já começado: "Continuar de mm:ss" ou "Começar do início" (igual ao Saimo). */
+    private fun askResume(pos: Long) {
+        controls.showPanel(
+            current.name,
+            listOf(PlayerControls.Choice("Continuar de ${clock(pos)}"), PlayerControls.Choice("Começar do início")),
+            onClosed = { player?.playWhenReady = true; updateButtons() },
+        ) { i ->
+            if (i == 1) player?.seekTo(0)
+            player?.playWhenReady = true
+            updateButtons()
+        }
+    }
+
+    private fun epLabel(e: Entry): String =
+        if (e.season != null && e.episode != null) "T${e.season} E${e.episode}" else ""
+
+    private fun nextEpisodeIndex(): Int? {
+        val e = current
+        if (e.type != ContentType.SERIES || index >= items.size - 1) return null
+        val n = items[index + 1]
+        return if (n.type == ContentType.SERIES && (e.seriesName == null || n.seriesName == e.seriesName)) index + 1 else null
+    }
+
+    /** Episódios tocados em sequência sem ninguém mexer no controle. */
+    private var autoEpisodes = 0
+    private var nextCountdown = 0
+    private lateinit var nextCard: LinearLayout
+    private lateinit var nextTitle: TextView
+    private lateinit var nextTimer: TextView
+    private var nextPlay: TextView? = null
+    private val nextTick = object : Runnable {
+        override fun run() {
+            if (nextCard.visibility != View.VISIBLE) return
+            nextCountdown--
+            if (nextCountdown <= 0) { playNext(auto = true); return }
+            nextTimer.text = "Começa em $nextCountdown s"
+            handler.postDelayed(this, 1000)
+        }
+    }
+
+    private fun onVodEnded() {
+        val next = nextEpisodeIndex()
+        if (next == null) { finish(); return }
+        if (autoEpisodes >= 7) {
+            // depois de 7 episódios seguidos sem tocar no controle, pergunta antes de continuar
+            controls.showPanel(
+                "Ainda está assistindo?",
+                listOf(PlayerControls.Choice("Continuar assistindo"), PlayerControls.Choice("Sair")),
+                onClosed = { finish() },
+            ) { i -> if (i == 0) { autoEpisodes = 0; play(next) } else finish() }
+            return
+        }
+        showNextCard(next)
+    }
+
+    private fun showNextCard(next: Int) {
+        val n = items[next]
+        nextTitle.text = listOf(epLabel(n), n.name).filter { it.isNotBlank() }.joinToString(" · ")
+        nextCountdown = 10
+        nextTimer.text = "Começa em 10 s"
+        nextCard.visibility = View.VISIBLE
+        nextPlay?.requestFocus()
+        handler.removeCallbacks(nextTick)
+        handler.postDelayed(nextTick, 1000)
+    }
+
+    private fun hideNextCard() {
+        if (!::nextCard.isInitialized) return
+        handler.removeCallbacks(nextTick)
+        nextCard.visibility = View.GONE
+    }
+
+    private fun playNext(auto: Boolean) {
+        val next = nextEpisodeIndex() ?: run { hideNextCard(); return }
+        hideNextCard()
+        if (auto) autoEpisodes++ else autoEpisodes = 0
+        play(next)
+    }
+
+    private fun buildNextCard(root: FrameLayout) {
+        nextCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = GradientDrawable().apply { setColor(0xF0000000.toInt()); setStroke(dp(1), 0x26FFFFFF); cornerRadius = dp(6).toFloat() }
+            setPadding(dp(20), dp(16), dp(20), dp(16))
+            visibility = View.GONE
+        }
+        nextCard.addView(text(12f, 0xFFB3B3B3.toInt()).apply { text = "PRÓXIMO EPISÓDIO" })
+        nextTitle = text(17f, Color.WHITE, bold = true).apply { maxLines = 2; maxWidth = dp(420) }
+        nextCard.addView(nextTitle)
+        nextTimer = text(13f, 0xFFB3B3B3.toInt())
+        nextCard.addView(nextTimer)
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(12), 0, 0) }
+        nextPlay = controls.textButton("Assistir agora") { playNext(auto = false) }
+        row.addView(nextPlay)
+        row.addView(controls.textButton("Cancelar") { hideNextCard(); autoEpisodes = 0 }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(10) })
+        nextCard.addView(row)
+        root.addView(nextCard, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.END).apply {
+            setMargins(0, 0, dp(48), dp(56))
+        })
+    }
+
+    /** Episódios da série dentro do player. */
+    private fun episodesPanel() {
+        val choices = items.mapIndexed { i, e ->
+            val p = Repository.progress(e.url)
+            val detail = when {
+                Repository.isWatched(e.url) -> "Visto"
+                p != null -> "Parou em ${(p * 100).toInt()}%"
+                else -> null
+            }
+            PlayerControls.Choice(listOf(epLabel(e), e.name).filter { it.isNotBlank() }.joinToString("  "), detail, selected = i == index)
+        }
+        controls.showPanel(current.seriesName ?: "Episódios", choices) { i -> if (i != index) { autoEpisodes = 0; play(i) } }
     }
 
     private fun saveResume() {

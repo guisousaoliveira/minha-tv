@@ -212,13 +212,27 @@ object Repository {
 
     fun getResume(url: String): Long = prefs.getLong("resume_" + url.hashCode(), 0)
 
+    /** Igual ao Saimo: guarda a posição depois de 1 min; faltando menos de 2 min para o fim, conta como visto. */
     fun saveResume(url: String, position: Long, duration: Long) {
         val key = "resume_" + url.hashCode()
-        if (position > 30_000 && (duration <= 0 || position < duration - 60_000)) {
+        val nearEnd = duration > 0 && position >= duration - 120_000
+        if (nearEnd && position > 60_000) markWatched(url)
+        if (position > 60_000 && !nearEnd) {
             prefs.edit().putLong(key, position).putLong("dur_" + url.hashCode(), duration).apply()
-        } else {
+        } else if (nearEnd || position > 60_000) {
             prefs.edit().remove(key).remove("dur_" + url.hashCode()).apply()
         }
+    }
+
+    private val _watched by lazy { MutableStateFlow(prefs.getStringSet("watched", emptySet())!!.toSet()) }
+    /** Hashes dos links já vistos até o fim. */
+    val watched: StateFlow<Set<String>> get() = _watched
+    fun isWatched(url: String) = url.hashCode().toString() in _watched.value
+    fun markWatched(url: String) {
+        val h = url.hashCode().toString()
+        if (h in _watched.value) return
+        _watched.value = _watched.value + h
+        prefs.edit().putStringSet("watched", _watched.value).apply()
     }
 
     /** Quanto do filme/episódio já foi visto (0..1), ou null se não começou. */
