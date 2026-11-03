@@ -277,7 +277,7 @@ fun PosterCard(
 
 /** Cartão horizontal (canais). */
 @Composable
-fun ChannelCard(title: String, logo: String?, subtitle: String?, onClick: () -> Unit, onFocused: (() -> Unit)? = null) {
+fun ChannelCard(title: String, logo: String?, subtitle: String?, onFocused: (() -> Unit)? = null, onClick: () -> Unit) {
     Column {
         FocusBox(onClick = onClick, onFocused = onFocused, frame = true, focusScale = 1.06f, modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
             Logo(logo, Modifier.fillMaxSize().padding(12.dp), fallback = title)
