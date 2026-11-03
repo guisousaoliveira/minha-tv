@@ -27,3 +27,27 @@ class SourceCheckerTest {
         assertEquals(false, Health(ok = true, fails = 0, checked = 0, ms = 120).dead)
     }
 }
+
+class DisplayNameTest {
+    private fun d(s: String) = Normalize.display(s)
+
+    @Test fun channelNamesLoseCountryPrefixAndQuality() {
+        assertEquals(Normalize.Display("Globo SP", "FHD"), d("BR: GLOBO SP FHD"))
+        assertEquals(Normalize.Display("Globo RJ", "FHD"), d("GLOBO RJ (FHD) H.265 [ALT]"))
+        assertEquals(Normalize.Display("SBT", "HD"), d("|BR| SBT HD"))
+        assertEquals(Normalize.Display("Premiere 2", "FHD"), d("Premiere 2 | FHD"))
+        assertEquals(Normalize.Display("Megapix", "FHD"), d("Megapix FullHD [Opção 2]"))
+        assertEquals(Normalize.Display("Cartoon Network", null), d("Cartoon Network (Alternativo)"))
+    }
+
+    @Test fun moviesKeepYearAndGetAudioTag() {
+        assertEquals(Normalize.Display("Duna (2021)", "4K · Dublado"), d("Duna (2021) [Dublado] 4K"))
+        assertEquals(Normalize.Display("Duna 2021", "FHD · Legendado"), d("Duna 2021 1080p Leg"))
+        assertEquals(Normalize.Display("Novo Mundo", null), d("Novo Mundo"))
+        assertEquals(Normalize.Display("The New Mutants (2020)", null), d("The New Mutants (2020)"))
+    }
+
+    @Test fun sameChannelGetsSameKey() {
+        assertEquals(Normalize.key(d("BR: GLOBO SP FHD").title), Normalize.key(d("Globo SP HD").title))
+    }
+}

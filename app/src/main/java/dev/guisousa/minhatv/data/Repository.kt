@@ -147,6 +147,15 @@ object Repository {
         // testa as fontes um pouco depois de abrir e a cada 2 horas enquanto o app estiver aberto
         scope.launch {
             prefs.edit().remove("failed_urls").apply() // formato antigo, agora fica no banco
+            awaitLoaded()
+            // nomes limpos para itens importados por versões antigas (sem baixar as listas de novo)
+            withContext(background) {
+                while (true) {
+                    while (playbackActive) kotlinx.coroutines.delay(5_000)
+                    val n = runCatching { db.backfillTitles() }.getOrDefault(0)
+                    if (n == 0) break
+                }
+            }
             kotlinx.coroutines.delay(30_000)
             while (true) {
                 runCatching { checkSources() }
@@ -536,7 +545,7 @@ object Repository {
         val out = ArrayList<Any>(size) // Entry (série) ou chave do grupo, na ordem original
         for (e in this) {
             if (e.type == ContentType.SERIES) { out += e; continue }
-            val key = e.type.ordinal.toString() + ":" + Normalize.name(e.name).ifEmpty { e.url }
+            val key = e.type.ordinal.toString() + ":" + (e.norm ?: Normalize.name(e.name).ifEmpty { e.url })
             val list = order[key]
             if (list == null) { order[key] = mutableListOf(e); out += key } else list += e
         }
@@ -573,7 +582,7 @@ object Repository {
 
     /** Outras fontes do mesmo título, as melhores primeiro, no máximo [MAX_SOURCES] contando a atual. */
     suspend fun alternates(e: Entry): List<Entry> = withContext(Dispatchers.IO) {
-        val list = runCatching { db.alternates(e.type, Normalize.name(e.name).ifEmpty { e.name.lowercase() }, e.url) }
+        val list = runCatching { db.alternates(e.type, e.norm ?: Normalize.key(e.name), e.url) }
             .getOrDefault(emptyList()).distinctBy { it.url }
         val health = runCatching { db.health(list.map { it.url }) }.getOrDefault(emptyMap())
         val (dead, alive) = list.partition { health[it.url]?.dead == true }
