@@ -637,7 +637,11 @@ object Repository {
     }
 
     suspend fun entries(type: ContentType, group: String?, limit: Int = 60_000): List<Entry> = withContext(Dispatchers.IO) {
-        runCatching { db.entries(type, group, limit * 2).visible().unique().take(limit) }.getOrDefault(emptyList())
+        val t0 = System.currentTimeMillis()
+        val r = runCatching { db.entries(type, group, limit * 2).visible().unique().take(limit) }.getOrDefault(emptyList())
+        val ms = System.currentTimeMillis() - t0
+        if (ms > 300) android.util.Log.w("MinhaTV", "lento: categoria $type \"$group\" ${r.size} itens em $ms ms")
+        r
     }
 
     /** Outras fontes do mesmo título, as melhores primeiro, no máximo [MAX_SOURCES] contando a atual. */
@@ -780,9 +784,13 @@ object Repository {
         prefs.edit().putString("recent_searches", list.joinToString("\n")).apply()
     }
 
-    suspend fun shows(group: String?): List<Show> = withContext(Dispatchers.IO) {
-        runCatching { db.shows(group).let { l -> if (hideAdult) l.filterNot { Library.isAdult(it.group) } else l } }
+    suspend fun shows(group: String?, limit: Int = 20_000): List<Show> = withContext(Dispatchers.IO) {
+        val t0 = System.currentTimeMillis()
+        val r = runCatching { db.shows(group, limit).let { l -> if (hideAdult) l.filterNot { Library.isAdult(it.group) } else l } }
             .getOrDefault(emptyList())
+        val ms = System.currentTimeMillis() - t0
+        if (ms > 300) android.util.Log.w("MinhaTV", "lento: séries \"$group\" ${r.size} em $ms ms")
+        r
     }
 
     suspend fun episodes(show: Show): List<Entry> = withContext(Dispatchers.IO) {

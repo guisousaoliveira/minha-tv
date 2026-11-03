@@ -228,7 +228,7 @@ private fun openLiveGroup(context: android.content.Context, type: ContentType, g
 
 @Composable
 private fun ShowRow(lib: Library, group: String, count: Int, nav: Nav, header: HeaderState) {
-    val shows = load(lib.version, group) { Repository.shows(group).take(ROW_ITEMS) }
+    val shows = load(lib.version, group) { Repository.shows(group, ROW_ITEMS) }
     SectionTitle(group, trailing = "$count")
     if (shows == null) { Box(Modifier.height(250.dp)); return }
     MediaRow(

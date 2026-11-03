@@ -145,7 +145,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
     fun shows(group: String?, limit: Int = 20_000): List<Show> {
         val (where, args) = if (group == null) "type = 2" to emptyArray<String>() else "type = 2 AND grp = ?" to arrayOf(group)
         return readableDatabase.rawQuery(
-            "SELECT show_key, MIN(series), MIN(grp), MAX(logo), COUNT(DISTINCT CASE WHEN episode IS NULL THEN 'u' || id ELSE COALESCE(season, 0) || 'x' || episode END) FROM entries WHERE $where GROUP BY show_key ORDER BY MIN(id) LIMIT $limit",
+            "SELECT show_key, MIN(series), MIN(grp), (SELECT e2.logo FROM entries e2 WHERE e2.show_key = entries.show_key AND e2.logo IS NOT NULL GROUP BY e2.logo ORDER BY COUNT(*) DESC LIMIT 1), COUNT(DISTINCT CASE WHEN episode IS NULL THEN 'u' || id ELSE COALESCE(season, 0) || 'x' || episode END) FROM entries WHERE $where GROUP BY show_key ORDER BY MIN(id) LIMIT $limit",
             args,
         ).use { c -> c.map { Show(it.getString(0), Normalize.displayCached(it.getString(1)).title, it.getString(2), it.getStringOrNull(3), it.getInt(4)) } }
     }
@@ -170,7 +170,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
         val (gw, ga) = if (group == null) "" to emptyArray<String>() else " AND grp = ?" to arrayOf(group)
         val order = if (letter == null) "MAX(id) DESC" else "MIN(series) COLLATE NOCASE"
         return readableDatabase.rawQuery(
-            "SELECT show_key, MIN(series), MIN(grp), MAX(logo), COUNT(*) FROM entries WHERE type = 2$gw AND $lw GROUP BY show_key ORDER BY $order LIMIT $limit",
+            "SELECT show_key, MIN(series), MIN(grp), (SELECT e2.logo FROM entries e2 WHERE e2.show_key = entries.show_key AND e2.logo IS NOT NULL GROUP BY e2.logo ORDER BY COUNT(*) DESC LIMIT 1), COUNT(*) FROM entries WHERE type = 2$gw AND $lw GROUP BY show_key ORDER BY $order LIMIT $limit",
             ga + la,
         ).use { c -> c.map { Show(it.getString(0), Normalize.displayCached(it.getString(1)).title, it.getString(2), it.getStringOrNull(3), it.getInt(4)) } }
     }
@@ -185,7 +185,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
     fun recentShows(limit: Int): List<Show> {
         val y = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
         return readableDatabase.rawQuery(
-            "SELECT show_key, MIN(series), MIN(grp), MAX(logo), COUNT(*) FROM entries WHERE type = 2 AND (series LIKE ? OR series LIKE ?) GROUP BY show_key ORDER BY MAX(id) DESC LIMIT $limit",
+            "SELECT show_key, MIN(series), MIN(grp), (SELECT e2.logo FROM entries e2 WHERE e2.show_key = entries.show_key AND e2.logo IS NOT NULL GROUP BY e2.logo ORDER BY COUNT(*) DESC LIMIT 1), COUNT(*) FROM entries WHERE type = 2 AND (series LIKE ? OR series LIKE ?) GROUP BY show_key ORDER BY MAX(id) DESC LIMIT $limit",
             arrayOf("%$y%", "%${y - 1}%"),
         ).use { c -> c.map { Show(it.getString(0), Normalize.displayCached(it.getString(1)).title, it.getString(2), it.getStringOrNull(3), it.getInt(4)) } }
     }
@@ -213,7 +213,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
         entries.sortBy { it.type.ordinal }
 
         fun shows(where: String, args: Array<String>) = readableDatabase.rawQuery(
-            "SELECT show_key, MIN(series), MIN(grp), MAX(logo), COUNT(DISTINCT CASE WHEN episode IS NULL THEN 'u' || id ELSE COALESCE(season, 0) || 'x' || episode END) FROM entries WHERE +type = 2 AND $where GROUP BY show_key LIMIT 100", args,
+            "SELECT show_key, MIN(series), MIN(grp), (SELECT e2.logo FROM entries e2 WHERE e2.show_key = entries.show_key AND e2.logo IS NOT NULL GROUP BY e2.logo ORDER BY COUNT(*) DESC LIMIT 1), COUNT(DISTINCT CASE WHEN episode IS NULL THEN 'u' || id ELSE COALESCE(season, 0) || 'x' || episode END) FROM entries WHERE +type = 2 AND $where GROUP BY show_key LIMIT 100", args,
         ).use { c -> c.map { Show(it.getString(0), Normalize.displayCached(it.getString(1)).title, it.getString(2), it.getStringOrNull(3), it.getInt(4)) } }
         val showList = LinkedHashMap<String, Show>()
         shows("show_key >= ? AND show_key < ?", arrayOf(n, end)).forEach { showList[it.key] = it }
