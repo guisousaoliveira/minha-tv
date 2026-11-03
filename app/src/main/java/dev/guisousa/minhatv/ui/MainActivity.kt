@@ -100,6 +100,7 @@ enum class Tab(val title: String) {
 /** Telas abertas por cima das abas (voltar fecha a de cima). */
 sealed class Detail {
     data class OfShow(val show: Show) : Detail()
+    data class OfMovie(val entry: dev.guisousa.minhatv.data.Entry) : Detail()
     data class Category(val type: ContentType, val group: String) : Detail()
 }
 
@@ -151,6 +152,7 @@ fun AppRoot(onLoaded: () -> Unit) {
 
     val nav = Nav(
         openShow = { stack.add(Detail.OfShow(it)) },
+        openMovie = { stack.add(Detail.OfMovie(it)) },
         openCategory = { type, group -> stack.add(Detail.Category(type, group)) },
     )
     val nothingAdded = !loading && playlists.isEmpty() && sources.isEmpty()
@@ -188,6 +190,7 @@ fun AppRoot(onLoaded: () -> Unit) {
                 loading -> Message("Carregando…")
                 nothingAdded && Tab.entries[tab] != Tab.SETTINGS -> Welcome(onTyped = { url, name, epg -> addLink(context, url, name, epg) })
                 top is Detail.OfShow -> holder.SaveableStateProvider("show:${top.show.key}") { SeriesDetailScreen(top.show) }
+                top is Detail.OfMovie -> holder.SaveableStateProvider("movie:${top.entry.url}") { MovieDetailScreen(top.entry, nav) }
                 top is Detail.Category -> holder.SaveableStateProvider("cat:${top.type}:${top.group}") { CategoryScreen(library, top.type, top.group, nav) }
                 // troca de aba com um fade rápido
                 else -> androidx.compose.animation.Crossfade(Tab.entries[tab], animationSpec = androidx.compose.animation.core.tween(180), label = "tab") { t ->
@@ -206,7 +209,7 @@ fun AppRoot(onLoaded: () -> Unit) {
     }
 }
 
-class Nav(val openShow: (Show) -> Unit, val openCategory: (ContentType, String) -> Unit)
+class Nav(val openShow: (Show) -> Unit, val openMovie: (dev.guisousa.minhatv.data.Entry) -> Unit, val openCategory: (ContentType, String) -> Unit)
 
 @Composable
 private fun NavItem(title: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {

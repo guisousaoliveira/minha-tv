@@ -68,13 +68,13 @@ private fun nowTicker(): Long {
 
 /** Carrega dados do banco sem travar a tela. null = carregando. */
 @Composable
-private fun <T> load(vararg keys: Any?, loader: suspend () -> T): T? {
+internal fun <T> load(vararg keys: Any?, loader: suspend () -> T): T? {
     val v by produceState<T?>(null, *keys) { value = null; value = loader() }
     return v
 }
 
 @Composable
-private fun Loading() {
+internal fun Loading() {
     // esqueleto das fileiras enquanto carrega, em vez de só um texto
     Column(Modifier.fillMaxSize().padding(start = 48.dp, top = 24.dp)) {
         repeat(2) {
@@ -88,7 +88,7 @@ private fun Loading() {
     }
 }
 
-private fun toggleFav(context: android.content.Context, e: Entry) {
+internal fun toggleFav(context: android.content.Context, e: Entry) {
     val added = Repository.toggleFavorite(e.url)
     Toast.makeText(context, if (added) "Adicionado à Minha lista" else "Removido da Minha lista", Toast.LENGTH_SHORT).show()
 }
@@ -213,7 +213,7 @@ private fun EntryRow(lib: Library, type: ContentType, group: String, count: Int,
             PosterCard(
                 e.name, e.logo, progress = Repository.progress(e.url),
                 onFocused = { header.show(e.name, "Filme · $group", e.logo) },
-                onClick = { PlaybackQueue.start(context, listOf(e), 0) },
+                onClick = { nav.openMovie(e) },
                 onLongClick = { toggleFav(context, e) },
             )
         }
@@ -279,7 +279,7 @@ fun CategoryScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
                 if (items == null) Loading() else PosterGrid(
                     items.size, { i -> items[i].name }, { i -> items[i].logo },
                     onFocused = { i -> header.show(items[i].name, "Filme · $group", items[i].logo) },
-                ) { i -> PlaybackQueue.start(context, listOf(items[i]), 0) }
+                ) { i -> nav.openMovie(items[i]) }
             }
             ContentType.SERIES -> {
                 val shows = load(lib.version, group) { Repository.shows(group) }
@@ -405,87 +405,6 @@ fun ChannelList(channels: List<Entry>, modifier: Modifier = Modifier, onFocused:
 
 // ======================= Série =======================
 
-@Composable
-fun SeriesDetailScreen(show: Show) {
-    val context = LocalContext.current
-    val all = load(show.key) { Repository.episodes(show) }
-    if (all == null) { Loading(); return }
-    if (all.isEmpty()) { Message("Nenhum episódio encontrado"); return }
-    val seasons = remember(all) { all.groupBy { it.season ?: 0 }.toSortedMap().toList() }
-    var season by rememberSaveable(show.key) { mutableStateOf(seasons.first().first) }
-    val episodes = seasons.firstOrNull { it.first == season }?.second.orEmpty()
-    // fila do player: todas as temporadas em ordem (o próximo episódio passa para a temporada seguinte)
-    val queue = remember(seasons) { seasons.filter { it.first != 0 }.flatMap { it.second } + seasons.filter { it.first == 0 }.flatMap { it.second } }
-    Row(Modifier.fillMaxSize().padding(start = 48.dp, top = 12.dp)) {
-        Column(Modifier.width(240.dp)) {
-            Logo(show.logo, Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(6.dp)), fallback = show.name, crop = true)
-        }
-        Spacer(Modifier.width(36.dp))
-        Column(Modifier.weight(1f)) {
-            Text(show.name, fontSize = 32.sp, fontWeight = FontWeight.Bold, color = Palette.Text, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Spacer(Modifier.height(6.dp))
-            val seasonCount = seasons.count { it.first != 0 }
-            Text(
-                listOfNotNull(
-                    if (seasonCount > 0) "$seasonCount temporada${if (seasonCount > 1) "s" else ""}" else null,
-                    "${all.size} episódios",
-                    show.group,
-                ).joinToString("  ·  "),
-                fontSize = 15.sp, color = Palette.TextDim,
-            )
-            Spacer(Modifier.height(16.dp))
-            val resumeAt = remember(all) { all.indexOfFirst { Repository.progress(it.url) != null }.takeIf { it >= 0 } ?: 0 }
-            val target = all[resumeAt]
-            val label = (if (Repository.progress(target.url) != null) "Continuar" else "Assistir") +
-                (if (target.season != null && target.episode != null) " T${target.season}:E${target.episode}" else "")
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                TvButton(label, onClick = {
-                    PlaybackQueue.start(context, queue, queue.indexOfFirst { it.url == target.url }.coerceAtLeast(0))
-                })
-                val favs by Repository.favorites.collectAsState()
-                TvButton(if (target.url in favs) "Na Minha lista" else "+ Minha lista", onClick = { toggleFav(context, target) })
-            }
-            Spacer(Modifier.height(16.dp))
-            if (seasons.size > 1) {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(vertical = 4.dp)) {
-                    items(seasons) { (s, _) ->
-                        TvButton(if (s == 0) "Extras" else "Temporada $s", selected = s == season, onClick = { season = s })
-                    }
-                }
-                Spacer(Modifier.height(12.dp))
-            }
-            LazyColumn(
-                Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(end = 48.dp, bottom = 48.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                itemsIndexed(episodes) { i, e ->
-                    FocusBox(
-                        onClick = { PlaybackQueue.start(context, queue, queue.indexOfFirst { it.url == e.url }.coerceAtLeast(0)) },
-                        onLongClick = { toggleFav(context, e) },
-                        modifier = Modifier.fillMaxWidth(), focusScale = 1.01f, shape = RoundedCornerShape(4.dp),
-                    ) { focused ->
-                        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    e.episode?.toString() ?: "${i + 1}",
-                                    Modifier.width(44.dp), fontSize = 18.sp, fontWeight = FontWeight.SemiBold,
-                                    color = if (focused) Palette.OnFocus else Palette.TextFaint,
-                                )
-                                Text(e.name, fontSize = 16.sp, color = textOn(focused), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            }
-                            Repository.progress(e.url)?.let {
-                                Spacer(Modifier.height(6.dp))
-                                Box(Modifier.padding(start = 44.dp).width(200.dp)) { ProgressLine(it) }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
 // ======================= Minha lista =======================
 
 @Composable
@@ -518,7 +437,7 @@ fun MyListScreen(lib: Library, nav: Nav) {
                         PosterCard(
                             e.name, e.logo, progress = Repository.progress(e.url),
                             onFocused = { header.show(e.name, "${kindOf(e.type)} · ${e.group}", e.logo) },
-                            onClick = { PlaybackQueue.start(context, vod, i) }, onLongClick = { toggleFav(context, e) },
+                            onClick = { if (e.type == ContentType.MOVIE) nav.openMovie(e) else PlaybackQueue.start(context, vod, i) }, onLongClick = { toggleFav(context, e) },
                         )
                     }
                 }
@@ -575,7 +494,7 @@ fun SearchScreen(lib: Library, nav: Nav) {
                 MediaRow(movies, POSTER_W) { _, e ->
                     PosterCard(
                         e.name, e.logo, onFocused = { header.show(e.name, "Filme · ${e.group}", e.logo) },
-                        onClick = { PlaybackQueue.start(context, listOf(e), 0) }, onLongClick = { toggleFav(context, e) },
+                        onClick = { nav.openMovie(e) }, onLongClick = { toggleFav(context, e) },
                     )
                 }
             }

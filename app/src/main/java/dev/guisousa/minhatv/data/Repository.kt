@@ -235,6 +235,9 @@ object Repository {
         prefs.edit().putStringSet("watched", _watched.value).apply()
     }
 
+    /** Duração conhecida (ms), guardada quando foi assistido. 0 = não sei. */
+    fun duration(url: String): Long = prefs.getLong("dur_" + url.hashCode(), 0)
+
     /** Quanto do filme/episódio já foi visto (0..1), ou null se não começou. */
     fun progress(url: String): Float? {
         val pos = getResume(url)
