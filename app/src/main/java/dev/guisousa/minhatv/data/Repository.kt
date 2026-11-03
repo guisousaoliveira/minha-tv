@@ -378,8 +378,9 @@ object Repository {
                 _playlists.value = _playlists.value.map { if (it.id == id) updated else it }
                 savePlaylists()
             }
-            // mostra os canais desta lista já, sem esperar as outras terminarem
-            if (total > 1) runCatching { rebuild() }
+            // na primeira importação, mostra os canais desta lista já, sem esperar as outras.
+            // Depois disso reorganiza só no fim, para o menu não ficar pulando enquanto alguém navega.
+            if (total > 1 && _library.value.isEmpty) runCatching { rebuild() }
         }
         _status.value = "Baixando guia de programação…"
         refreshBuiltinEpg()
@@ -409,6 +410,10 @@ object Repository {
 
     private suspend fun refreshOne(p: Playlist): Playlist = withContext(Dispatchers.IO) {
         try {
+            // lista igual à da última vez: não baixa nem reorganiza nada
+            if (p.lastError == null && p.liveCount + p.movieCount + p.seriesCount > 0 && unchanged(p)) {
+                return@withContext p.copy(lastUpdated = System.currentTimeMillis())
+            }
             var detectedEpg: String? = null
             val head = fetchHead(p.url)
             val counts: Db.Counts
@@ -418,7 +423,7 @@ object Repository {
             } else {
                 if (!M3uParser.isChannelPlaylist(head)) throw IOException("não parece uma playlist M3U")
                 val label = _status.value ?: "Atualizando ${p.name}"
-                counts = open(p.url) { input ->
+                counts = open(p.url, onResponse = { saveValidators(p.id, it) }) { input ->
                     input.bufferedReader(Charsets.UTF_8).useLines { lines ->
                         db.replacePlaylist(p.id) { add ->
                             var n = 0
@@ -542,10 +547,11 @@ object Repository {
 
     // ---------- Rede ----------
 
-    private fun <T> open(url: String, block: (InputStream) -> T): T {
+    private fun <T> open(url: String, onResponse: (okhttp3.Response) -> Unit = {}, block: (InputStream) -> T): T {
         val req = Request.Builder().url(url).header("User-Agent", DEFAULT_UA).build()
         http.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) throw IOException("servidor respondeu ${resp.code}")
+            onResponse(resp)
             val raw = BufferedInputStream(resp.body!!.byteStream(), 64 * 1024)
             raw.mark(4)
             val b1 = raw.read()
@@ -554,6 +560,27 @@ object Repository {
             val stream: InputStream = if (b1 == 0x1f && b2 == 0x8b) GZIPInputStream(raw, 64 * 1024) else raw
             return block(stream)
         }
+    }
+
+    /** Pergunta ao servidor se a lista mudou desde a última vez (ETag / Last-Modified). */
+    private fun unchanged(p: Playlist): Boolean {
+        val etag = prefs.getString("etag_${p.id}", null)
+        val modified = prefs.getString("lastmod_${p.id}", null)
+        if (etag == null && modified == null) return false
+        return runCatching {
+            val req = Request.Builder().url(p.url).header("User-Agent", DEFAULT_UA).apply {
+                etag?.let { header("If-None-Match", it) }
+                modified?.let { header("If-Modified-Since", it) }
+            }.build()
+            http.newCall(req).execute().use { it.code == 304 }
+        }.getOrDefault(false)
+    }
+
+    private fun saveValidators(id: String, resp: okhttp3.Response) {
+        prefs.edit()
+            .putString("etag_$id", resp.header("ETag"))
+            .putString("lastmod_$id", resp.header("Last-Modified"))
+            .apply()
     }
 
     /** Lê só o começo do arquivo para descobrir o que ele é. */
