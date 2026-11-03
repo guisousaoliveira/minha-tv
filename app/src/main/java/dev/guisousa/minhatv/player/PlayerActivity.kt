@@ -1155,7 +1155,8 @@ class PlayerActivity : ComponentActivity() {
         controls.showPanel(
             current.name,
             listOf(PlayerControls.Choice("Continuar de ${clock(pos)}"), PlayerControls.Choice("Começar do início")),
-            onClosed = { player?.playWhenReady = true; updateButtons() },
+            // VOLTAR aqui desiste de assistir e sai do vídeo
+            onClosed = { saveResume(); finish() },
         ) { i ->
             if (i == 1) player?.seekTo(0)
             player?.playWhenReady = true

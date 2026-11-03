@@ -133,6 +133,7 @@ fun FocusBox(
             }
         }
     }
+    val enabled = LocalFocusEnabled.current
     val scale by animateFloatAsState(if (focused) focusScale else 1f, tween(150), label = "scale")
     val bg = when {
         focused && !frame -> Palette.Focus
@@ -143,6 +144,7 @@ fun FocusBox(
         modifier
             .graphicsLayer { scaleX = scale; scaleY = scale }
             .then(if (focusKey != null) Modifier.focusRequester(requester) else Modifier)
+            .focusProperties { canFocus = enabled }
             .onFocusChanged {
                 if (it.isFocused && focusKey != null) FocusMemory.last = focusKey
                 if (it.isFocused && !focused) onFocused?.invoke()
@@ -161,6 +163,9 @@ fun FocusBox(
         content(focused)
     }
 }
+
+/** false = esta parte da tela está escondida atrás de outra (detalhes) e não pode receber foco. */
+val LocalFocusEnabled = androidx.compose.runtime.compositionLocalOf { true }
 
 /** Último cartão focado, para devolver o foco ao voltar de outra tela. */
 object FocusMemory {
@@ -408,7 +413,7 @@ fun FocusHeader(
                 }
             }
             if (tall && !backdrop && !image.isNullOrBlank()) {
-                Box(Modifier.width(420.dp).fillMaxHeight().clip(RoundedCornerShape(6.dp)).background(Color(0xFF111111))) {
+                Box(Modifier.width(420.dp).fillMaxHeight()) {
                     if (!image.isNullOrBlank()) {
                         // logo de canal: inteira, sem cortar nem esticar
                         AsyncImage(model = image, contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize().padding(36.dp))

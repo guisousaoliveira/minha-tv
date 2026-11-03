@@ -68,7 +68,8 @@ private class GridItem(val id: String, val title: String, val image: String?, va
 internal fun ReleasesRow(lib: Library, type: ContentType, nav: Nav, header: HeaderState) {
     val context = LocalContext.current
     if (type == ContentType.MOVIE) {
-        val items = load(lib.version, "rel-m") { Repository.recentMovies() } ?: return
+        // enquanto carrega, guarda o espaço da fileira: assim as de baixo não "pulam" quando ela aparece
+        val items = load(lib.version, "rel-m") { Repository.recentMovies() } ?: run { Box(Modifier.height(290.dp)); return }
         if (items.isEmpty()) return
         SectionTitle("Lançamentos", trailing = "${items.size}")
         MediaRow(items, POSTER_SAIMO_W) { _, e ->
@@ -79,7 +80,7 @@ internal fun ReleasesRow(lib: Library, type: ContentType, nav: Nav, header: Head
             )
         }
     } else {
-        val shows = load(lib.version, "rel-s") { Repository.recentShows() } ?: return
+        val shows = load(lib.version, "rel-s") { Repository.recentShows() } ?: run { Box(Modifier.height(290.dp)); return }
         if (shows.isEmpty()) return
         SectionTitle("Lançamentos", trailing = "${shows.size}")
         MediaRow(shows, POSTER_SAIMO_W) { _, s ->

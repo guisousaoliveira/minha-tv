@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+
 package dev.guisousa.minhatv.ui
 
 import androidx.compose.material.icons.filled.Search
@@ -38,6 +40,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -139,8 +144,10 @@ fun AppRoot(onLoaded: () -> Unit) {
     val playlists by Repository.playlists.collectAsState()
     val sources by Repository.sources.collectAsState()
     var tab by rememberSaveable { mutableIntStateOf(0) }
-    val stack = remember { mutableStateListOf<Detail>() }
-    val firstTab = remember { FocusRequester() }
+    // telas abertas por cima: guardadas mesmo se o Android fechar o app no fundo enquanto o vídeo toca
+    val stack = rememberSaveable(saver = detailSaver) { mutableStateListOf<Detail>() }
+    val tabRequesters = remember { Tab.entries.map { FocusRequester() } }
+    val firstTab = tabRequesters[0]
 
     LaunchedEffect(loading) {
         if (!loading) {
@@ -179,7 +186,11 @@ fun AppRoot(onLoaded: () -> Unit) {
 
     Column(Modifier.fillMaxSize().background(Palette.Background)) {
         Row(
-            Modifier.fillMaxWidth().padding(start = 48.dp, end = 48.dp, top = 20.dp, bottom = 6.dp),
+            Modifier.fillMaxWidth()
+                // subindo da tela para o menu, o foco cai na aba aberta (e não sempre no Início)
+                .focusProperties { enter = { tabRequesters[tab] } }
+                .focusGroup()
+                .padding(start = 48.dp, end = 48.dp, top = 20.dp, bottom = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
@@ -195,15 +206,15 @@ fun AppRoot(onLoaded: () -> Unit) {
                     t.title,
                     selected = tab == i,
                     onClick = { tab = i; stack.clear(); FocusMemory.clear() },
-                    modifier = if (i == 0) Modifier.focusRequester(firstTab) else Modifier,
+                    modifier = Modifier.focusRequester(tabRequesters[i]),
                 )
             }
             Spacer(Modifier.weight(1f))
             StatusText()
             Spacer(Modifier.width(12.dp))
             // busca (lupa) e ajustes (engrenagem) como ícones, à direita
-            IconNav(androidx.compose.material.icons.Icons.Filled.Search, "Buscar", selected = Tab.entries[tab] == Tab.SEARCH) { tab = Tab.SEARCH.ordinal; stack.clear(); FocusMemory.clear() }
-            IconNav(androidx.compose.material.icons.Icons.Filled.Settings, "Ajustes", selected = Tab.entries[tab] == Tab.SETTINGS) { tab = Tab.SETTINGS.ordinal; stack.clear(); FocusMemory.clear() }
+            IconNav(androidx.compose.material.icons.Icons.Filled.Search, "Buscar", selected = Tab.entries[tab] == Tab.SEARCH, modifier = Modifier.focusRequester(tabRequesters[Tab.SEARCH.ordinal])) { tab = Tab.SEARCH.ordinal; stack.clear(); FocusMemory.clear() }
+            IconNav(androidx.compose.material.icons.Icons.Filled.Settings, "Ajustes", selected = Tab.entries[tab] == Tab.SETTINGS, modifier = Modifier.focusRequester(tabRequesters[Tab.SETTINGS.ordinal])) { tab = Tab.SETTINGS.ordinal; stack.clear(); FocusMemory.clear() }
         }
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -214,11 +225,12 @@ fun AppRoot(onLoaded: () -> Unit) {
             when {
                 loading -> Message("Carregando…")
                 nothingAdded && Tab.entries[tab] != Tab.SETTINGS -> Welcome(onTyped = { url, name, epg -> addLink(context, url, name, epg) })
-                top is Detail.OfShow -> holder.SaveableStateProvider("show:${top.show.key}") { SeriesDetailScreen(top.show) }
-                top is Detail.OfMovie -> holder.SaveableStateProvider("movie:${top.entry.url}") { MovieDetailScreen(top.entry, nav) }
-                top is Detail.Category -> holder.SaveableStateProvider("cat:${top.type}:${top.group}") { CategoryScreen(library, top.type, top.group, nav) }
-                // troca de aba com um fade rápido
-                else -> androidx.compose.animation.Crossfade(Tab.entries[tab], animationSpec = androidx.compose.animation.core.tween(180), label = "tab") { t ->
+                else -> {
+                // a aba continua montada (invisível e sem foco) por baixo dos detalhes: ao voltar,
+                // a lista, a busca e a rolagem estão do mesmo jeito e o foco volta para o cartão
+                androidx.compose.runtime.CompositionLocalProvider(LocalFocusEnabled provides (top == null)) {
+                Box(Modifier.fillMaxSize().graphicsLayer { alpha = if (top == null) 1f else 0f }) {
+                androidx.compose.animation.Crossfade(Tab.entries[tab], animationSpec = androidx.compose.animation.core.tween(180), label = "tab") { t ->
                     holder.SaveableStateProvider("tab:${t.name}") { when (t) {
                         Tab.HOME -> HomeScreen(library, nav)
                         Tab.LIVE -> LiveScreen(library)
@@ -229,16 +241,54 @@ fun AppRoot(onLoaded: () -> Unit) {
                         Tab.SETTINGS -> SettingsScreen()
                     } }
                 }
+                }
+                }
+                if (top != null) Box(Modifier.fillMaxSize().background(Palette.Background)) {
+                    when (top) {
+                        is Detail.OfShow -> holder.SaveableStateProvider("show:${top.show.key}") { SeriesDetailScreen(top.show) }
+                        is Detail.OfMovie -> holder.SaveableStateProvider("movie:${top.entry.url}") { MovieDetailScreen(top.entry, nav) }
+                        is Detail.Category -> holder.SaveableStateProvider("cat:${top.type}:${top.group}") { CategoryScreen(library, top.type, top.group, nav) }
+                    }
+                }
+                }
             }
         }
     }
 }
 
+private val detailJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+
+/** Guarda a pilha de telas como texto (sobrevive se o Android recriar a tela do app). */
+private val detailSaver = androidx.compose.runtime.saveable.listSaver<androidx.compose.runtime.snapshots.SnapshotStateList<Detail>, String>(
+    save = { list ->
+        list.map { d ->
+            when (d) {
+                is Detail.OfShow -> "s" + detailJson.encodeToString(Show.serializer(), d.show)
+                is Detail.OfMovie -> "m" + detailJson.encodeToString(dev.guisousa.minhatv.data.Entry.serializer(), d.entry)
+                is Detail.Category -> "c" + d.type.ordinal + "|" + d.group
+            }
+        }
+    },
+    restore = { saved ->
+        val out = mutableStateListOf<Detail>()
+        saved.forEach { s ->
+            runCatching {
+                when (s[0]) {
+                    's' -> Detail.OfShow(detailJson.decodeFromString(Show.serializer(), s.substring(1)))
+                    'm' -> Detail.OfMovie(detailJson.decodeFromString(dev.guisousa.minhatv.data.Entry.serializer(), s.substring(1)))
+                    else -> s.substring(1).let { r -> Detail.Category(ContentType.entries[r.substringBefore('|').toInt()], r.substringAfter('|')) }
+                }
+            }.getOrNull()?.let { out += it }
+        }
+        out
+    },
+)
+
 class Nav(val openShow: (Show) -> Unit, val openMovie: (dev.guisousa.minhatv.data.Entry) -> Unit, val openCategory: (ContentType, String) -> Unit)
 
 @Composable
-private fun IconNav(icon: androidx.compose.ui.graphics.vector.ImageVector, description: String, selected: Boolean, onClick: () -> Unit) {
-    FocusBox(onClick = onClick, focusScale = 1f, background = if (selected) Palette.SurfaceHigh else androidx.compose.ui.graphics.Color.Transparent, shape = RoundedCornerShape(50)) { focused ->
+private fun IconNav(icon: androidx.compose.ui.graphics.vector.ImageVector, description: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    FocusBox(onClick = onClick, modifier = modifier, focusScale = 1f, background = if (selected) Palette.SurfaceHigh else androidx.compose.ui.graphics.Color.Transparent, shape = RoundedCornerShape(50)) { focused ->
         androidx.compose.material3.Icon(
             icon, contentDescription = description,
             tint = if (focused) Palette.OnFocus else if (selected) Palette.Text else Palette.TextDim,

@@ -254,6 +254,12 @@ fun RowsScreen(lib: Library, type: ContentType, nav: Nav) {
         FocusHeader(header.title ?: (if (type == ContentType.SERIES) "Séries" else "Filmes"), header.subtitle ?: "${groups.size} categorias", image = header.image, detail = header.detail, logo = header.isLogo)
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 48.dp)) {
             // igual ao Saimo: Lançamentos, uma fileira por gênero e no fim "Todos de A a Z"
+            // atalho logo no topo para a grade com tudo de A a Z
+            item("all-top") {
+                Row(Modifier.padding(start = 48.dp, top = 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    TvButton("Todos de A a Z  ·  ${groups.sumOf { it.count }}", onClick = { nav.openCategory(type, ALL_GROUP) })
+                }
+            }
             item("releases") { ReleasesRow(lib, type, nav, header) }
             groups.forEach { g ->
                 item(g.name) {
@@ -317,7 +323,7 @@ fun LiveScreen(lib: Library) {
     if (lib.liveTotal == 0) { Message("Nenhum canal ao vivo", "As listas adicionadas não têm canais ao vivo (ou ainda estão carregando)."); return }
     var group by rememberSaveable(lib.version) { mutableStateOf(defaultGroup(lib.liveGroups, lib.liveTotal)) }
     val channels = load(lib.version, group) { Repository.entries(ContentType.LIVE, group) }
-    var focused by remember { mutableStateOf<Entry?>(null) }
+    var focused by remember(group) { mutableStateOf<Entry?>(null) }
     Row(Modifier.fillMaxSize().padding(top = 8.dp)) {
         GroupColumn(lib.liveGroups, lib.liveTotal, group) { group = it }
         Box(Modifier.weight(1f)) {
@@ -486,7 +492,7 @@ fun SearchScreen(lib: Library, nav: Nav) {
                     color = if (focused) Palette.OnFocus else if (query.isBlank()) Palette.TextFaint else Palette.Text,
                 )
             }
-            if (searching) { Spacer(Modifier.width(16.dp)); Spinner(22.dp); Spacer(Modifier.width(10.dp)); Text("Buscando…", fontSize = 14.sp, color = Palette.TextDim) }
+            if (searching) { Spacer(Modifier.width(16.dp)); Spinner(22.dp); Spacer(Modifier.width(10.dp)); Text(if (results == null) "Buscando…" else "Procurando mais resultados…", fontSize = 14.sp, color = Palette.TextDim) }
         }
         if (query.isBlank()) {
             val recent = remember { Repository.recentSearches() }

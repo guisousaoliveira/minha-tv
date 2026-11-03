@@ -17,6 +17,7 @@ data class Health(val ok: Boolean, val fails: Int, val checked: Long, val ms: Lo
 }
 
 /** Série (episódios ficam no banco e são lidos ao abrir). */
+@kotlinx.serialization.Serializable
 data class Show(val key: String, val name: String, val group: String, val logo: String?, val episodeCount: Int)
 
 /**
@@ -181,12 +182,13 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
         val seen = HashSet<String>()
         val entries = ArrayList<Entry>()
         fun add(list: List<Entry>) = list.forEach { if (entries.size < limit && seen.add(it.url)) entries += it }
-        for (t in listOf(0, 1)) add(query("norm >= ? AND norm < ? AND type = $t LIMIT $limit", arrayOf(n, end)))
+        // "+type" impede o SQLite de escolher o índice de tipo (que varria a tabela inteira: 35 s na TV)
+        for (t in listOf(0, 1)) add(query("norm >= ? AND norm < ? AND +type = $t LIMIT $limit", arrayOf(n, end)))
         if (!quick && entries.size < limit) add(query("type != 2 AND norm LIKE ? LIMIT $limit", arrayOf("%$n%")))
         entries.sortBy { it.type.ordinal }
 
         fun shows(where: String, args: Array<String>) = readableDatabase.rawQuery(
-            "SELECT show_key, MIN(series), MIN(grp), MAX(logo), COUNT(DISTINCT CASE WHEN episode IS NULL THEN 'u' || id ELSE COALESCE(season, 0) || 'x' || episode END) FROM entries WHERE type = 2 AND $where GROUP BY show_key LIMIT 100", args,
+            "SELECT show_key, MIN(series), MIN(grp), MAX(logo), COUNT(DISTINCT CASE WHEN episode IS NULL THEN 'u' || id ELSE COALESCE(season, 0) || 'x' || episode END) FROM entries WHERE +type = 2 AND $where GROUP BY show_key LIMIT 100", args,
         ).use { c -> c.map { Show(it.getString(0), Normalize.displayCached(it.getString(1)).title, it.getString(2), it.getStringOrNull(3), it.getInt(4)) } }
         val showList = LinkedHashMap<String, Show>()
         shows("show_key >= ? AND show_key < ?", arrayOf(n, end)).forEach { showList[it.key] = it }
