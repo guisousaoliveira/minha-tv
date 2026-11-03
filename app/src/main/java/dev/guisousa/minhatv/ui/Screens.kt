@@ -93,7 +93,8 @@ private fun kindOf(type: ContentType) = when (type) {
 private class HeaderState {
     var title by mutableStateOf<String?>(null)
     var subtitle by mutableStateOf<String?>(null)
-    fun show(t: String, s: String?) { title = t; subtitle = s }
+    var image by mutableStateOf<String?>(null)
+    fun show(t: String, s: String?, img: String? = null) { title = t; subtitle = s; image = img }
 }
 
 // ======================= Início =======================
@@ -114,14 +115,14 @@ fun HomeScreen(lib: Library, nav: Nav) {
         return
     }
     Column(Modifier.fillMaxSize()) {
-        FocusHeader(header.title ?: "Início", header.subtitle ?: "Escolha algo para assistir")
+        FocusHeader(header.title ?: "O que vamos assistir?", header.subtitle ?: "Início", image = header.image)
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 48.dp)) {
             if (cont.isNotEmpty()) item("cont") {
                 SectionTitle("Continuar assistindo")
                 MediaRow(cont, POSTER_W) { i, e ->
                     PosterCard(
                         e.name, e.logo, progress = Repository.progress(e.url) ?: 0f,
-                        onFocused = { header.show(e.name, "Continuar · ${e.group}") },
+                        onFocused = { header.show(e.name, "Continuar · ${e.group}", e.logo) },
                         onClick = { PlaybackQueue.start(context, cont, i) },
                     )
                 }
@@ -129,7 +130,7 @@ fun HomeScreen(lib: Library, nav: Nav) {
             if (recentLive.isNotEmpty()) item("recent") {
                 SectionTitle("Assistidos recentemente")
                 MediaRow(recentLive, CHANNEL_W) { i, e ->
-                    ChannelCard(e.name, e.logo, e.group, onFocused = { header.show(e.name, "Canal · ${e.group}") }) {
+                    ChannelCard(e.name, e.logo, e.group, onFocused = { header.show(e.name, "Canal · ${e.group}", e.logo) }) {
                         PlaybackQueue.start(context, recentLive, i)
                     }
                 }
@@ -137,7 +138,7 @@ fun HomeScreen(lib: Library, nav: Nav) {
             if (favLive.isNotEmpty()) item("favlive") {
                 SectionTitle("Meus canais")
                 MediaRow(favLive, CHANNEL_W) { i, e ->
-                    ChannelCard(e.name, e.logo, e.group, onFocused = { header.show(e.name, "Canal · ${e.group}") }) {
+                    ChannelCard(e.name, e.logo, e.group, onFocused = { header.show(e.name, "Canal · ${e.group}", e.logo) }) {
                         PlaybackQueue.start(context, favLive, i)
                     }
                 }
@@ -145,7 +146,7 @@ fun HomeScreen(lib: Library, nav: Nav) {
             if (favVod.isNotEmpty()) item("favvod") {
                 SectionTitle("Minha lista")
                 MediaRow(favVod, POSTER_W) { i, e ->
-                    PosterCard(e.name, e.logo, onFocused = { header.show(e.name, "${kindOf(e.type)} · ${e.group}") }, onClick = {
+                    PosterCard(e.name, e.logo, onFocused = { header.show(e.name, "${kindOf(e.type)} · ${e.group}", e.logo) }, onClick = {
                         PlaybackQueue.start(context, favVod, i)
                     }, onLongClick = { toggleFav(context, e) })
                 }
@@ -178,13 +179,13 @@ private fun EntryRow(lib: Library, type: ContentType, group: String, count: Int,
         seeAllAspect = if (live) 16f / 9f else 2f / 3f,
     ) { i, e ->
         if (live) {
-            ChannelCard(e.name, e.logo, null, onFocused = { header.show(e.name, "Canal · $group") }) {
+            ChannelCard(e.name, e.logo, null, onFocused = { header.show(e.name, "Canal · $group", e.logo) }) {
                 openLiveGroup(context, type, group, e, items, i)
             }
         } else {
             PosterCard(
                 e.name, e.logo, progress = Repository.progress(e.url),
-                onFocused = { header.show(e.name, "Filme · $group") },
+                onFocused = { header.show(e.name, "Filme · $group", e.logo) },
                 onClick = { PlaybackQueue.start(context, listOf(e), 0) },
                 onLongClick = { toggleFav(context, e) },
             )
@@ -207,7 +208,7 @@ private fun ShowRow(lib: Library, group: String, count: Int, nav: Nav, header: H
         seeAll = if (count > shows.size) ({ nav.openCategory(ContentType.SERIES, group) }) else null,
         seeAllCount = count,
     ) { _, s ->
-        PosterCard(s.name, s.logo, onFocused = { header.show(s.name, "Série · ${s.episodeCount} episódios") }, onClick = { nav.openShow(s) })
+        PosterCard(s.name, s.logo, onFocused = { header.show(s.name, "Série · ${s.episodeCount} episódios", s.logo) }, onClick = { nav.openShow(s) })
     }
 }
 
@@ -222,7 +223,7 @@ fun RowsScreen(lib: Library, type: ContentType, nav: Nav) {
         return
     }
     Column(Modifier.fillMaxSize()) {
-        FocusHeader(header.title ?: (if (type == ContentType.SERIES) "Séries" else "Filmes"), header.subtitle ?: "${groups.size} categorias")
+        FocusHeader(header.title ?: (if (type == ContentType.SERIES) "Séries" else "Filmes"), header.subtitle ?: "${groups.size} categorias", image = header.image)
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 48.dp)) {
             groups.forEach { g ->
                 item(g.name) {
@@ -238,8 +239,9 @@ fun RowsScreen(lib: Library, type: ContentType, nav: Nav) {
 @Composable
 fun CategoryScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
     val context = LocalContext.current
+    val header = remember(group) { HeaderState() }
     Column(Modifier.fillMaxSize()) {
-        FocusHeader(group, "Voltar: botão de voltar do controle")
+        FocusHeader(header.title ?: group, header.subtitle ?: group, image = header.image, tall = type != ContentType.LIVE)
         when (type) {
             ContentType.LIVE -> {
                 val items = load(lib.version, group) { Repository.entries(type, group) }
@@ -247,30 +249,32 @@ fun CategoryScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
             }
             ContentType.MOVIE -> {
                 val items = load(lib.version, group) { Repository.entries(type, group) }
-                if (items == null) Loading() else PosterGrid(items.size, { i -> items[i].name }, { i -> items[i].logo }) { i ->
-                    PlaybackQueue.start(context, listOf(items[i]), 0)
-                }
+                if (items == null) Loading() else PosterGrid(
+                    items.size, { i -> items[i].name }, { i -> items[i].logo },
+                    onFocused = { i -> header.show(items[i].name, "Filme · $group", items[i].logo) },
+                ) { i -> PlaybackQueue.start(context, listOf(items[i]), 0) }
             }
             ContentType.SERIES -> {
                 val shows = load(lib.version, group) { Repository.shows(group) }
-                if (shows == null) Loading() else PosterGrid(shows.size, { i -> shows[i].name }, { i -> shows[i].logo }) { i ->
-                    nav.openShow(shows[i])
-                }
+                if (shows == null) Loading() else PosterGrid(
+                    shows.size, { i -> shows[i].name }, { i -> shows[i].logo },
+                    onFocused = { i -> header.show(shows[i].name, "Série · ${shows[i].episodeCount} episódios", shows[i].logo) },
+                ) { i -> nav.openShow(shows[i]) }
             }
         }
     }
 }
 
 @Composable
-private fun PosterGrid(count: Int, title: (Int) -> String, image: (Int) -> String?, onClick: (Int) -> Unit) {
+private fun PosterGrid(count: Int, title: (Int) -> String, image: (Int) -> String?, onFocused: (Int) -> Unit, onClick: (Int) -> Unit) {
     LazyVerticalGrid(
         columns = GridCells.Adaptive(POSTER_W),
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 48.dp, end = 48.dp, top = 8.dp, bottom = 48.dp),
+        contentPadding = PaddingValues(start = 48.dp, end = 48.dp, top = 12.dp, bottom = 48.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-        itemsIndexed(List(count) { it }) { _, i -> PosterCard(title(i), image(i), onClick = { onClick(i) }) }
+        itemsIndexed(List(count) { it }) { _, i -> PosterCard(title(i), image(i), onFocused = { onFocused(i) }, onClick = { onClick(i) }) }
     }
 }
 
@@ -281,14 +285,37 @@ fun LiveScreen(lib: Library) {
     if (lib.liveTotal == 0) { Message("Nenhum canal ao vivo", "As listas adicionadas não têm canais ao vivo (ou ainda estão carregando)."); return }
     var group by rememberSaveable(lib.version) { mutableStateOf(defaultGroup(lib.liveGroups, lib.liveTotal)) }
     val channels = load(lib.version, group) { Repository.entries(ContentType.LIVE, group) }
+    var focused by remember { mutableStateOf<Entry?>(null) }
     Row(Modifier.fillMaxSize().padding(top = 8.dp)) {
         GroupColumn(lib.liveGroups, lib.liveTotal, group) { group = it }
-        if (channels == null) Loading() else ChannelList(channels)
+        Box(Modifier.weight(1f)) {
+            if (channels == null) Loading() else ChannelList(channels, onFocused = { focused = it })
+        }
+        ChannelPreview(focused)
+    }
+}
+
+/** Painel à direita com o canal em foco: logo grande, o que passa agora e as fontes. */
+@Composable
+private fun ChannelPreview(e: Entry?) {
+    val epg by Repository.epg.collectAsState()
+    val now = nowTicker()
+    val sourceCount = load(e?.url) { e?.let { Repository.alternates(it).size + 1 } ?: 0 }
+    Column(Modifier.width(300.dp).padding(end = 48.dp, top = 4.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (e == null) return@Column
+        Logo(e.logo, Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(6.dp)), fallback = e.name)
+        Text(e.name, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Palette.Text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        val cur = epg.current(e, now)
+        val next = epg.next(e, now)
+        if (cur != null) Text("Agora · ${cur.title}", fontSize = 14.sp, color = Palette.TextDim, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        if (next != null) Text("${timeFmt.format(Date(next.start))} · ${next.title}", fontSize = 14.sp, color = Palette.TextFaint, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        if (cur == null && next == null) Text(e.group, fontSize = 14.sp, color = Palette.TextDim, maxLines = 2)
+        if ((sourceCount ?: 0) > 1) Text("$sourceCount fontes · troca sozinho se uma falhar", fontSize = 13.sp, color = Palette.TextFaint)
     }
 }
 
 @Composable
-fun ChannelList(channels: List<Entry>, modifier: Modifier = Modifier) {
+fun ChannelList(channels: List<Entry>, modifier: Modifier = Modifier, onFocused: ((Entry) -> Unit)? = null) {
     val context = LocalContext.current
     val epg by Repository.epg.collectAsState()
     val favorites by Repository.favorites.collectAsState()
@@ -296,13 +323,14 @@ fun ChannelList(channels: List<Entry>, modifier: Modifier = Modifier) {
     if (channels.isEmpty()) { Message("Nada aqui"); return }
     LazyColumn(
         modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 8.dp, end = 48.dp, top = 4.dp, bottom = 48.dp),
+        contentPadding = PaddingValues(start = 8.dp, end = 24.dp, top = 4.dp, bottom = 48.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         itemsIndexed(channels) { i, e ->
             FocusBox(
                 onClick = { PlaybackQueue.start(context, channels, i) },
                 onLongClick = { toggleFav(context, e) },
+                onFocused = onFocused?.let { cb -> { cb(e) } },
                 modifier = Modifier.fillMaxWidth(),
                 focusScale = 1.01f,
                 background = Palette.Surface,
@@ -372,6 +400,19 @@ fun SeriesDetailScreen(show: Show) {
                 fontSize = 15.sp, color = Palette.TextDim,
             )
             Spacer(Modifier.height(16.dp))
+            val resumeAt = remember(all) { all.indexOfFirst { Repository.progress(it.url) != null }.takeIf { it >= 0 } ?: 0 }
+            val target = all[resumeAt]
+            val label = (if (Repository.progress(target.url) != null) "Continuar" else "Assistir") +
+                (if (target.season != null && target.episode != null) " T${target.season}:E${target.episode}" else "")
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                TvButton(label, onClick = {
+                    val list = seasons.firstOrNull { it.first == (target.season ?: 0) }?.second ?: all
+                    PlaybackQueue.start(context, list, list.indexOfFirst { it.url == target.url }.coerceAtLeast(0))
+                })
+                val favs by Repository.favorites.collectAsState()
+                TvButton(if (target.url in favs) "Na Minha lista" else "+ Minha lista", onClick = { toggleFav(context, target) })
+            }
+            Spacer(Modifier.height(16.dp))
             if (seasons.size > 1) {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(vertical = 4.dp)) {
                     items(seasons) { (s, _) ->
@@ -417,6 +458,7 @@ fun SeriesDetailScreen(show: Show) {
 @Composable
 fun MyListScreen(lib: Library, nav: Nav) {
     val context = LocalContext.current
+    val header = remember { HeaderState() }
     val favorites by Repository.favorites.collectAsState()
     val items = load(lib.version, favorites) { Repository.favoriteEntries() }
     when {
@@ -428,17 +470,26 @@ fun MyListScreen(lib: Library, nav: Nav) {
         else -> {
             val live = items.filter { it.type == ContentType.LIVE }
             val vod = items.filter { it.type != ContentType.LIVE }
+            Column(Modifier.fillMaxSize()) {
+            FocusHeader(header.title ?: "Minha lista", header.subtitle ?: "${items.size} itens", image = header.image)
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(top = 8.dp, bottom = 48.dp)) {
                 if (live.isNotEmpty()) item("live") {
                     SectionTitle("Canais", trailing = "${live.size}")
-                    MediaRow(live, CHANNEL_W) { i, e -> ChannelCard(e.name, e.logo, e.group) { PlaybackQueue.start(context, live, i) } }
+                    MediaRow(live, CHANNEL_W) { i, e ->
+                        ChannelCard(e.name, e.logo, e.group, onFocused = { header.show(e.name, "Canal · ${e.group}", e.logo) }) { PlaybackQueue.start(context, live, i) }
+                    }
                 }
                 if (vod.isNotEmpty()) item("vod") {
                     SectionTitle("Filmes e episódios", trailing = "${vod.size}")
                     MediaRow(vod, POSTER_W) { i, e ->
-                        PosterCard(e.name, e.logo, progress = Repository.progress(e.url), onClick = { PlaybackQueue.start(context, vod, i) }, onLongClick = { toggleFav(context, e) })
+                        PosterCard(
+                            e.name, e.logo, progress = Repository.progress(e.url),
+                            onFocused = { header.show(e.name, "${kindOf(e.type)} · ${e.group}", e.logo) },
+                            onClick = { PlaybackQueue.start(context, vod, i) }, onLongClick = { toggleFav(context, e) },
+                        )
                     }
                 }
+            }
             }
         }
     }
@@ -449,6 +500,7 @@ fun MyListScreen(lib: Library, nav: Nav) {
 @Composable
 fun SearchScreen(lib: Library, nav: Nav) {
     val context = LocalContext.current
+    val header = remember { HeaderState() }
     var query by rememberSaveable { mutableStateOf("") }
     val results = load(lib.version, query) {
         val q = query.trim()
@@ -477,20 +529,28 @@ fun SearchScreen(lib: Library, nav: Nav) {
         if (entries.isEmpty() && shows.isEmpty()) { Message("Nada encontrado para \"$query\""); return@Column }
         val live = entries.filter { it.type == ContentType.LIVE }
         val movies = entries.filter { it.type == ContentType.MOVIE }
+        FocusHeader(header.title ?: "Resultados", header.subtitle ?: "\"$query\"", image = header.image)
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(top = 8.dp, bottom = 48.dp)) {
             if (live.isNotEmpty()) item("live") {
                 SectionTitle("Canais", trailing = "${live.size}")
-                MediaRow(live, CHANNEL_W) { i, e -> ChannelCard(e.name, e.logo, e.group) { PlaybackQueue.start(context, live, i) } }
+                MediaRow(live, CHANNEL_W) { i, e ->
+                    ChannelCard(e.name, e.logo, e.group, onFocused = { header.show(e.name, "Canal · ${e.group}", e.logo) }) { PlaybackQueue.start(context, live, i) }
+                }
             }
             if (movies.isNotEmpty()) item("movies") {
                 SectionTitle("Filmes", trailing = "${movies.size}")
                 MediaRow(movies, POSTER_W) { _, e ->
-                    PosterCard(e.name, e.logo, onClick = { PlaybackQueue.start(context, listOf(e), 0) }, onLongClick = { toggleFav(context, e) })
+                    PosterCard(
+                        e.name, e.logo, onFocused = { header.show(e.name, "Filme · ${e.group}", e.logo) },
+                        onClick = { PlaybackQueue.start(context, listOf(e), 0) }, onLongClick = { toggleFav(context, e) },
+                    )
                 }
             }
             if (shows.isNotEmpty()) item("shows") {
                 SectionTitle("Séries", trailing = "${shows.size}")
-                MediaRow(shows, POSTER_W) { _, s -> PosterCard(s.name, s.logo, onClick = { nav.openShow(s) }) }
+                MediaRow(shows, POSTER_W) { _, s ->
+                    PosterCard(s.name, s.logo, onFocused = { header.show(s.name, "Série · ${s.episodeCount} episódios", s.logo) }, onClick = { nav.openShow(s) })
+                }
             }
         }
     }

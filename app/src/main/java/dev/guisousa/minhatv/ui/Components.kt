@@ -264,15 +264,6 @@ fun PosterCard(
             }
             if (progress != null) ProgressLine(progress, Modifier.align(Alignment.BottomStart))
         }
-        Text(
-            title,
-            modifier = Modifier.padding(top = 8.dp, start = 2.dp, end = 2.dp).height(36.dp),
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            fontSize = 13.sp,
-            lineHeight = 17.sp,
-            color = Palette.TextDim,
-        )
     }
 }
 
@@ -306,24 +297,36 @@ fun ProgressLine(fraction: Float, modifier: Modifier = Modifier) {
     }
 }
 
-/** Faixa com o nome e detalhes do item focado, no topo das telas (como nos apps de streaming). */
+/** Destaque no topo: o item focado em letras grandes, com a imagem dele à direita. */
 @Composable
-fun FocusHeader(title: String?, subtitle: String?, modifier: Modifier = Modifier) {
-    Box(
+fun FocusHeader(title: String?, subtitle: String?, modifier: Modifier = Modifier, image: String? = null, tall: Boolean = true) {
+    Row(
         modifier
             .fillMaxWidth()
-            .height(120.dp)
-            .background(Brush.verticalGradient(listOf(Color(0xFF151515), Palette.Background)))
-            .padding(horizontal = 48.dp, vertical = 16.dp),
+            .height(if (tall) 210.dp else 110.dp)
+            .background(Brush.horizontalGradient(listOf(Palette.Background, Palette.Background, Color(0xFF1A1A1A))))
+            .padding(start = 48.dp, end = 48.dp, top = 12.dp, bottom = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(40.dp),
     ) {
-        Column(Modifier.align(Alignment.BottomStart)) {
-            Text(
-                title ?: "", fontSize = 30.sp, fontWeight = FontWeight.Bold, color = Palette.Text,
-                maxLines = 1, overflow = TextOverflow.Ellipsis,
-            )
+        Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.Bottom) {
             if (!subtitle.isNullOrBlank()) {
-                Spacer(Modifier.height(4.dp))
-                Text(subtitle, fontSize = 15.sp, color = Palette.TextDim, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    subtitle.uppercase(), fontSize = 12.sp, letterSpacing = 2.sp, fontWeight = FontWeight.SemiBold,
+                    color = Palette.TextDim, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+            Text(
+                title ?: "", fontSize = if (tall) 38.sp else 30.sp, fontWeight = FontWeight.Bold, color = Palette.Text,
+                lineHeight = if (tall) 44.sp else 36.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (tall) {
+            Box(Modifier.width(420.dp).fillMaxHeight().clip(RoundedCornerShape(6.dp)).background(Color(0xFF1B1B1B))) {
+                if (!image.isNullOrBlank()) {
+                    AsyncImage(model = image, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                    Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(Color(0xCC000000), Color.Transparent))))
+                }
             }
         }
     }
