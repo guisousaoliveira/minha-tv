@@ -121,18 +121,17 @@ class PlayerActivity : ComponentActivity() {
             val exo = player
             val state = exo?.playbackState
             if (exo != null && exo.playWhenReady && !reconnecting) {
-                if (state == Player.STATE_READY) {
+                if (isLive) {
+                    liveWatch(exo)
+                } else if (state == Player.STATE_READY) {
                     // só a posição decide: o contador de quadros não é confiável em todas as TVs
                     val pos = exo.currentPosition
                     if (lastPos >= 0 && pos == lastPos) frozenFor += 2000 else if (frozenFor > 0 || lastPos >= 0) frozenFor = 0
                     lastPos = pos
-                } else if (isLive && (state == Player.STATE_ENDED || state == Player.STATE_IDLE) && exo.playerError == null) {
-                    // ao vivo parado no "fim" ou sem nada carregando: também é travamento
-                    frozenFor += 2000
                 } else {
                     frozenFor = 0
                 }
-                if (frozenFor >= 8000) {
+                if (!isLive && frozenFor >= 8000) {
                     frozenFor = 0
                     android.util.Log.w("MinhaTV", "player: imagem parada (estado $state), reconectando")
                     reconnect("O vídeo travou, reconectando…")
@@ -156,6 +155,81 @@ class PlayerActivity : ComponentActivity() {
     private var lastReconnectAt = 0L
     private var limitRetried = false
     private val liveEnds = ArrayDeque<Long>()
+
+    // ---- Ao vivo, regras copiadas do player do Saimo TV ----
+    /** Reaberturas seguidas da mesma fonte (máx. 8). Zera quando fica pronto ou o vídeo anda. */
+    private var sameReopens = 0
+    /** Última vez que o canal estava tocando (pronto ou posição andando). */
+    private var lastPlayingAt = 0L
+    /** Já apareceu a primeira imagem desta fonte. */
+    private var firstFrame = false
+    /** Rodadas em que todas as fontes falharam (máx. 6, espera min(1,6^n s, 15 s)). */
+    private var rounds = 0
+    private var livePos = -1L
+    private var liveStillMs = 0L
+    private val tlWindow = androidx.media3.common.Timeline.Window()
+
+    /** 12 s sem a primeira imagem: vai para a próxima fonte. */
+    private val firstFrameWatch = Runnable {
+        if (isLive && !firstFrame && !isFinishing) {
+            android.util.Log.w("MinhaTV", "player: 12 s sem imagem, próxima fonte")
+            nextOrRound(frozen = true)
+        }
+    }
+
+    /** A cada 2 s: se deveria estar tocando e a posição não andou mais de 0,5 s por 12 s, reabre a mesma fonte. */
+    private fun liveWatch(exo: ExoPlayer) {
+        if (!firstFrame) return // quem cuida da abertura é o vigia da primeira imagem
+        val tl = exo.currentTimeline
+        val offset = if (tl.isEmpty) 0L else tl.getWindow(exo.currentMediaItemIndex, tlWindow).positionInFirstPeriodMs.coerceAtLeast(0)
+        val pos = exo.currentPosition + offset
+        if (livePos < 0 || pos - livePos > 500) {
+            if (livePos >= 0) { sameReopens = 0; lastPlayingAt = System.currentTimeMillis() }
+            livePos = pos; liveStillMs = 0
+            return
+        }
+        liveStillMs += 2000
+        if (liveStillMs >= 12_000) {
+            liveStillMs = 0
+            android.util.Log.w("MinhaTV", "player: imagem parada 12 s, reabrindo a mesma fonte")
+            if (!reopenSame("O vídeo travou, reconectando…")) nextOrRound(frozen = true)
+        }
+    }
+
+    /** Reabre a mesma fonte do zero, na hora. Devolve false se já tentou 8 vezes seguidas. */
+    private fun reopenSame(message: String): Boolean {
+        if (sameReopens >= 8) return false
+        sameReopens++
+        android.util.Log.w("MinhaTV", "player: reabrindo a mesma fonte ($sameReopens de 8)")
+        loadingText.text = message
+        loadingBox.visibility = View.VISIBLE
+        val src = playing ?: current
+        handler.post { if (!isFinishing) playSource(src, resume = false) }
+        return true
+    }
+
+    /** Próxima fonte; se acabaram, nova rodada desde a primeira com espera min(1,6^n s, 15 s), até 6 rodadas. */
+    private fun nextOrRound(frozen: Boolean) {
+        sameReopens = 0
+        if (nextSource(frozen)) return
+        if (rounds >= 6) {
+            hideLoading()
+            player?.stop()
+            notice("Este canal não abriu em nenhuma fonte. Aperte OK e escolha outro em Canais.", 15_000)
+            return
+        }
+        rounds++
+        val wait = (Math.pow(1.6, rounds.toDouble()) * 1000).toLong().coerceAtMost(15_000L)
+        android.util.Log.w("MinhaTV", "player: todas as fontes falharam, rodada $rounds de 6 em ${wait}ms")
+        loadingText.text = "Canal instável, tentando de novo em ${(wait + 999) / 1000} s"
+        loadingBox.visibility = View.VISIBLE
+        val mine = index
+        handler.postDelayed({
+            if (index != mine || isFinishing) return@postDelayed
+            sourceIndex = -1
+            if (!nextSource(frozen)) playSource(current, resume = false)
+        }, wait)
+    }
 
     /**
      * Abre a fonte de novo do zero (conexão nova). Se a mesma fonte cair 3 vezes em 1 minuto,
@@ -208,11 +282,28 @@ class PlayerActivity : ComponentActivity() {
         // a conexão ficava ociosa uns 40 s e o servidor do canal derrubava, fazendo a imagem piscar.
         // ao vivo: reserva pequena (10 s) e começa rápido, como os apps de IPTV; filme: reserva grande
         val live = items[index].type == ContentType.LIVE
+        // ao vivo igual ao Saimo: 32 s / 120 s / 1,5 s / 5 s e 96 MB; aparelho com pouca memória: 15/30/1,5/3 e 32 MB
+        val am = getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager
+        val mem = android.app.ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }
+        val lowRam = am.isLowRamDevice || mem.totalMem <= 1_610_612_736L
         val loadControl = DefaultLoadControl.Builder()
-            .apply { if (live) setBufferDurationsMs(30_000, 30_000, 2_500, 4_000) else setBufferDurationsMs(40_000, 40_000, 1_500, 3_000) }
-            .setPrioritizeTimeOverSizeThresholds(true)
+            .apply {
+                when {
+                    live && lowRam -> setBufferDurationsMs(15_000, 30_000, 1_500, 3_000).setTargetBufferBytes(32 * 1024 * 1024).setPrioritizeTimeOverSizeThresholds(false)
+                    live -> setBufferDurationsMs(32_000, 120_000, 1_500, 5_000).setTargetBufferBytes(96 * 1024 * 1024).setPrioritizeTimeOverSizeThresholds(true)
+                    else -> setBufferDurationsMs(40_000, 40_000, 1_500, 3_000).setPrioritizeTimeOverSizeThresholds(true)
+                }
+            }
             .build()
-        val exo = ExoPlayer.Builder(this).setLoadControl(loadControl).build()
+        val exo = ExoPlayer.Builder(this)
+            .setLoadControl(loadControl)
+            .setRenderersFactory(androidx.media3.exoplayer.DefaultRenderersFactory(this).setEnableDecoderFallback(true))
+            .setBandwidthMeter(androidx.media3.exoplayer.upstream.DefaultBandwidthMeter.Builder(this).setInitialBitrateEstimate(8_000_000L).build())
+            .setLivePlaybackSpeedControl(
+                androidx.media3.exoplayer.DefaultLivePlaybackSpeedControl.Builder()
+                    .setFallbackMinPlaybackSpeed(1.0f).setFallbackMaxPlaybackSpeed(1.04f).build(),
+            )
+            .build()
         exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
             .setPreferredAudioLanguages("pt", "por", "pt-BR")
             .build()
@@ -251,12 +342,17 @@ class PlayerActivity : ComponentActivity() {
         exo.addListener(object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) = handleError(error)
 
+            override fun onRenderedFirstFrame() {
+                firstFrame = true
+                handler.removeCallbacks(firstFrameWatch)
+            }
+
             override fun onPlaybackStateChanged(state: Int) {
                 when (state) {
                     Player.STATE_BUFFERING -> {
                         handler.postDelayed(showLoading, 400)
                         handler.removeCallbacks(stallCheck)
-                        handler.postDelayed(stallCheck, if (isLive) 10_000 else 12_000)
+                        if (!isLive) handler.postDelayed(stallCheck, 12_000)
                     }
                     Player.STATE_READY -> {
                         retries = 0
@@ -265,6 +361,9 @@ class PlayerActivity : ComponentActivity() {
                         sourcePlayed = true
                         reopenFails = 0
                         wraps = 0
+                        sameReopens = 0
+                        rounds = 0
+                        lastPlayingAt = System.currentTimeMillis()
                         hideLoading()
                         playing?.url?.let { if (it != markedWorking) { markedWorking = it; Repository.markWorking(it) } }
                     }
@@ -272,7 +371,7 @@ class PlayerActivity : ComponentActivity() {
                         if (isLive) {
                             // o servidor encerrou a transmissão: ao vivo não tem fim, então reconecta na hora
                             android.util.Log.w("MinhaTV", "player: transmissão ao vivo encerrada pelo servidor, reconectando")
-                            reconnect("Reconectando…")
+                            if (!reopenSame("Reconectando…")) nextOrRound(frozen = true)
                         } else {
                             hideLoading()
                             if (index < items.size - 1) play(index + 1)
@@ -404,7 +503,7 @@ class PlayerActivity : ComponentActivity() {
         syncQueue()
         index = ((i % items.size) + items.size) % items.size
         retries = 0
-        sourcePlayed = false; reopenFails = 0; wraps = 0
+        sourcePlayed = false; reopenFails = 0; wraps = 0; sameReopens = 0; rounds = 0; lastPlayingAt = 0L
         val e = current
         Repository.addRecent(e)
         if (isLive) Repository.lastChannelUrl = e.url
@@ -459,12 +558,17 @@ class PlayerActivity : ComponentActivity() {
         playing = src
         lastPos = -1L; lastFrames = -1; frozenFor = -4000 // dá uns segundos para começar
         readyOnce = false
-        val http = DefaultHttpDataSource.Factory()
-            .setUserAgent(src.userAgent ?: Repository.DEFAULT_UA)
-            .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(12_000)
-            .setReadTimeoutMs(20_000)
-        src.referrer?.let { http.setDefaultRequestProperties(mapOf("Referer" to it)) }
+        firstFrame = false
+        livePos = -1L; liveStillMs = 0
+        handler.removeCallbacks(firstFrameWatch)
+        if (isLive) handler.postDelayed(firstFrameWatch, 12_000)
+        // conexão igual à do Saimo: OkHttp, UA do Safari (se a lista não definir outro) e Accept */*
+        val http = androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(PlayerHttp.client)
+            .setUserAgent(src.userAgent ?: PlayerHttp.SAFARI_UA)
+            .setDefaultRequestProperties(buildMap {
+                put("Accept", "*/*")
+                src.referrer?.let { put("Referer", it) }
+            })
         // ao vivo de servidor Xtream: toca a versão HLS (.m3u8) do mesmo canal, como os apps de IPTV.
         // O .ts direto é cortado pelo servidor a cada poucos segundos; se o HLS não abrir, volta para o .ts.
         val hls = if (isLive && !hlsFailed.contains(src.url)) hlsVariant(src.url) else null
@@ -474,13 +578,10 @@ class PlayerActivity : ComponentActivity() {
         val base = DefaultDataSource.Factory(this, StableRedirectDataSource.Factory(http))
         // ao vivo: playlist que dá 404/403/410 não volta repetindo o mesmo endereço (é link com prazo).
         // Desiste na hora para reabrir o canal pelo link original, em vez de ficar ~24 s tentando com a tela parada.
-        val retry404 = object : androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy(6) {
+        val retry404 = object : androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy() {
             override fun getRetryDelayMsFor(info: androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy.LoadErrorInfo): Long {
                 val code = (info.exception as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)?.responseCode
-                if (isLive && code != null && code in 400..499) {
-                    if (info.mediaLoadData.dataType == C.DATA_TYPE_MANIFEST) return C.TIME_UNSET
-                    if (info.errorCount <= 2) return 500L * info.errorCount
-                }
+                if (isLive && code != null && code in 400..499 && info.mediaLoadData.dataType == C.DATA_TYPE_MANIFEST) return C.TIME_UNSET
                 return super.getRetryDelayMsFor(info)
             }
         }
@@ -488,11 +589,10 @@ class PlayerActivity : ComponentActivity() {
         val item = MediaItem.Builder()
             .setUri(url)
             .apply {
-                // ao vivo: fica uns 15 s atrás do "agora". Com 30 s (padrão) o servidor já tinha apagado
-                // os pedaços pedidos (404 a cada 33 s); com 6-8 s ficava sem folga e engasgava.
+                // ao vivo: sem atraso fixo (igual ao Saimo), quem decide é a própria playlist;
+                // só nunca desacelera e acelera no máximo 4% para alcançar o vivo
                 if (isLive) setLiveConfiguration(
-                    MediaItem.LiveConfiguration.Builder()
-                        .setTargetOffsetMs(15_000).setMinOffsetMs(10_000).setMaxOffsetMs(20_000).build(),
+                    MediaItem.LiveConfiguration.Builder().setMinPlaybackSpeed(1.0f).setMaxPlaybackSpeed(1.04f).build(),
                 )
             }
 
@@ -517,6 +617,7 @@ class PlayerActivity : ComponentActivity() {
 
     private fun handleError(error: PlaybackException) {
         val exo = player ?: return
+        if (isLive) { handleLiveError(error); return }
         if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
             exo.seekToDefaultPosition(); exo.prepare(); return
         }
@@ -574,6 +675,25 @@ class PlayerActivity : ComponentActivity() {
         if (isLive) { retryFromStart(); return }
         hideLoading()
         notice("Não foi possível abrir este conteúdo.", 8000)
+    }
+
+    /**
+     * Erro no ao vivo, regra do Saimo: se o canal estava tocando há menos de 30 s (ou ficou para trás
+     * da janela ao vivo), reabre a MESMA fonte na hora, até 8 vezes. Senão, próxima fonte.
+     */
+    private fun handleLiveError(error: PlaybackException) {
+        val http = (error.cause as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)?.responseCode
+        android.util.Log.w("MinhaTV", "player: erro ao vivo ${error.errorCodeName} http=$http")
+        handler.removeCallbacks(firstFrameWatch)
+        val recent = lastPlayingAt > 0 && System.currentTimeMillis() - lastPlayingAt < 30_000
+        if ((recent || error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) && reopenSame("Reconectando…")) return
+        // a versão HLS (.m3u8) do canal não abriu: tenta o link original (.ts) antes de trocar de fonte
+        if (usingHlsVariant && !readyOnce) {
+            playing?.let { hlsFailed += it.url; android.util.Log.w("MinhaTV", "player: HLS não abriu, usando o .ts"); playSource(it, resume = false) }
+            return
+        }
+        if (!sourcePlayed) playing?.let { Repository.markFailed(it.url) }
+        nextOrRound(frozen = false)
     }
 
     /** Todas as fontes do canal falharam: nunca fica tela preta parada. Recomeça da primeira, esperando cada vez mais. */
