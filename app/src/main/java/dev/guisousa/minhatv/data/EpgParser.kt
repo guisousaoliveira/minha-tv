@@ -40,6 +40,11 @@ object EpgParser {
                     "channel" -> {
                         channelId = parser.getAttributeValue(null, "id")
                         if (channelId != null && channelId in wantedIds) keepIds += channelId
+                        // guias que usam o próprio nome do canal como id ("Globo SP")
+                        channelId?.let { id ->
+                            val n = Normalize.name(id)
+                            if (n.isNotEmpty() && n in wantedNames) { keepIds += id; names.putIfAbsent(n, id) }
+                        }
                     }
                     "display-name" -> if (channelId != null && !inProgramme) {
                         val n = Normalize.name(parser.nextText())

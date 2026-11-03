@@ -35,6 +35,8 @@ object Repository {
 
     const val DEFAULT_UA = "VLC/3.0.20 LibVLC/3.0.20"
     val INTERVAL_OPTIONS = listOf(3, 6, 12, 24)
+    private const val BUILTIN_EPG_URL = "https://raw.githubusercontent.com/marcoshimselfxd/EPG-Scrapper-BR/main/epg.xml"
+    private const val BUILTIN_EPG_FILE = "epg_builtin.json"
 
     private lateinit var app: Context
     private lateinit var prefs: SharedPreferences
@@ -136,7 +138,10 @@ object Repository {
     }
 
     private fun loadEpg() {
-        var epg = EpgData.EMPTY
+        // guia embutido primeiro; o guia de cada lista (se tiver) vem por cima
+        var epg = runCatching {
+            file(BUILTIN_EPG_FILE).takeIf { it.exists() }?.inputStream()?.buffered()?.use { json.decodeFromStream(EpgData.serializer(), it) }
+        }.getOrNull() ?: EpgData.EMPTY
         for (p in _playlists.value) {
             val f = file("epg_${p.id}.json")
             if (f.exists()) runCatching {
@@ -334,6 +339,7 @@ object Repository {
             awaitLoaded()
             val limit = System.currentTimeMillis() - refreshHours * 3_600_000L
             if (_playlists.value.any { it.lastUpdated < limit } || _sources.value.any { it.lastChecked < limit }) refreshAll(onlyStale = true)
+            else if (builtinEpgStale()) { refreshBuiltinEpg(); loadEpg() }
         }
     }
 
@@ -375,9 +381,30 @@ object Repository {
             // mostra os canais desta lista já, sem esperar as outras terminarem
             if (total > 1) runCatching { rebuild() }
         }
+        _status.value = "Baixando guia de programação…"
+        refreshBuiltinEpg()
         _status.value = "Organizando…"
         rebuild()
         _status.value = null
+    }
+
+    private fun builtinEpgStale(): Boolean {
+        val f = file(BUILTIN_EPG_FILE)
+        return !f.exists() || f.lastModified() < System.currentTimeMillis() - 6 * 3_600_000L
+    }
+
+    /** Guia de programação dos canais brasileiros (EPG-Scrapper-BR), casado pelo nome do canal. */
+    private suspend fun refreshBuiltinEpg() = withContext(Dispatchers.IO) {
+        runCatching {
+            val (ids, names) = db.liveKeys(null)
+            if (names.isEmpty() && ids.isEmpty()) return@runCatching
+            val now = System.currentTimeMillis()
+            val data = open(BUILTIN_EPG_URL) { EpgParser.parse(it, ids, names, now - 2 * 3_600_000L, now + 36 * 3_600_000L) }
+            if (data.programmes.isEmpty()) return@runCatching
+            val tmp = file("$BUILTIN_EPG_FILE.tmp")
+            tmp.outputStream().buffered().use { json.encodeToStream(EpgData.serializer(), data, it) }
+            tmp.renameTo(file(BUILTIN_EPG_FILE))
+        }
     }
 
     private suspend fun refreshOne(p: Playlist): Playlist = withContext(Dispatchers.IO) {

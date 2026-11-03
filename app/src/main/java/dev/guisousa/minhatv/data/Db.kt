@@ -156,10 +156,13 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
     fun firstByUrl(url: String): Entry? = query("url = ? LIMIT 1", arrayOf(url)).firstOrNull()
 
     /** Canais ao vivo de uma playlist: ids e nomes para filtrar o guia de programação. */
-    fun liveKeys(playlistId: String): Pair<Set<String>, Set<String>> {
+    /** tvg-ids e nomes dos canais ao vivo de uma lista (ou de todas, com null). */
+    fun liveKeys(playlistId: String?): Pair<Set<String>, Set<String>> {
         val ids = HashSet<String>()
         val names = HashSet<String>()
-        readableDatabase.rawQuery("SELECT tvg_id, name FROM entries WHERE playlist = ? AND type = 0", arrayOf(playlistId)).use { c ->
+        val c0 = if (playlistId == null) readableDatabase.rawQuery("SELECT tvg_id, name FROM entries WHERE type = 0", null)
+        else readableDatabase.rawQuery("SELECT tvg_id, name FROM entries WHERE playlist = ? AND type = 0", arrayOf(playlistId))
+        c0.use { c ->
             while (c.moveToNext()) {
                 c.getStringOrNull(0)?.let { ids += it }
                 if (names.size < 50_000) Normalize.name(c.getString(1)).takeIf { it.isNotEmpty() }?.let { names += it }
