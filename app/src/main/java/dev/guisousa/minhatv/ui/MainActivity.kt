@@ -5,8 +5,6 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
-import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.launch
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,9 +14,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -26,6 +25,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -35,14 +35,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.lifecycleScope
+import dev.guisousa.minhatv.data.ContentType
 import dev.guisousa.minhatv.data.PhoneSetupServer
 import dev.guisousa.minhatv.data.Repository
 import dev.guisousa.minhatv.data.Show
 import dev.guisousa.minhatv.player.PlaybackQueue
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -73,7 +77,13 @@ class MainActivity : ComponentActivity() {
 }
 
 enum class Tab(val title: String) {
-    LIVE("Ao vivo"), MOVIES("Filmes"), SERIES("Séries"), FAVORITES("Favoritos"), SEARCH("Buscar"), SETTINGS("Ajustes")
+    HOME("Início"), LIVE("Ao vivo"), MOVIES("Filmes"), SERIES("Séries"), MYLIST("Minha lista"), SEARCH("Buscar"), SETTINGS("Ajustes")
+}
+
+/** Telas abertas por cima das abas (voltar fecha a de cima). */
+sealed class Detail {
+    data class OfShow(val show: Show) : Detail()
+    data class Category(val type: ContentType, val group: String) : Detail()
 }
 
 @Composable
@@ -85,7 +95,7 @@ fun AppRoot(onLoaded: () -> Unit) {
     val sources by Repository.sources.collectAsState()
     val status by Repository.status.collectAsState()
     var tab by rememberSaveable { mutableIntStateOf(0) }
-    var openShow by remember { mutableStateOf<Show?>(null) }
+    val stack = remember { mutableStateListOf<Detail>() }
     val firstTab = remember { FocusRequester() }
 
     LaunchedEffect(loading) {
@@ -94,7 +104,6 @@ fun AppRoot(onLoaded: () -> Unit) {
             runCatching { firstTab.requestFocus() }
         }
     }
-    // enquanto o app estiver aberto, confere a cada 30 min se já passou da hora de atualizar
     LaunchedEffect(Unit) {
         while (true) {
             delay(30 * 60_000L)
@@ -102,46 +111,79 @@ fun AppRoot(onLoaded: () -> Unit) {
         }
     }
 
-    BackHandler(enabled = openShow != null) { openShow = null }
+    BackHandler(enabled = stack.isNotEmpty()) { stack.removeAt(stack.lastIndex) }
 
+    val nav = Nav(
+        openShow = { stack.add(Detail.OfShow(it)) },
+        openCategory = { type, group -> stack.add(Detail.Category(type, group)) },
+    )
     val nothingAdded = !loading && playlists.isEmpty() && sources.isEmpty()
 
     Column(Modifier.fillMaxSize().background(Palette.Background)) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 14.dp),
+            Modifier.fillMaxWidth().padding(start = 48.dp, end = 48.dp, top = 20.dp, bottom = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            Text("📺 Minha TV", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Palette.Text)
-            Spacer(Modifier.width(16.dp))
+            Text(
+                "MINHA TV",
+                style = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.Black, letterSpacing = 3.sp),
+                color = Palette.Text,
+            )
+            Spacer(Modifier.width(28.dp))
             Tab.entries.forEachIndexed { i, t ->
-                TvButton(
+                NavItem(
                     t.title,
-                    onClick = { tab = i; openShow = null },
                     selected = tab == i,
+                    onClick = { tab = i; stack.clear() },
                     modifier = if (i == 0) Modifier.focusRequester(firstTab) else Modifier,
                 )
             }
             Spacer(Modifier.weight(1f))
-            status?.let { Text(it, fontSize = 13.sp, color = Palette.TextDim, maxLines = 1) }
+            status?.let {
+                Text(it, fontSize = 12.sp, color = Palette.TextFaint, maxLines = 1, modifier = Modifier.width(300.dp))
+            }
         }
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
+            val top = stack.lastOrNull()
             when {
                 loading -> Message("Carregando…")
-                nothingAdded && Tab.entries[tab] != Tab.SETTINGS -> Welcome(onTyped = { url, name, epg ->
-                    addLink(context, url, name, epg)
-                })
-                openShow != null -> SeriesDetailScreen(openShow!!)
+                nothingAdded && Tab.entries[tab] != Tab.SETTINGS -> Welcome(onTyped = { url, name, epg -> addLink(context, url, name, epg) })
+                top is Detail.OfShow -> SeriesDetailScreen(top.show)
+                top is Detail.Category -> CategoryScreen(library, top.type, top.group, nav)
                 else -> when (Tab.entries[tab]) {
+                    Tab.HOME -> HomeScreen(library, nav)
                     Tab.LIVE -> LiveScreen(library)
-                    Tab.MOVIES -> MoviesScreen(library)
-                    Tab.SERIES -> SeriesScreen(library) { openShow = it }
-                    Tab.FAVORITES -> FavoritesScreen(library)
-                    Tab.SEARCH -> SearchScreen(library) { openShow = it }
+                    Tab.MOVIES -> RowsScreen(library, ContentType.MOVIE, nav)
+                    Tab.SERIES -> RowsScreen(library, ContentType.SERIES, nav)
+                    Tab.MYLIST -> MyListScreen(library, nav)
+                    Tab.SEARCH -> SearchScreen(library, nav)
                     Tab.SETTINGS -> SettingsScreen()
                 }
             }
+        }
+    }
+}
+
+class Nav(val openShow: (Show) -> Unit, val openCategory: (ContentType, String) -> Unit)
+
+@Composable
+private fun NavItem(title: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    FocusBox(onClick = onClick, modifier = modifier, focusScale = 1f, background = androidx.compose.ui.graphics.Color.Transparent, shape = RoundedCornerShape(4.dp)) { focused ->
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                title,
+                fontSize = 15.sp,
+                fontWeight = if (selected || focused) FontWeight.SemiBold else FontWeight.Normal,
+                color = if (focused) Palette.OnFocus else if (selected) Palette.Text else Palette.TextDim,
+            )
+            Spacer(Modifier.height(4.dp))
+            Box(
+                Modifier.width(18.dp).height(2.dp).background(
+                    if (selected && !focused) Palette.Text else androidx.compose.ui.graphics.Color.Transparent,
+                ),
+            )
         }
     }
 }
@@ -152,25 +194,34 @@ fun addLink(context: android.content.Context, url: String, name: String?, epg: S
     Repository.addFromUrl(url, name, epg) { msg -> Toast.makeText(context, msg, Toast.LENGTH_LONG).show() }
 }
 
-/** Primeira abertura: mostra o endereço para configurar pelo celular. */
+/** Primeira abertura: QR Code para configurar pelo celular. */
 @Composable
 fun Welcome(onTyped: (String, String?, String?) -> Unit) {
     val context = LocalContext.current
     val address = rememberPhoneSetupServer()
-    Message(
-        "Bem-vindo! Vamos adicionar os canais.",
-        "Aponte a câmera do celular para o QR Code (o celular precisa estar no mesmo Wi-Fi da TV)\n" +
-            "e cole o link da playlist, da página ou do repositório do GitHub. A TV recebe na hora.",
-    ) {
-        if (address != null) {
-            QrCode(address, Modifier.size(220.dp))
-            Spacer(Modifier.height(10.dp))
-            Text(address, fontSize = 16.sp, color = Palette.TextDim)
-        } else {
-            Text("(conecte a TV ao Wi-Fi para usar o QR Code)", color = Palette.Error)
+    Row(Modifier.fillMaxSize().padding(horizontal = 96.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("Vamos colocar os canais", fontSize = 34.sp, fontWeight = FontWeight.Bold, color = Palette.Text)
+            Spacer(Modifier.height(16.dp))
+            Text(
+                "1. Conecte o celular no mesmo Wi-Fi da TV.\n" +
+                    "2. Aponte a câmera para o código ao lado.\n" +
+                    "3. Cole o link da playlist, da página ou do repositório do GitHub.",
+                fontSize = 18.sp, color = Palette.TextDim, lineHeight = 30.sp,
+            )
+            Spacer(Modifier.height(28.dp))
+            TvButton("Digitar o link com o controle", onClick = { showAddLinkDialog(context, onTyped) })
         }
-        Spacer(Modifier.height(20.dp))
-        TvButton("Ou digitar o link aqui com o controle", onClick = { showAddLinkDialog(context, onTyped) })
+        Spacer(Modifier.width(48.dp))
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            if (address != null) {
+                QrCode(address, Modifier.size(240.dp))
+                Spacer(Modifier.height(12.dp))
+                Text(address, fontSize = 15.sp, color = Palette.TextFaint)
+            } else {
+                Text("Conecte a TV ao Wi-Fi para usar o QR Code", color = Palette.Error)
+            }
+        }
     }
 }
 

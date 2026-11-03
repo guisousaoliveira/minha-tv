@@ -90,6 +90,12 @@ object Repository {
                         _sources.value = _sources.value.map { it.copy(lastChecked = 0) }
                         savePlaylists(); saveSources()
                     }
+                    db.writableDatabase // abre (e atualiza o formato do banco, se preciso)
+                    if (db.wasReset) {
+                        _playlists.value = _playlists.value.map { it.copy(lastUpdated = 0) }
+                        _sources.value = _sources.value.map { it.copy(lastChecked = 0) }
+                        savePlaylists(); saveSources()
+                    }
                     db.deleteExcept(_playlists.value.map { it.id })
                 }
                 rebuild()
@@ -121,10 +127,17 @@ object Repository {
     fun saveResume(url: String, position: Long, duration: Long) {
         val key = "resume_" + url.hashCode()
         if (position > 30_000 && (duration <= 0 || position < duration - 60_000)) {
-            prefs.edit().putLong(key, position).apply()
+            prefs.edit().putLong(key, position).putLong("dur_" + url.hashCode(), duration).apply()
         } else {
-            prefs.edit().remove(key).apply()
+            prefs.edit().remove(key).remove("dur_" + url.hashCode()).apply()
         }
+    }
+
+    /** Quanto do filme/episódio já foi visto (0..1), ou null se não começou. */
+    fun progress(url: String): Float? {
+        val pos = getResume(url)
+        val dur = prefs.getLong("dur_" + url.hashCode(), 0)
+        return if (pos <= 0 || dur <= 0) null else pos.toFloat() / dur
     }
 
     /** Ao abrir o app, já começa a tocar o último canal assistido (como uma TV comum). */
@@ -136,6 +149,11 @@ object Repository {
     var hideAdult: Boolean
         get() = prefs.getBoolean("hide_adult", true)
         set(v) { prefs.edit().putBoolean("hide_adult", v).apply(); scope.launch { rebuild() } }
+
+    /** Formato da tela do player (AspectRatioFrameLayout.RESIZE_MODE_*). */
+    var resizeMode: Int
+        get() = prefs.getInt("resize_mode", 0)
+        set(v) { prefs.edit().putInt("resize_mode", v).apply() }
 
     var lastChannelUrl: String?
         get() = prefs.getString("last_channel", null)
@@ -383,7 +401,7 @@ object Repository {
             }.getOrNull()?.let { epg = epg.merge(it) }
         }
         val hide = hideAdult
-        fun List<GroupInfo>.visible() = if (hide) filterNot { Library.isAdult(it.name) } else this
+        fun List<GroupInfo>.visible() = Library.sortGroups(if (hide) filterNot { Library.isAdult(it.name) } else this) { it.name }
         _library.value = Library(
             version = ++version,
             liveGroups = db.groups(ContentType.LIVE).visible(),
@@ -397,9 +415,40 @@ object Repository {
 
     private fun List<Entry>.visible() = if (hideAdult) filterNot { Library.isAdult(it.group) } else this
 
-    suspend fun entries(type: ContentType, group: String?): List<Entry> = withContext(Dispatchers.IO) {
-        runCatching { db.entries(type, group).visible() }.getOrDefault(emptyList())
+    /** Junta itens repetidos (mesmo nome em várias fontes): o player tenta as outras se uma falhar. */
+    private fun List<Entry>.unique(): List<Entry> {
+        val seen = HashSet<String>()
+        return filter { e -> if (e.type == ContentType.SERIES) true else seen.add(Normalize.name(e.name).ifEmpty { e.url }) }
     }
+
+    suspend fun entries(type: ContentType, group: String?, limit: Int = 60_000): List<Entry> = withContext(Dispatchers.IO) {
+        runCatching { db.entries(type, group, limit * 2).visible().unique().take(limit) }.getOrDefault(emptyList())
+    }
+
+    suspend fun alternates(e: Entry): List<Entry> = withContext(Dispatchers.IO) {
+        runCatching { db.alternates(e.type, Normalize.name(e.name).ifEmpty { e.name.lowercase() }, e.url) }.getOrDefault(emptyList())
+    }
+
+    // ---------- Recentes ----------
+
+    private val recentLock = Any()
+
+    fun addRecent(e: Entry) {
+        val key = if (e.type == ContentType.LIVE) "recent_live" else "recent_vod"
+        synchronized(recentLock) {
+            val list = (listOf(e) + readRecent(key).filterNot { it.url == e.url }).take(30)
+            prefs.edit().putString(key, json.encodeToString(ListSerializer(Entry.serializer()), list)).apply()
+        }
+    }
+
+    private fun readRecent(key: String): List<Entry> = runCatching {
+        json.decodeFromString(ListSerializer(Entry.serializer()), prefs.getString(key, null) ?: return emptyList())
+    }.getOrDefault(emptyList())
+
+    fun recentLive(): List<Entry> = readRecent("recent_live")
+
+    /** Filmes/episódios começados e não terminados. */
+    fun continueWatching(): List<Entry> = readRecent("recent_vod").filter { getResume(it.url) > 0 }
 
     suspend fun shows(group: String?): List<Show> = withContext(Dispatchers.IO) {
         runCatching { db.shows(group).let { l -> if (hideAdult) l.filterNot { Library.isAdult(it.group) } else l } }
@@ -413,12 +462,12 @@ object Repository {
     suspend fun search(q: String): Pair<List<Entry>, List<Show>> = withContext(Dispatchers.IO) {
         runCatching {
             val (e, s) = db.search(q)
-            e.visible() to (if (hideAdult) s.filterNot { Library.isAdult(it.group) } else s)
+            e.visible().unique() to (if (hideAdult) s.filterNot { Library.isAdult(it.group) } else s)
         }.getOrDefault(emptyList<Entry>() to emptyList())
     }
 
     suspend fun favoriteEntries(): List<Entry> = withContext(Dispatchers.IO) {
-        runCatching { db.byUrls(_favorites.value) }.getOrDefault(emptyList())
+        runCatching { db.byUrls(_favorites.value).unique() }.getOrDefault(emptyList())
     }
 
     /** Último canal assistido + a categoria dele (para trocar de canal com ▲▼). */

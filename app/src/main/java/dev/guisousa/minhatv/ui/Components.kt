@@ -3,10 +3,13 @@
 package dev.guisousa.minhatv.ui
 
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -23,6 +26,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -37,32 +41,41 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import dev.guisousa.minhatv.data.GroupInfo
+import dev.guisousa.minhatv.data.Library
 
 object Palette {
-    val Background = Color(0xFF0E1117)
-    val Surface = Color(0xFF1A1F2B)
-    val SurfaceHigh = Color(0xFF252C3B)
-    val Accent = Color(0xFF3D7BFF)
-    val Text = Color.White
-    val TextDim = Color(0xFFA0A8B8)
-    val Error = Color(0xFFFF7A7A)
+    val Background = Color(0xFF000000)
+    val Surface = Color(0xFF141414)
+    val SurfaceHigh = Color(0xFF232323)
+    val Text = Color(0xFFFFFFFF)
+    val TextDim = Color(0xFFA3A3A3)
+    val TextFaint = Color(0xFF6B6B6B)
+    val Focus = Color(0xFFFFFFFF)
+    val OnFocus = Color(0xFF000000)
+    val Live = Color(0xFFE24B4A)
+    val Error = Color(0xFFFF6B6B)
+    val Hairline = Color(0x22FFFFFF)
 }
 
 @Composable
 fun MinhaTvTheme(content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = darkColorScheme(
-            primary = Palette.Accent,
+            primary = Palette.Text,
             background = Palette.Background,
             surface = Palette.Surface,
             onBackground = Palette.Text,
@@ -72,101 +85,278 @@ fun MinhaTvTheme(content: @Composable () -> Unit) {
     )
 }
 
-/** Qualquer coisa que o controle remoto pode focar e "clicar". Cresce e ganha borda quando focado. */
+/**
+ * Base de tudo que o controle remoto foca. [style] decide como o foco aparece:
+ * "fill" (fundo branco, texto preto: botões e itens de lista) ou "frame" (borda branca: capas).
+ */
 @Composable
 fun FocusBox(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
+    onFocused: (() -> Unit)? = null,
     selected: Boolean = false,
-    focusScale: Float = 1.04f,
-    shape: RoundedCornerShape = RoundedCornerShape(10.dp),
+    frame: Boolean = false,
+    focusScale: Float = 1.03f,
+    shape: Shape = RoundedCornerShape(6.dp),
+    background: Color = Palette.Surface,
     content: @Composable BoxScope.(focused: Boolean) -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(if (focused) focusScale else 1f, label = "scale")
+    val scale by animateFloatAsState(if (focused) focusScale else 1f, tween(150), label = "scale")
+    val bg = when {
+        focused && !frame -> Palette.Focus
+        selected -> Palette.SurfaceHigh
+        else -> background
+    }
     Box(
         modifier
             .graphicsLayer { scaleX = scale; scaleY = scale }
-            .onFocusChanged { focused = it.isFocused }
+            .onFocusChanged {
+                if (it.isFocused && !focused) onFocused?.invoke()
+                focused = it.isFocused
+            }
             .clip(shape)
-            .background(
-                when {
-                    focused -> Palette.Accent
-                    selected -> Palette.SurfaceHigh
-                    else -> Palette.Surface
-                }
-            )
-            .then(if (focused) Modifier.border(2.dp, Color.White, shape) else Modifier)
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+            .background(bg)
+            .then(if (focused && frame) Modifier.border(3.dp, Palette.Focus, shape) else Modifier)
+            .combinedClickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+                onLongClick = onLongClick,
+            ),
     ) {
         content(focused)
     }
 }
 
+/** Cor do texto dentro de um FocusBox "fill". */
+fun textOn(focused: Boolean, dim: Boolean = false) = when {
+    focused -> Palette.OnFocus
+    dim -> Palette.TextDim
+    else -> Palette.Text
+}
+
 @Composable
 fun TvButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, selected: Boolean = false) {
-    FocusBox(onClick = onClick, modifier = modifier, selected = selected) {
+    FocusBox(onClick = onClick, modifier = modifier, selected = selected, shape = RoundedCornerShape(4.dp)) { focused ->
         Text(
             text,
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
-            fontSize = 17.sp,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-            color = Palette.Text,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = textOn(focused),
         )
+    }
+}
+
+/** Liga/desliga em forma de linha de ajuste. */
+@Composable
+fun ToggleRow(title: String, subtitle: String?, checked: Boolean, onToggle: () -> Unit) {
+    FocusBox(onClick = onToggle, modifier = Modifier.fillMaxWidth(), focusScale = 1.01f, background = Color.Transparent) { focused ->
+        Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(title, fontSize = 16.sp, color = textOn(focused))
+                if (subtitle != null) Text(subtitle, fontSize = 13.sp, color = if (focused) Palette.OnFocus.copy(alpha = 0.7f) else Palette.TextDim)
+            }
+            Switch(checked, focused)
+        }
+    }
+}
+
+@Composable
+private fun Switch(checked: Boolean, focused: Boolean) {
+    val track = when {
+        checked && focused -> Palette.OnFocus
+        checked -> Palette.Text
+        focused -> Color(0x33000000)
+        else -> Palette.SurfaceHigh
+    }
+    val knob = when {
+        checked && focused -> Palette.Focus
+        checked -> Palette.OnFocus
+        else -> Palette.TextDim
+    }
+    Box(Modifier.width(44.dp).height(24.dp).clip(RoundedCornerShape(12.dp)).background(track).padding(3.dp)) {
+        Box(Modifier.size(18.dp).align(if (checked) Alignment.CenterEnd else Alignment.CenterStart).clip(RoundedCornerShape(9.dp)).background(knob))
     }
 }
 
 @Composable
 fun Logo(url: String?, modifier: Modifier = Modifier, fallback: String = "", crop: Boolean = false) {
-    Box(modifier.background(Color(0xFF11151E)), contentAlignment = Alignment.Center) {
+    Box(modifier.background(Color(0xFF1B1B1B)), contentAlignment = Alignment.Center) {
         Text(
-            fallback.take(2).uppercase(),
-            color = Palette.TextDim,
-            fontSize = 18.sp,
+            initials(fallback),
+            color = Palette.TextFaint,
+            fontSize = 16.sp,
             fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(6.dp),
         )
         if (!url.isNullOrBlank()) {
             AsyncImage(
                 model = url,
                 contentDescription = null,
                 contentScale = if (crop) ContentScale.Crop else ContentScale.Fit,
-                modifier = Modifier.fillMaxSize().padding(if (crop) 0.dp else 4.dp),
+                modifier = Modifier.fillMaxSize().padding(if (crop) 0.dp else 6.dp),
             )
         }
     }
 }
 
-/** Coluna de categorias à esquerda. "Todos" só aparece se [total] não for gigante. */
+private fun initials(s: String): String =
+    s.split(' ', '-', '.', ':').filter { it.isNotBlank() && it[0].isLetterOrDigit() }.take(2).joinToString("") { it.take(1).uppercase() }
+
+/** Título de seção, no estilo das fileiras de streaming. */
 @Composable
-fun GroupColumn(
-    groups: List<dev.guisousa.minhatv.data.GroupInfo>,
-    total: Int,
-    selected: String?,
-    onSelect: (String?) -> Unit,
+fun SectionTitle(text: String, modifier: Modifier = Modifier, trailing: String? = null) {
+    Row(modifier.padding(start = 48.dp, end = 48.dp, top = 18.dp, bottom = 8.dp), verticalAlignment = Alignment.Bottom) {
+        Text(text, fontSize = 19.sp, fontWeight = FontWeight.SemiBold, color = Palette.Text)
+        if (trailing != null) {
+            Spacer(Modifier.width(10.dp))
+            Text(trailing, fontSize = 13.sp, color = Palette.TextFaint)
+        }
+    }
+}
+
+/** Fileira horizontal genérica. Com [seeAll], termina com um cartão "Ver tudo". */
+@Composable
+fun <T> MediaRow(
+    items: List<T>,
+    itemWidth: Dp,
+    seeAll: (() -> Unit)? = null,
+    seeAllCount: Int = 0,
+    seeAllAspect: Float = 2f / 3f,
+    item: @Composable (Int, T) -> Unit,
 ) {
+    LazyRow(
+        contentPadding = PaddingValues(horizontal = 48.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        itemsIndexed(items) { i, it -> Box(Modifier.width(itemWidth)) { item(i, it) } }
+        if (seeAll != null) {
+            item(key = "see-all") { Box(Modifier.width(itemWidth)) { SeeAllCard(seeAllCount, seeAllAspect, seeAll) } }
+        }
+    }
+}
+
+/** Capa vertical (filmes e séries). */
+@Composable
+fun PosterCard(
+    title: String,
+    image: String?,
+    onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
+    onFocused: (() -> Unit)? = null,
+    progress: Float? = null,
+) {
+    Column {
+        FocusBox(
+            onClick = onClick, onLongClick = onLongClick, onFocused = onFocused,
+            frame = true, focusScale = 1.07f, modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f),
+        ) {
+            Logo(image, Modifier.fillMaxSize(), fallback = title, crop = true)
+            if (image.isNullOrBlank()) {
+                Text(
+                    title, color = Palette.TextDim, fontSize = 13.sp, maxLines = 4, overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center, modifier = Modifier.align(Alignment.BottomCenter).padding(10.dp),
+                )
+            }
+            if (progress != null) ProgressLine(progress, Modifier.align(Alignment.BottomStart))
+        }
+        Text(
+            title,
+            modifier = Modifier.padding(top = 8.dp, start = 2.dp, end = 2.dp),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            fontSize = 13.sp,
+            color = Palette.TextDim,
+        )
+    }
+}
+
+/** Cartão horizontal (canais). */
+@Composable
+fun ChannelCard(title: String, logo: String?, subtitle: String?, onClick: () -> Unit, onFocused: (() -> Unit)? = null) {
+    Column {
+        FocusBox(onClick = onClick, onFocused = onFocused, frame = true, focusScale = 1.06f, modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
+            Logo(logo, Modifier.fillMaxSize().padding(12.dp), fallback = title)
+        }
+        Text(title, Modifier.padding(top = 8.dp), fontSize = 13.sp, color = Palette.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (subtitle != null) Text(subtitle, fontSize = 12.sp, color = Palette.TextFaint, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/** Cartão "Ver tudo" no fim de uma fileira. */
+@Composable
+fun SeeAllCard(count: Int, aspect: Float, onClick: () -> Unit) {
+    FocusBox(onClick = onClick, frame = true, focusScale = 1.07f, modifier = Modifier.fillMaxWidth().aspectRatio(aspect), background = Palette.Surface) {
+        Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("Ver tudo", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Palette.Text)
+            Text("$count", fontSize = 13.sp, color = Palette.TextDim)
+        }
+    }
+}
+
+@Composable
+fun ProgressLine(fraction: Float, modifier: Modifier = Modifier) {
+    Box(modifier.fillMaxWidth().height(3.dp).background(Color(0x55FFFFFF))) {
+        Box(Modifier.fillMaxWidth(fraction.coerceIn(0f, 1f)).fillMaxHeight().background(Palette.Text))
+    }
+}
+
+/** Faixa com o nome e detalhes do item focado, no topo das telas (como nos apps de streaming). */
+@Composable
+fun FocusHeader(title: String?, subtitle: String?, modifier: Modifier = Modifier) {
+    Box(
+        modifier
+            .fillMaxWidth()
+            .height(120.dp)
+            .background(Brush.verticalGradient(listOf(Color(0xFF151515), Palette.Background)))
+            .padding(horizontal = 48.dp, vertical = 16.dp),
+    ) {
+        Column(Modifier.align(Alignment.BottomStart)) {
+            Text(
+                title ?: "", fontSize = 30.sp, fontWeight = FontWeight.Bold, color = Palette.Text,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+            if (!subtitle.isNullOrBlank()) {
+                Spacer(Modifier.height(4.dp))
+                Text(subtitle, fontSize = 15.sp, color = Palette.TextDim, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+}
+
+/** Coluna de categorias à esquerda (Ao vivo e grades). "Todos" só aparece se [total] não for gigante. */
+@Composable
+fun GroupColumn(groups: List<GroupInfo>, total: Int, selected: String?, onSelect: (String?) -> Unit) {
     val rows = remember(groups, total) {
-        val list = groups.map<dev.guisousa.minhatv.data.GroupInfo, Pair<String?, Int>> { it.name to it.count }
-        if (total <= dev.guisousa.minhatv.data.Library.ALL_LIMIT) listOf<Pair<String?, Int>>(null to total) + list else list
+        val list = groups.map<GroupInfo, Pair<String?, Int>> { it.name to it.count }
+        if (total <= Library.ALL_LIMIT) listOf<Pair<String?, Int>>(null to total) + list else list
     }
     LazyColumn(
-        Modifier.width(280.dp).fillMaxHeight(),
-        contentPadding = PaddingValues(start = 24.dp, end = 12.dp, top = 8.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+        Modifier.width(290.dp).fillMaxHeight(),
+        contentPadding = PaddingValues(start = 40.dp, end = 12.dp, top = 4.dp, bottom = 32.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         itemsIndexed(rows) { _, (g, count) ->
-            FocusBox(onClick = { onSelect(g) }, selected = selected == g, modifier = Modifier.fillMaxWidth(), focusScale = 1.02f) {
+            val isSel = selected == g
+            FocusBox(
+                onClick = { onSelect(g) }, selected = isSel, modifier = Modifier.fillMaxWidth(),
+                focusScale = 1.0f, background = Color.Transparent, shape = RoundedCornerShape(4.dp),
+            ) { focused ->
                 Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         g ?: "Todos",
                         modifier = Modifier.weight(1f),
-                        maxLines = 2,
+                        maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         fontSize = 15.sp,
-                        color = Palette.Text,
-                        fontWeight = if (selected == g) FontWeight.Bold else FontWeight.Normal,
+                        color = if (focused) Palette.OnFocus else if (isSel) Palette.Text else Palette.TextDim,
+                        fontWeight = if (isSel || focused) FontWeight.SemiBold else FontWeight.Normal,
                     )
-                    Text("$count", fontSize = 13.sp, color = Palette.TextDim)
+                    Text("$count", fontSize = 12.sp, color = if (focused) Palette.OnFocus.copy(alpha = 0.6f) else Palette.TextFaint)
                 }
             }
         }
@@ -174,8 +364,25 @@ fun GroupColumn(
 }
 
 /** Categoria inicial: "Todos" quando a lista é pequena, senão a primeira categoria. */
-fun defaultGroup(groups: List<dev.guisousa.minhatv.data.GroupInfo>, total: Int): String? =
-    if (total <= dev.guisousa.minhatv.data.Library.ALL_LIMIT) null else groups.firstOrNull()?.name
+fun defaultGroup(groups: List<GroupInfo>, total: Int): String? =
+    if (total <= Library.ALL_LIMIT) null else groups.firstOrNull()?.name
+
+@Composable
+fun Message(title: String, body: String? = null, modifier: Modifier = Modifier, content: @Composable () -> Unit = {}) {
+    Column(
+        modifier.fillMaxSize().padding(48.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text(title, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, color = Palette.Text, textAlign = TextAlign.Center)
+        if (body != null) {
+            Spacer(Modifier.height(10.dp))
+            Text(body, fontSize = 16.sp, color = Palette.TextDim, textAlign = TextAlign.Center, lineHeight = 24.sp)
+        }
+        Spacer(Modifier.height(24.dp))
+        content()
+    }
+}
 
 /** QR Code desenhado com ZXing. */
 @Composable
@@ -190,46 +397,6 @@ fun QrCode(text: String, modifier: Modifier = Modifier) {
         }.getOrNull()
     }
     if (bitmap != null) {
-        androidx.compose.foundation.Image(bitmap, contentDescription = "QR Code", modifier = modifier.clip(RoundedCornerShape(8.dp)))
+        Image(bitmap, contentDescription = "QR Code", modifier = modifier.clip(RoundedCornerShape(6.dp)))
     }
 }
-
-@Composable
-fun PosterCard(title: String, image: String?, subtitle: String? = null, onClick: () -> Unit, onLongClick: (() -> Unit)? = null) {
-    FocusBox(onClick = onClick, onLongClick = onLongClick, modifier = Modifier.fillMaxWidth(), focusScale = 1.06f) { focused ->
-        Column {
-            Logo(image, Modifier.fillMaxWidth().aspectRatio(2f / 3f), fallback = title, crop = true)
-            Text(
-                title,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp).height(40.dp),
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                fontSize = 13.sp,
-                color = if (focused) Color.White else Palette.Text,
-            )
-            if (subtitle != null) {
-                Text(subtitle, modifier = Modifier.padding(start = 8.dp, bottom = 6.dp), fontSize = 11.sp, color = Palette.TextDim)
-            }
-        }
-    }
-}
-
-@Composable
-fun Message(title: String, body: String? = null, modifier: Modifier = Modifier, content: @Composable () -> Unit = {}) {
-    Column(
-        modifier.fillMaxSize().padding(48.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Text(title, fontSize = 26.sp, fontWeight = FontWeight.Bold, color = Palette.Text, textAlign = TextAlign.Center)
-        if (body != null) {
-            Spacer(Modifier.height(12.dp))
-            Text(body, fontSize = 18.sp, color = Palette.TextDim, textAlign = TextAlign.Center)
-        }
-        Spacer(Modifier.height(24.dp))
-        content()
-    }
-}
-
-@Composable
-fun Dot(modifier: Modifier = Modifier) = Box(modifier.size(6.dp).clip(RoundedCornerShape(3.dp)).background(Palette.Accent))

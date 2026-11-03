@@ -78,14 +78,66 @@ data class EpgData(
 }
 
 object Normalize {
-    private val quality = Regex("""\b(fhd|uhd|hd|sd|4k|h265|hevc|hd\+|full ?hd)\b""")
     private val accents = Regex("""\p{Mn}+""")
+    private val codec = Regex("""h\.?26[45]|hevc|x26[45]""")
+    private val nonAlnum = Regex("""[^a-z0-9]+""")
+    private val dropTokens = setOf("fhd", "uhd", "hd", "sd", "4k", "8k", "fullhd", "full", "hq", "lq", "alt", "backup", "op", "opcao", "br", "720p", "1080p", "2160p", "60fps", "fps")
 
+    private fun base(s: String) = accents.replace(java.text.Normalizer.normalize(s.lowercase(), java.text.Normalizer.Form.NFD), "")
+
+    /** Chave para juntar itens iguais: "A&E FHD H.265" e "A&E" viram "ae". */
     fun name(s: String): String {
-        val noAccent = accents.replace(java.text.Normalizer.normalize(s.lowercase(), java.text.Normalizer.Form.NFD), "")
-        return quality.replace(noAccent, "").filter { it.isLetterOrDigit() }
+        val tokens = nonAlnum.split(codec.replace(base(s), " ")).filter { it.isNotEmpty() }
+        val kept = tokens.filter { it !in dropTokens }
+        return (kept.ifEmpty { tokens }).joinToString("")
     }
 
-    fun search(s: String): String =
-        accents.replace(java.text.Normalizer.normalize(s.lowercase(), java.text.Normalizer.Form.NFD), "")
+    fun search(s: String): String = base(s)
+
+    private val separators = Regex("""\s*[|=:»>]+\s*""")
+    private val spaces = Regex("""\s{2,}""")
+
+    /** Tira emojis e símbolos de nomes de categoria e deixa legível: "CANAIS = GLOBO ✨" -> "Canais · Globo". */
+    fun label(raw: String): String {
+        val sb = StringBuilder()
+        var i = 0
+        while (i < raw.length) {
+            val cp = raw.codePointAt(i)
+            val keep = Character.isLetterOrDigit(cp) || Character.isSpaceChar(cp) || cp.toChar() in "|=:&+.,()'/!?-»>#"
+            if (keep && cp < 0x10000) sb.append(cp.toChar()) else if (keep) sb.appendCodePoint(cp) else sb.append(' ')
+            i += Character.charCount(cp)
+        }
+        val t = spaces.replace(separators.replace(sb.toString().trim(), " · "), " ").trim().trim('·', ' ', '-')
+        return t.split(" · ").filter { it.isNotBlank() }.joinToString(" · ") { part ->
+            val letters = part.filter { it.isLetter() }
+            if (letters.isNotEmpty() && letters.none { it.isLowerCase() }) titleCase(part.trim()) else part.trim()
+        }.ifBlank { raw.trim() }
+    }
+
+    /** Só tira emojis/símbolos (para nomes de canais e filmes). */
+    fun clean(raw: String): String {
+        val sb = StringBuilder()
+        var i = 0
+        while (i < raw.length) {
+            val cp = raw.codePointAt(i)
+            val type = Character.getType(cp)
+            val symbol = type == Character.OTHER_SYMBOL.toInt() || type == Character.SURROGATE.toInt() ||
+                type == Character.PRIVATE_USE.toInt() || cp in 0xFE00..0xFE0F || cp == 0x200D
+            if (!symbol) sb.appendCodePoint(cp)
+            i += Character.charCount(cp)
+        }
+        return spaces.replace(sb.toString(), " ").trim().ifBlank { raw.trim() }
+    }
+
+    private val small = setOf("de", "da", "do", "das", "dos", "e", "a", "o", "em", "na", "no", "para", "com")
+    private val keepUpper = setOf("tv", "hbo", "espn", "sbt", "amc", "tnt", "axn", "cnn", "bbc", "mtv", "ufc", "nba", "nfl", "dc", "24h", "24hrs", "4k", "uhd", "fhd", "hd", "sd", "ppv", "vip", "br", "usa", "uk", "a&e", "tlc", "fx", "nbc", "abc", "cbs", "mma", "wwe", "f1", "ge", "us")
+
+    private fun titleCase(s: String): String = s.split(' ').mapIndexed { idx, w ->
+        val lw = w.lowercase()
+        when {
+            lw in keepUpper -> w.uppercase()
+            idx > 0 && lw in small -> lw
+            else -> lw.replaceFirstChar { it.titlecase() }
+        }
+    }.joinToString(" ")
 }

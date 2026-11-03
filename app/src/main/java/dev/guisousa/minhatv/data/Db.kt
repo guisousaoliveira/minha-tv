@@ -14,7 +14,11 @@ data class Show(val key: String, val name: String, val group: String, val logo: 
  * Banco SQLite com todos os itens das playlists. Listas de IPTV podem ter centenas de milhares
  * de itens, então nada disso fica inteiro na memória: as telas leem só a categoria aberta.
  */
-class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 1) {
+class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
+
+    /** true quando o banco foi recriado por mudança de formato (as listas precisam ser baixadas de novo). */
+    @Volatile var wasReset = false
+        private set
 
     override fun onConfigure(db: SQLiteDatabase) {
         db.enableWriteAheadLogging()
@@ -26,8 +30,9 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 1) {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 playlist TEXT NOT NULL, name TEXT NOT NULL, url TEXT NOT NULL, grp TEXT NOT NULL,
                 logo TEXT, tvg_id TEXT, type INTEGER NOT NULL, ua TEXT, ref TEXT,
-                show_key TEXT, series TEXT, season INTEGER, episode INTEGER)"""
+                show_key TEXT, series TEXT, season INTEGER, episode INTEGER, norm TEXT)"""
         )
+        db.execSQL("CREATE INDEX idx_norm ON entries(norm, type)")
         db.execSQL("CREATE INDEX idx_type_grp ON entries(type, grp)")
         db.execSQL("CREATE INDEX idx_playlist ON entries(playlist)")
         db.execSQL("CREATE INDEX idx_show ON entries(show_key)")
@@ -37,6 +42,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 1) {
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         db.execSQL("DROP TABLE IF EXISTS entries")
         onCreate(db)
+        wasReset = true
     }
 
     class Counts { var live = 0; var movie = 0; var series = 0 }
@@ -49,26 +55,28 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 1) {
         try {
             db.delete("entries", "playlist = ?", arrayOf(playlistId))
             val st = db.compileStatement(
-                "INSERT INTO entries(playlist,name,url,grp,logo,tvg_id,type,ua,ref,show_key,series,season,episode) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                "INSERT INTO entries(playlist,name,url,grp,logo,tvg_id,type,ua,ref,show_key,series,season,episode,norm) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
             )
             fill { e ->
                 st.clearBindings()
                 st.bindString(1, playlistId)
-                st.bindString(2, e.name)
+                val cleanName = Normalize.clean(e.name)
+                st.bindString(2, cleanName)
                 st.bindString(3, e.url)
-                st.bindString(4, e.group.ifBlank { "Outros" })
+                st.bindString(4, Normalize.label(e.group).ifBlank { "Outros" })
                 e.logo?.let { st.bindString(5, it) }
                 e.tvgId?.let { st.bindString(6, it) }
                 st.bindLong(7, e.type.ordinal.toLong())
                 e.userAgent?.let { st.bindString(8, it) }
                 e.referrer?.let { st.bindString(9, it) }
                 if (e.type == ContentType.SERIES) {
-                    val name = e.seriesName ?: e.name
+                    val name = Normalize.clean(e.seriesName ?: e.name)
                     st.bindString(10, Normalize.name(name).ifEmpty { name })
                     st.bindString(11, name)
                 }
                 e.season?.let { st.bindLong(12, it.toLong()) }
                 e.episode?.let { st.bindLong(13, it.toLong()) }
+                st.bindString(14, Normalize.name(cleanName).ifEmpty { cleanName.lowercase() })
                 st.executeInsert()
                 when (e.type) {
                     ContentType.LIVE -> counts.live++
@@ -102,7 +110,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 1) {
         "SELECT grp, COUNT(DISTINCT show_key) FROM entries WHERE type = 2 GROUP BY grp ORDER BY MIN(id)", null,
     ).use { c -> c.map { GroupInfo(it.getString(0), it.getInt(1)) } }
 
-    fun entries(type: ContentType, group: String?, limit: Int = 50_000): List<Entry> {
+    fun entries(type: ContentType, group: String?, limit: Int = 60_000): List<Entry> {
         val (where, args) = if (group == null) "type = ?" to arrayOf(type.ordinal.toString())
         else "type = ? AND grp = ?" to arrayOf(type.ordinal.toString(), group)
         return query("$where ORDER BY id LIMIT $limit", args)
@@ -139,6 +147,10 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 1) {
         }
         return out
     }
+
+    /** Outras fontes do mesmo canal/filme (mesmo nome normalizado), em qualquer playlist. */
+    fun alternates(type: ContentType, norm: String, exceptUrl: String): List<Entry> =
+        query("type = ? AND norm = ? AND url != ? ORDER BY id LIMIT 30", arrayOf(type.ordinal.toString(), norm, exceptUrl))
 
     fun firstByUrl(url: String): Entry? = query("url = ? LIMIT 1", arrayOf(url)).firstOrNull()
 

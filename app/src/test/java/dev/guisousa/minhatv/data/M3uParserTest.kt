@@ -102,4 +102,16 @@ class M3uParserTest {
         )
         assertEquals("Canais Abertos", LinkExtractor.nameFromUrl("https://h/x/Canais%20Abertos.m3u"))
     }
+
+    @Test
+    fun normalizesNamesAndLabels() {
+        assertEquals("ae", Normalize.name("A&E FHD H.265"))
+        assertEquals("ae", Normalize.name("A&E"))
+        assertEquals("globosp", Normalize.name("Globo SP HD"))
+        assertEquals("Canais · Globo", Normalize.label("CANAIS = GLOBO"))
+        assertEquals("Canais · HBO", Normalize.label("CANAIS: HBO ✨"))
+        assertEquals("Filmes · Ação", Normalize.label("⭐FILMES | Ação"))
+        assertEquals("Canais Adultos", Normalize.label("CANAIS ❌ ADULTOS"))
+        assertEquals("Filme Teste", Normalize.clean("Filme Teste ✨"))
+    }
 }

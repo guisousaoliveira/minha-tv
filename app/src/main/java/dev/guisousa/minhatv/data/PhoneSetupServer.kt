@@ -59,7 +59,7 @@ class PhoneSetupServer(private val onAdd: (url: String, name: String?, epg: Stri
             val url = form["url"]?.trim().orEmpty()
             if (url.startsWith("http")) {
                 onAdd(url, form["name"], form["epg"])
-                html("<h2>Pronto! ✅</h2><p>O link foi enviado para a TV. Ela vai carregar as listas agora (pode levar um minutinho).</p><p><a href='/'>Adicionar outro link</a></p>")
+                html("<h2>Pronto</h2><p>O link foi enviado para a TV. Ela vai carregar as listas agora (pode levar um minutinho).</p><p><a href='/'>Adicionar outro link</a></p>")
             } else {
                 html("<h2>Link inválido</h2><p>O link precisa começar com http:// ou https://</p><p><a href='/'>Voltar</a></p>")
             }
@@ -78,17 +78,17 @@ class PhoneSetupServer(private val onAdd: (url: String, name: String?, epg: Stri
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>Minha TV</title>
         <style>
-          body{font-family:system-ui,sans-serif;background:#0e1117;color:#fff;margin:0;padding:24px;max-width:560px}
-          h1,h2{margin-top:0} label{display:block;margin:16px 0 6px;color:#a0a8b8}
-          input{width:100%;box-sizing:border-box;padding:14px;border-radius:10px;border:1px solid #333;background:#1a1f2b;color:#fff;font-size:16px}
-          button{margin-top:20px;width:100%;padding:16px;border:0;border-radius:10px;background:#3d7bff;color:#fff;font-size:18px;font-weight:600}
+          body{font-family:system-ui,sans-serif;background:#000;color:#fff;margin:0;padding:24px;max-width:560px}
+          h1,h2{margin-top:0;letter-spacing:2px} label{display:block;margin:16px 0 6px;color:#a0a8b8}
+          input{width:100%;box-sizing:border-box;padding:14px;border-radius:4px;border:1px solid #333;background:#141414;color:#fff;font-size:16px}
+          button{margin-top:20px;width:100%;padding:16px;border:0;border-radius:4px;background:#fff;color:#000;font-size:18px;font-weight:600}
           a{color:#7fa8ff} small{color:#a0a8b8}
         </style></head><body>$content</body></html>
     """.trimIndent()
 
     companion object {
         private const val FORM = """
-            <h1>📺 Minha TV</h1>
+            <h1>MINHA TV</h1>
             <p>Cole o link de uma playlist M3U, de uma página com várias playlists ou de um repositório do GitHub. A TV encontra todas as listas sozinha.</p>
             <form method="post">
               <label>Link</label>
