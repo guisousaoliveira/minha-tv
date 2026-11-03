@@ -40,7 +40,7 @@ object Repository {
     private const val BUILTIN_EPG_FILE = "epg_builtin.json"
     /** Fontes no máximo por canal/filme (contando a primeira). */
     const val MAX_SOURCES = 5
-    private const val CHECK_PARALLEL = 6
+    private const val CHECK_PARALLEL = 3
     private const val CHECK_BATCH = 60
     private const val CHECK_OK_AGE = 24 * 3_600_000L
     private const val CHECK_BAD_AGE = 6 * 3_600_000L
@@ -228,6 +228,11 @@ object Repository {
     var hideAdult: Boolean
         get() = prefs.getBoolean("hide_adult", true)
         set(v) { prefs.edit().putBoolean("hide_adult", v).apply(); scope.launch { rebuild() } }
+
+    /** Testa as fontes em segundo plano (ligado por padrão). */
+    var checkSourcesEnabled: Boolean
+        get() = prefs.getBoolean("check_sources", true)
+        set(v) { prefs.edit().putBoolean("check_sources", v).apply(); if (v) checkSourcesAsync() }
 
     /** Formato da tela do player (AspectRatioFrameLayout.RESIZE_MODE_*). */
     var resizeMode: Int
@@ -607,7 +612,7 @@ object Repository {
      * para não roubar internet do vídeo. O que faltar continua na próxima rodada.
      */
     suspend fun checkSources(budget: Int = 3000) = withContext(Dispatchers.IO) {
-        if (checkLock.isLocked) return@withContext
+        if (checkLock.isLocked || !checkSourcesEnabled) return@withContext
         checkLock.withLock {
             awaitLoaded()
             var done = 0
@@ -617,7 +622,8 @@ object Repository {
             // uma consulta só por rodada (a lista inteira de filmes pode ter centenas de milhares de itens)
             val queue = runCatching { db.toProbe(budget, CHECK_OK_AGE, CHECK_BAD_AGE) }.getOrDefault(emptyList())
             for (batch in queue.chunked(CHECK_BATCH)) {
-                if (playbackActive || !networkUp()) break
+                if (playbackActive || !checkSourcesEnabled || !networkUp()) break
+                if (done > 0) kotlinx.coroutines.delay(1_000) // folga entre um lote e outro
                 val results = batch.map { p ->
                     checkPool.submit<Pair<SourceChecker.Result, Db.Probe>> {
                         if (playbackActive) SourceChecker.Result.Unknown to p
