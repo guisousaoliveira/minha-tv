@@ -308,6 +308,8 @@ object Repository {
                 _playlists.value = _playlists.value.map { if (it.id == id) updated else it }
                 savePlaylists()
             }
+            // mostra os canais desta lista já, sem esperar as outras terminarem
+            if (total > 1) runCatching { rebuild() }
         }
         _status.value = "Organizando…"
         rebuild()
