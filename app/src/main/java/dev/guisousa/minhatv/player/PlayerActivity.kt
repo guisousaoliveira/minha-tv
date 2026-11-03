@@ -97,7 +97,11 @@ class PlayerActivity : ComponentActivity() {
     private lateinit var loadingBox: LinearLayout
     private lateinit var loadingText: TextView
     private lateinit var toast: TextView
-    private lateinit var vodTitle: TextView
+    private lateinit var controls: PlayerControls
+    private var btnPlay: TextView? = null
+    private var btnSource: TextView? = null
+    private var btnFav: TextView? = null
+    private var firstButton: View? = null
 
     private val handler = Handler(Looper.getMainLooper())
     private val hideInfo = Runnable { infoPanel.visibility = View.GONE }
@@ -115,7 +119,6 @@ class PlayerActivity : ComponentActivity() {
     private var sourceIndex = 0
     private var sourcesJob: Job? = null
     private var retries = 0
-    private var centerLongPress = false
 
     private val timeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
     private val current get() = items[index]
@@ -171,8 +174,7 @@ class PlayerActivity : ComponentActivity() {
         val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
         playerView = PlayerView(this).apply {
             setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
-            controllerShowTimeoutMs = 4000
-            setShowSubtitleButton(true)
+            useController = false
             keepScreenOn = true
             resizeMode = Repository.resizeMode
             subtitleView?.apply {
@@ -196,6 +198,8 @@ class PlayerActivity : ComponentActivity() {
         listOf(infoNumber, infoTitle, infoNow, infoNext).forEach { infoPanel.addView(it) }
         root.addView(infoPanel, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
 
+        controls = PlayerControls(this, root)
+
         // "Carregando…" numa pílula no canto de cima: não fica por cima dos controles do vídeo
         loadingBox = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -214,21 +218,6 @@ class PlayerActivity : ComponentActivity() {
         loadingBox.addView(loadingText, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         root.addView(loadingBox, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.END).apply {
             setMargins(0, dp(32), dp(40), 0)
-        })
-
-        // título do filme/episódio no canto de cima, só junto com os controles
-        vodTitle = text(22f, Color.WHITE, bold = true).apply {
-            maxLines = 1
-            ellipsize = android.text.TextUtils.TruncateAt.END
-            setShadowLayer(8f, 0f, 0f, Color.BLACK)
-            visibility = View.GONE
-        }
-        root.addView(vodTitle, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.START).apply {
-            setMargins(dp(48), dp(36), dp(360), 0)
-        })
-        playerView.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { v ->
-            vodTitle.visibility = if (v == View.VISIBLE && !isLive) View.VISIBLE else View.GONE
-            if (v == View.VISIBLE) infoPanel.visibility = View.GONE
         })
 
         // avisos curtos (canto superior)
@@ -286,7 +275,6 @@ class PlayerActivity : ComponentActivity() {
         handler.removeCallbacks(stallCheck)
         loadingBox.visibility = View.GONE
         loadingText.text = "Carregando…"
-        if (playerView.isControllerFullyVisible && !isLive) vodTitle.visibility = View.VISIBLE
     }
 
     // ---------------- Reprodução ----------------
@@ -297,21 +285,19 @@ class PlayerActivity : ComponentActivity() {
         index = ((i % items.size) + items.size) % items.size
         retries = 0
         val e = current
-        playerView.useController = !isLive
-        if (isLive) playerView.hideController()
         Repository.addRecent(e)
         if (isLive) Repository.lastChannelUrl = e.url
         sources = listOf(e)
         sourceIndex = 0
         playSource(e, resume = true)
-        vodTitle.text = e.name
-        if (isLive) showInfo() else infoPanel.visibility = View.GONE
+        setupControls()
+        if (isLive) showInfo() else { infoPanel.visibility = View.GONE; showControls() }
         // procura outras fontes do mesmo canal/filme em segundo plano
         sourcesJob?.cancel()
         val wanted = index
         sourcesJob = lifecycleScope.launch {
             val alts = Repository.alternates(e)
-            if (index == wanted && alts.isNotEmpty()) sources = listOf(e) + alts
+            if (index == wanted && alts.isNotEmpty()) { sources = listOf(e) + alts; updateButtons() }
         }
     }
 
@@ -366,6 +352,7 @@ class PlayerActivity : ComponentActivity() {
     /** Pula para a próxima fonte do mesmo item. Devolve false se não houver mais. */
     private fun nextSource(): Boolean {
         if (sourceIndex >= sources.size - 1) return false
+        handler.post { updateButtons() }
         sourceIndex++
         retries = 0
         val pos = player?.currentPosition ?: 0
@@ -478,41 +465,156 @@ class PlayerActivity : ComponentActivity() {
             .show()
     }
 
+    // ---------------- Controles na tela ----------------
+
+    private val hideControlsTask = Runnable { controls.hide() }
+    private val tick = object : Runnable {
+        override fun run() {
+            updateTime()
+            if (controls.visible) handler.postDelayed(this, 500)
+        }
+    }
+
+    private fun setupControls() {
+        val c = controls
+        val left = mutableListOf<View>()
+        if (isLive) {
+            left += c.iconButton(IconDrawable.Kind.PREV, "Canal anterior") { play(index - 1) }
+            left += c.iconButton(IconDrawable.Kind.NEXT, "Próximo canal") { play(index + 1) }
+            btnPlay = null
+        } else {
+            left += c.iconButton(IconDrawable.Kind.BACK10, "Voltar 10 segundos") { seekBy(-10_000) }
+            btnPlay = c.iconButton(IconDrawable.Kind.PAUSE, "Pausar") { togglePlay() }.also { left += it }
+            left += c.iconButton(IconDrawable.Kind.FWD10, "Avançar 10 segundos") { seekBy(10_000) }
+        }
+        val right = mutableListOf<View>()
+        right += c.textButton("Legendas") { pickTrack(C.TRACK_TYPE_TEXT) }
+        right += c.textButton("Áudio") { pickTrack(C.TRACK_TYPE_AUDIO) }
+        btnSource = c.textButton("Fonte") { sourceDialog() }.also { right += it }
+        right += c.textButton("Tela") { cycleResize() }
+        if (!isLive) right += c.textButton("Velocidade") { speedDialog() }
+        btnFav = c.textButton("Minha lista") {
+            val added = Repository.toggleFavorite(current.url)
+            notice(if (added) "Adicionado à Minha lista" else "Removido da Minha lista")
+            updateButtons()
+        }.also { right += it }
+        c.setButtons(left, right)
+        firstButton = btnPlay ?: left.firstOrNull()
+        c.timeRow.visibility = if (isLive) View.GONE else View.VISIBLE
+        updateButtons()
+    }
+
+    private fun updateButtons() {
+        val exo = player
+        btnPlay?.let { b ->
+            val playing = exo?.playWhenReady == true
+            val icon = IconDrawable(if (playing) IconDrawable.Kind.PAUSE else IconDrawable.Kind.PLAY, dp(20)).also { it.setBounds(0, 0, dp(20), dp(20)) }
+            b.setCompoundDrawables(icon, null, null, null)
+            b.contentDescription = if (playing) "Pausar" else "Continuar"
+        }
+        btnSource?.text = if (sources.size > 1) "Fonte ${sourceIndex + 1}/${sources.size}" else "Fonte"
+        btnFav?.text = if (items.isNotEmpty() && current.url in Repository.favorites.value) "Na Minha lista" else "+ Minha lista"
+        val e = items.getOrNull(index) ?: return
+        controls.kicker.text = if (isLive) "${index + 1}  ·  ${e.group}" else e.group
+        controls.title.text = e.name
+        val cur = if (isLive) Repository.epg.value.current(e, System.currentTimeMillis()) else null
+        controls.epgLine.text = cur?.let { "Agora · ${it.title}  (${timeFmt.format(Date(it.start))} – ${timeFmt.format(Date(it.stop))})" } ?: ""
+        controls.epgLine.visibility = if (cur != null) View.VISIBLE else View.GONE
+    }
+
+    private fun updateTime() {
+        val exo = player ?: return
+        val dur = exo.duration
+        val pos = exo.currentPosition
+        controls.position.text = fmtTime(pos)
+        controls.duration.text = if (dur > 0) fmtTime(dur) else "--:--"
+        controls.progress.progress = if (dur > 0) (pos * 1000 / dur).toInt() else 0
+    }
+
+    private fun fmtTime(ms: Long): String {
+        val t = ms / 1000
+        val h = t / 3600
+        val m = (t % 3600) / 60
+        val sec = t % 60
+        return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%02d:%02d".format(m, sec)
+    }
+
+    private fun showControls(ms: Long = 5000) {
+        infoPanel.visibility = View.GONE
+        updateButtons()
+        val wasVisible = controls.visible
+        controls.show(firstButton)
+        if (!wasVisible) { handler.removeCallbacks(tick); handler.post(tick) }
+        handler.removeCallbacks(hideControlsTask)
+        handler.postDelayed(hideControlsTask, ms)
+    }
+
+    private fun togglePlay() {
+        val exo = player ?: return
+        exo.playWhenReady = !exo.playWhenReady
+        updateButtons()
+    }
+
+    private fun seekBy(delta: Long) {
+        val exo = player ?: return
+        if (isLive) return
+        val dur = exo.duration
+        var target = exo.currentPosition + delta
+        if (dur > 0) target = target.coerceAtMost(dur - 1000)
+        exo.seekTo(target.coerceAtLeast(0))
+        updateTime()
+    }
+
+    private fun pickTrack(type: Int) {
+        val exo = player ?: return
+        val has = exo.currentTracks.groups.any { it.type == type }
+        if (!has) {
+            notice(if (type == C.TRACK_TYPE_TEXT) "Este conteúdo não tem legendas embutidas." else "Sem outras faixas de áudio.")
+            return
+        }
+        trackDialog(if (type == C.TRACK_TYPE_TEXT) "Legendas" else "Áudio", type)
+    }
+
     // ---------------- Controle remoto ----------------
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (items.isEmpty()) return super.dispatchKeyEvent(event)
         val code = event.keyCode
+        val down = event.action == KeyEvent.ACTION_DOWN
         val center = code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER || code == KeyEvent.KEYCODE_NUMPAD_ENTER
-        val controls = playerView.isControllerFullyVisible
 
-        // segurar OK abre o menu de opções
-        if (center) {
-            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount > 0) {
-                if (!centerLongPress) { centerLongPress = true; showOptions() }
-                return true
-            }
-            if (event.action == KeyEvent.ACTION_UP && centerLongPress) { centerLongPress = false; return true }
-            if (isLive) {
-                if (event.action == KeyEvent.ACTION_UP) showInfo()
-                return true
-            }
+        // teclas de mídia funcionam sempre
+        if (down) when (code) {
+            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_MEDIA_PLAY, KeyEvent.KEYCODE_MEDIA_PAUSE -> { togglePlay(); showControls(); return true }
+            KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> { seekBy(30_000); showControls(); return true }
+            KeyEvent.KEYCODE_MEDIA_REWIND -> { seekBy(-30_000); showControls(); return true }
+            KeyEvent.KEYCODE_CHANNEL_UP -> { play(index + 1); return true }
+            KeyEvent.KEYCODE_CHANNEL_DOWN -> { play(index - 1); return true }
+            KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_SETTINGS -> { showOptions(); return true }
+            KeyEvent.KEYCODE_CAPTIONS -> { pickTrack(C.TRACK_TYPE_TEXT); return true }
+            KeyEvent.KEYCODE_INFO, KeyEvent.KEYCODE_GUIDE -> { showControls(8000); return true }
         }
 
-        if (event.action == KeyEvent.ACTION_DOWN) {
-            when (code) {
-                KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_SETTINGS, KeyEvent.KEYCODE_PROG_RED -> { showOptions(); return true }
-                KeyEvent.KEYCODE_CHANNEL_UP -> { play(index + 1); return true }
-                KeyEvent.KEYCODE_CHANNEL_DOWN -> { play(index - 1); return true }
-                KeyEvent.KEYCODE_INFO, KeyEvent.KEYCODE_GUIDE -> { showInfo(8000); return true }
-                KeyEvent.KEYCODE_CAPTIONS -> { trackDialog("Legendas", C.TRACK_TYPE_TEXT); return true }
-                KeyEvent.KEYCODE_DPAD_UP -> if (isLive && !controls) { play(index - 1); return true }
-                KeyEvent.KEYCODE_DPAD_DOWN -> if (isLive && !controls) { play(index + 1); return true }
-                KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> if (isLive) { showInfo(); return true }
-                KeyEvent.KEYCODE_BACK -> if (infoPanel.visibility == View.VISIBLE && isLive) {
-                    infoPanel.visibility = View.GONE; return true
-                }
+        if (controls.visible) {
+            // com a barra aberta, as setas andam entre os botões e o OK aperta
+            if (code == KeyEvent.KEYCODE_BACK) {
+                if (!down) controls.hide()
+                return true
             }
+            if (down) { handler.removeCallbacks(hideControlsTask); handler.postDelayed(hideControlsTask, 5000) }
+            if (code == KeyEvent.KEYCODE_DPAD_UP || code == KeyEvent.KEYCODE_DPAD_DOWN) return true
+            return super.dispatchKeyEvent(event)
+        }
+
+        // barra fechada
+        if (!down) return center || super.dispatchKeyEvent(event)
+        when (code) {
+            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> { showControls(); return true }
+            KeyEvent.KEYCODE_DPAD_UP -> { if (isLive) play(index - 1) else showControls(); return true }
+            KeyEvent.KEYCODE_DPAD_DOWN -> { if (isLive) play(index + 1) else showControls(); return true }
+            KeyEvent.KEYCODE_DPAD_LEFT -> { if (isLive) showInfo() else { seekBy(-10_000); showControls() }; return true }
+            KeyEvent.KEYCODE_DPAD_RIGHT -> { if (isLive) showInfo() else { seekBy(10_000); showControls() }; return true }
+            KeyEvent.KEYCODE_BACK -> if (infoPanel.visibility == View.VISIBLE) { infoPanel.visibility = View.GONE; return true }
         }
         return super.dispatchKeyEvent(event)
     }
