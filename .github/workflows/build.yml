@@ -43,3 +43,37 @@ jobs:
           name: Minha TV 1.0.${{ github.run_number }}
           files: MinhaTV.apk
           make_latest: true
+
+  preview:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: MinhaTV-apk
+
+      - name: Liberar KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: TV virtual e prints
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: android-tv
+          arch: x86
+          profile: tv_1080p
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          disable-animations: true
+          script: bash scripts/preview.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: previa-telas
+          path: previews/
