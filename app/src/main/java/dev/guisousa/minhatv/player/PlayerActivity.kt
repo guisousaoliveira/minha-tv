@@ -205,7 +205,7 @@ class PlayerActivity : ComponentActivity() {
         // ao vivo: reserva pequena (10 s) e começa rápido, como os apps de IPTV; filme: reserva grande
         val live = items[index].type == ContentType.LIVE
         val loadControl = DefaultLoadControl.Builder()
-            .apply { if (live) setBufferDurationsMs(15_000, 15_000, 2_500, 4_000) else setBufferDurationsMs(40_000, 40_000, 1_500, 3_000) }
+            .apply { if (live) setBufferDurationsMs(8_000, 8_000, 2_000, 3_000) else setBufferDurationsMs(40_000, 40_000, 1_500, 3_000) }
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
         val exo = ExoPlayer.Builder(this).setLoadControl(loadControl).build()
@@ -435,9 +435,23 @@ class PlayerActivity : ComponentActivity() {
         val url = hls ?: src.url
         val path = url.lowercase().substringBefore('?')
         val base = DefaultDataSource.Factory(this, http)
-        val factory = DefaultMediaSourceFactory(base)
+        // HLS ao vivo: link de pedaço/playlist com prazo dá 404 de vez em quando; tenta de novo
+        // algumas vezes antes de desistir, em vez de derrubar o canal
+        val retry404 = object : androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy(6) {
+            override fun getRetryDelayMsFor(info: androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy.LoadErrorInfo): Long {
+                val code = (info.exception as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)?.responseCode
+                if (isLive && code != null && code in 400..499 && info.errorCount <= 3) return 1000L * info.errorCount
+                return super.getRetryDelayMsFor(info)
+            }
+        }
+        val factory = DefaultMediaSourceFactory(base).setLoadErrorHandlingPolicy(retry404)
         val item = MediaItem.Builder()
             .setUri(url)
+            .apply {
+                if (isLive) setLiveConfiguration(
+                    MediaItem.LiveConfiguration.Builder().setTargetOffsetMs(8_000).setMaxOffsetMs(15_000).build(),
+                )
+            }
             .setMediaMetadata(MediaMetadata.Builder().setTitle(src.name).build())
             .apply {
                 when {
@@ -469,6 +483,16 @@ class PlayerActivity : ComponentActivity() {
             error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS && (http == null || http in 400..499) ||
             error.errorCode in PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED..PlaybackException.ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED
         android.util.Log.w("MinhaTV", "player: erro ${error.errorCodeName} http=$http morto=$dead")
+        // ao vivo que já estava tocando e de repente dá 404/403/410: é o link com prazo vencido no servidor,
+        // não canal morto. Reabre o mesmo canal do zero (link novo), sem trocar de fonte nem marcar falha.
+        if (isLive && readyOnce && (http in 400..499 || error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS)) {
+            android.util.Log.w("MinhaTV", "player: link do ao vivo venceu (http=$http), reabrindo o mesmo canal")
+            loadingText.text = "Reconectando…"
+            loadingBox.visibility = View.VISIBLE
+            val src = playing ?: current
+            handler.postDelayed({ playSource(src, resume = false) }, 300)
+            return
+        }
         // a versão HLS não abriu: tenta o link original (.ts) antes de qualquer outra coisa
         if (usingHlsVariant && !readyOnce) {
             playing?.let { hlsFailed += it.url; android.util.Log.w("MinhaTV", "player: HLS não abriu (${error.errorCodeName}), usando o .ts"); playSource(it, resume = false) }
