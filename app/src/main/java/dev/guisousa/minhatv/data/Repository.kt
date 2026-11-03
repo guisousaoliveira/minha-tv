@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -41,6 +42,21 @@ object Repository {
     private lateinit var app: Context
     private lateinit var prefs: SharedPreferences
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** Uma única linha de baixa prioridade para importar: a tela e o player ficam com o resto da CPU. */
+    private val background = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread({
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND + android.os.Process.THREAD_PRIORITY_LESS_FAVORABLE)
+            r.run()
+        }, "minhatv-import")
+    }.asCoroutineDispatcher()
+
+    /** Status da importação no máximo uma vez por segundo. */
+    private var lastStatusAt = 0L
+    private fun progress(text: String) {
+        val now = android.os.SystemClock.uptimeMillis()
+        if (now - lastStatusAt >= 1000) { lastStatusAt = now; _status.value = text }
+    }
     private val mutex = Mutex()
     private val loaded = CompletableDeferred<Unit>()
     private lateinit var db: Db
@@ -395,7 +411,7 @@ object Repository {
     }
 
     /** Guia de programação dos canais brasileiros (EPG-Scrapper-BR), casado pelo nome do canal. */
-    private suspend fun refreshBuiltinEpg() = withContext(Dispatchers.IO) {
+    private suspend fun refreshBuiltinEpg() = withContext(background) {
         runCatching {
             val (ids, names) = db.liveKeys(null)
             if (names.isEmpty() && ids.isEmpty()) return@runCatching
@@ -408,7 +424,7 @@ object Repository {
         }
     }
 
-    private suspend fun refreshOne(p: Playlist): Playlist = withContext(Dispatchers.IO) {
+    private suspend fun refreshOne(p: Playlist): Playlist = withContext(background) {
         try {
             // lista igual à da última vez: não baixa nem reorganiza nada
             if (p.lastError == null && p.liveCount + p.movieCount + p.seriesCount > 0 && unchanged(p)) {
@@ -429,7 +445,7 @@ object Repository {
                             var n = 0
                             detectedEpg = M3uParser.parseTo(lines, p.id) { e ->
                                 add(e)
-                                if (++n % 5000 == 0) _status.value = "$label · $n itens"
+                                if (++n % 2000 == 0) progress("$label · $n itens")
                             }
                         }
                     }
@@ -549,7 +565,7 @@ object Repository {
 
     private fun <T> open(url: String, onResponse: (okhttp3.Response) -> Unit = {}, block: (InputStream) -> T): T {
         val req = Request.Builder().url(url).header("User-Agent", DEFAULT_UA).build()
-        http.newCall(req).execute().use { resp ->
+        execute(req).use { resp ->
             if (!resp.isSuccessful) throw IOException("servidor respondeu ${resp.code}")
             onResponse(resp)
             val raw = BufferedInputStream(resp.body!!.byteStream(), 64 * 1024)
@@ -560,6 +576,25 @@ object Repository {
             val stream: InputStream = if (b1 == 0x1f && b2 == 0x8b) GZIPInputStream(raw, 64 * 1024) else raw
             return block(stream)
         }
+    }
+
+    /**
+     * Conecta com até 3 tentativas (espera 5 s, depois 20 s). Ajuda quando a TV acabou de sair
+     * do modo de espera e a rede ainda não voltou, ou o servidor demorou a responder.
+     */
+    private fun execute(req: Request): okhttp3.Response {
+        var last: IOException? = null
+        for ((i, wait) in listOf(0L, 5_000L, 20_000L).withIndex()) {
+            if (wait > 0) Thread.sleep(wait)
+            try {
+                val resp = http.newCall(req).execute()
+                if (resp.code >= 500 && i < 2) { resp.close(); last = IOException("servidor respondeu ${resp.code}"); continue }
+                return resp
+            } catch (e: IOException) {
+                last = e
+            }
+        }
+        throw last ?: IOException("sem conexão")
     }
 
     /** Pergunta ao servidor se a lista mudou desde a última vez (ETag / Last-Modified). */

@@ -101,6 +101,15 @@ sealed class Detail {
     data class Category(val type: ContentType, val group: String) : Detail()
 }
 
+/** Lê o status sozinho: assim só este texto se redesenha durante a importação, não a tela toda. */
+@Composable
+private fun StatusText() {
+    val status by Repository.status.collectAsState()
+    status?.let {
+        Text(it, fontSize = 12.sp, color = Palette.TextFaint, maxLines = 1, modifier = Modifier.width(300.dp))
+    }
+}
+
 @Composable
 fun AppRoot(onLoaded: () -> Unit) {
     val context = LocalContext.current
@@ -108,7 +117,6 @@ fun AppRoot(onLoaded: () -> Unit) {
     val library by Repository.library.collectAsState()
     val playlists by Repository.playlists.collectAsState()
     val sources by Repository.sources.collectAsState()
-    val status by Repository.status.collectAsState()
     var tab by rememberSaveable { mutableIntStateOf(0) }
     val stack = remember { mutableStateListOf<Detail>() }
     val firstTab = remember { FocusRequester() }
@@ -155,9 +163,7 @@ fun AppRoot(onLoaded: () -> Unit) {
                 )
             }
             Spacer(Modifier.weight(1f))
-            status?.let {
-                Text(it, fontSize = 12.sp, color = Palette.TextFaint, maxLines = 1, modifier = Modifier.width(300.dp))
-            }
+            StatusText()
         }
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
