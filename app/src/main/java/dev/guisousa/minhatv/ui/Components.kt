@@ -238,7 +238,7 @@ private fun Switch(checked: Boolean, focused: Boolean) {
 }
 
 @Composable
-fun Logo(url: String?, modifier: Modifier = Modifier, fallback: String = "", crop: Boolean = false) {
+fun Logo(url: String?, modifier: Modifier = Modifier, fallback: String = "", crop: Boolean = false, onError: (() -> Unit)? = null) {
     Box(modifier.background(Color(0xFF1B1B1B)), contentAlignment = Alignment.Center) {
         Text(
             initials(fallback),
@@ -254,6 +254,7 @@ fun Logo(url: String?, modifier: Modifier = Modifier, fallback: String = "", cro
                 contentDescription = null,
                 contentScale = if (crop) ContentScale.Crop else ContentScale.Fit,
                 modifier = Modifier.fillMaxSize().padding(if (crop) 0.dp else 6.dp),
+                onError = { onError?.invoke() },
             )
         }
     }
@@ -325,8 +326,10 @@ fun PosterCard(
             modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f).then(if (requester != null) Modifier.focusRequester(requester) else Modifier),
             focusKey = "p:$key",
         ) {
-            Logo(image, Modifier.fillMaxSize(), fallback = "", crop = true)
-            if (image.isNullOrBlank()) {
+            // capa que não abre (link quebrado) vira o mesmo cartão com o nome, e não um quadrado cinza vazio
+            var broken by remember(image) { mutableStateOf(false) }
+            Logo(image, Modifier.fillMaxSize(), fallback = "", crop = true, onError = { broken = true })
+            if (image.isNullOrBlank() || broken) {
                 // sem capa: inicial grande, como no Saimo
                 Text(
                     title.trimStart { !it.isLetterOrDigit() }.take(1).uppercase(), Modifier.align(Alignment.Center),

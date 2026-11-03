@@ -513,7 +513,8 @@ fun SearchScreen(lib: Library, nav: Nav) {
         val (entries, shows) = results!!
         if (entries.isEmpty() && shows.isEmpty()) { Message("Nada encontrado para \"$query\""); return@Column }
         val live = entries.filter { it.type == ContentType.LIVE }
-        val movies = entries.filter { it.type == ContentType.MOVIE }
+        // o mesmo filme/série de várias listas aparece uma vez só
+        val movies = entries.filter { it.type == ContentType.MOVIE }.distinctBy { dupKey(it.name).ifEmpty { it.url } }
         FocusHeader(header.title ?: "Resultados", header.subtitle ?: "\"$query\"", image = header.image, detail = header.detail, logo = header.isLogo)
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(top = 8.dp, bottom = 48.dp)) {
             if (live.isNotEmpty()) item("live") {
@@ -532,8 +533,9 @@ fun SearchScreen(lib: Library, nav: Nav) {
                 }
             }
             if (shows.isNotEmpty()) item("shows") {
-                SectionTitle("Séries", trailing = "${shows.size}")
-                MediaRow(shows, POSTER_W) { _, s ->
+                val uniqueShows = shows.distinctBy { dupKey(it.name).ifEmpty { it.key } }
+                SectionTitle("Séries", trailing = "${uniqueShows.size}")
+                MediaRow(uniqueShows, POSTER_W) { _, s ->
                     PosterCard(s.name, s.logo, key = "s:${s.key}", tmdbTitle = s.name, tv = true, onFocused = { header.show(s.name, "Série · ${s.episodeCount} episódios", s.logo) }, onClick = { nav.openShow(s) })
                 }
             }

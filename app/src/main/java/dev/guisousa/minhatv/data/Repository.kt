@@ -143,7 +143,11 @@ object Repository {
                 if (!hadCache || db.wasReset || stale) {
                     rebuild()
                     prefs.edit().putInt("library_rules", LIBRARY_RULES).apply()
-                } else loadEpg()
+                } else {
+                    loadEpg()
+                    // sem reorganizar na abertura: só confere se o resumo das séries está em dia (refaz se não)
+                    scope.launch { refreshSummary() }
+                }
             } catch (e: Exception) {
                 android.util.Log.e("MinhaTV", "init", e)
             } finally {
@@ -585,14 +589,21 @@ object Repository {
         return counts.map { (g, set) -> GroupInfo(g, set.size) }.filter { it.count > 0 }
     }
 
+    /** Resumo das séries e índice de busca em dia com o banco (refeitos só quando as listas mudam). */
+    private fun refreshSummary() {
+        runCatching {
+            val t0 = System.currentTimeMillis()
+            val redone = db.refreshShowSummary()
+            android.util.Log.w("MinhaTV", "resumo de séries ${if (redone) "refeito" else "em dia"} em ${System.currentTimeMillis() - t0} ms")
+            if (redone) rowCache.clear()
+        }.onFailure { android.util.Log.w("MinhaTV", "resumo de séries falhou", it) }
+    }
+
     private suspend fun rebuild() = withContext(Dispatchers.IO) {
         val hide = hideAdult
         fun List<GroupInfo>.visible() = Library.sortGroups(if (hide) filterNot { Library.isAdult(it.name) } else this) { it.name }
         val noForeign = hideForeign
-        runCatching {
-            val t0 = System.currentTimeMillis()
-            if (db.refreshShowSummary()) android.util.Log.i("MinhaTV", "resumo de séries refeito em ${System.currentTimeMillis() - t0} ms")
-        }.onFailure { android.util.Log.w("MinhaTV", "resumo de séries falhou", it) }
+        refreshSummary()
         val lib = Library(
             version = ++version,
             liveGroups = liveGroups(noForeign).visible(),
@@ -806,6 +817,15 @@ object Repository {
 
     suspend fun recentMovies(limit: Int = 30): List<Entry> = withContext(Dispatchers.IO) {
         runCatching { db.recent(limit * 3).visible().unique().take(limit) }.getOrDefault(emptyList())
+    }
+
+    /** "Mais como este": os parecidos do TMDB que existem na lista; completa com os mais novos da mesma categoria. */
+    suspend fun similarMovies(e: Entry, related: List<String>): List<Entry> = withContext(Dispatchers.IO) {
+        runCatching {
+            val found = related.mapNotNull { t -> db.movieByNorm(Normalize.name(t)) }
+            val fill = if (found.size < 12) db.moviesNewest(e.group, 40) else emptyList()
+            (found + fill).filter { it.url != e.url }.visible().unique().filter { Normalize.name(Normalize.displayCached(it.name).title) != Normalize.name(Normalize.displayCached(e.name).title) }.take(24)
+        }.getOrDefault(emptyList())
     }
 
     suspend fun recentShows(limit: Int = 30): List<Show> = withContext(Dispatchers.IO) {

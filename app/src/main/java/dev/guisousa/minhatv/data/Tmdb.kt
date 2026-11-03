@@ -51,6 +51,52 @@ object Tmdb {
         }
     }
 
+    /** Extras da tela de detalhes: fundo sem texto (o "backdrop" padrão às vezes é uma colagem com letreiro) e títulos parecidos. */
+    class Extra(val backdrop: String?, val related: List<String>)
+    private val extraMem = ConcurrentHashMap<String, Extra>()
+
+    suspend fun extra(title: String, tv: Boolean): Extra? {
+        if (!enabled || title.isBlank()) return null
+        val key = (if (tv) "t:" else "m:") + Normalize.name(title)
+        extraMem[key]?.let { return it }
+        return withContext(Dispatchers.IO) {
+            gate.withPermit {
+                runCatching {
+                    val hit = searchHit(title, tv) ?: return@runCatching null
+                    val id = hit["id"]?.jsonPrimitive?.contentOrNull ?: return@runCatching null
+                    val kind = if (tv) "tv" else "movie"
+                    // fundos sem idioma = imagem limpa, sem título escrito por cima
+                    val images = get("https://api.themoviedb.org/3/$kind/$id/images", "include_image_language" to "null")
+                    val clean = images?.get("backdrops")?.jsonArray?.firstOrNull()?.jsonObject?.get("file_path")?.jsonPrimitive?.contentOrNull
+                    val recs = get("https://api.themoviedb.org/3/$kind/$id/recommendations", "language" to "pt-BR")
+                        ?.get("results")?.jsonArray.orEmpty().mapNotNull { r ->
+                            r.jsonObject[if (tv) "name" else "title"]?.jsonPrimitive?.contentOrNull
+                        }
+                    Extra(clean?.let { "https://image.tmdb.org/t/p/w1280$it" }, recs)
+                }.getOrNull()
+            }?.also { extraMem[key] = it }
+        }
+    }
+
+    private fun get(base: String, vararg params: Pair<String, String>): JsonObject? {
+        val url = base.toHttpUrl().newBuilder().addQueryParameter("api_key", BuildConfig.TMDB_KEY)
+            .apply { params.forEach { (k, v) -> addQueryParameter(k, v) } }.build()
+        client.newCall(Request.Builder().url(url).build()).execute().use { r ->
+            if (!r.isSuccessful) return null
+            return json.parseToJsonElement(r.body!!.string()).jsonObject
+        }
+    }
+
+    private fun searchHit(title: String, tv: Boolean): JsonObject? {
+        val year = yearRe.find(title)?.value?.filter { it.isDigit() }
+        val name = yearRe.replace(title, " ").replace(Regex("""\s+"""), " ").trim()
+        fun search(withYear: Boolean): JsonObject? = get(
+            "https://api.themoviedb.org/3/search/${if (tv) "tv" else "movie"}",
+            *listOfNotNull("language" to "pt-BR", "query" to name, if (withYear && year != null) (if (tv) "first_air_date_year" else "year") to year else null).toTypedArray(),
+        )?.get("results")?.jsonArray?.firstOrNull()?.jsonObject
+        return search(true) ?: if (year != null) search(false) else null
+    }
+
     private fun fetch(title: String, tv: Boolean): Info {
         val year = yearRe.find(title)?.value?.filter { it.isDigit() }
         val name = yearRe.replace(title, " ").replace(Regex("""\s+"""), " ").trim()

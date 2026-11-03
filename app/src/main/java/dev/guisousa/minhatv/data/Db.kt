@@ -51,6 +51,8 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
         db.execSQL("CREATE TABLE IF NOT EXISTS show_grp(show_key TEXT NOT NULL, grp TEXT NOT NULL, min_id INTEGER, max_id INTEGER)")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_show_grp ON show_grp(grp, min_id)")
         db.execSQL("CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT)")
+        // nomes únicos de canais e filmes, só para a busca "contém" (varre uma tabela pequena em vez da principal)
+        db.execSQL("CREATE TABLE IF NOT EXISTS search_names(norm TEXT NOT NULL, type INTEGER NOT NULL, id INTEGER NOT NULL)")
     }
 
     fun tmdbGet(k: String): Array<String?>? = readableDatabase.rawQuery("SELECT poster, backdrop, overview, ts FROM tmdb WHERE k = ?", arrayOf(k)).use { c ->
@@ -206,7 +208,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
      * Depois disso cada fileira de séries é uma consulta pequena, em vez de agrupar dezenas de milhares de episódios.
      */
     fun refreshShowSummary(): Boolean {
-        val sig = readableDatabase.rawQuery("SELECT COUNT(*), MAX(id) FROM entries WHERE type = 2", null).use { c -> c.moveToFirst(); "${c.getLong(0)}:${c.getLong(1)}" }
+        val sig = "v2:" + readableDatabase.rawQuery("SELECT COUNT(*), MAX(id) FROM entries", null).use { c -> c.moveToFirst(); "${c.getLong(0)}:${c.getLong(1)}" }
         val old = readableDatabase.rawQuery("SELECT v FROM meta WHERE k = 'show_sig'", null).use { c -> if (c.moveToFirst()) c.getString(0) else null }
         if (old == sig) { summaryReady = true; return false }
         summaryReady = false
@@ -215,6 +217,8 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
         try {
             db.execSQL("DELETE FROM show_info")
             db.execSQL("DELETE FROM show_grp")
+            db.execSQL("DELETE FROM search_names")
+            db.execSQL("INSERT INTO search_names SELECT norm, type, MIN(id) FROM entries WHERE +type != 2 AND norm IS NOT NULL GROUP BY norm, type")
             db.execSQL("INSERT INTO show_grp SELECT show_key, grp, MIN(id), MAX(id) FROM entries WHERE +type = 2 AND show_key IS NOT NULL GROUP BY show_key, grp")
             db.execSQL(
                 "INSERT INTO show_info(show_key, series, grp, eps, min_id, max_id) SELECT show_key, MIN(series), MIN(grp), " +
@@ -299,6 +303,10 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
         ))
     }
 
+    /** Filmes da lista cujo nome começa com [norm] (para achar os títulos parecidos do TMDB). */
+    fun movieByNorm(norm: String): Entry? =
+        if (norm.length < 3) null else query("norm >= ? AND norm < ? AND +type = 1 LIMIT 1", arrayOf(norm, norm + "\uFFFF")).firstOrNull()
+
     fun episodes(showKey: String): List<Entry> =
         query("show_key = ? ORDER BY COALESCE(season, 0), COALESCE(episode, 99999), id", arrayOf(showKey))
 
@@ -318,10 +326,16 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
         fun add(list: List<Entry>) = list.forEach { if (entries.size < limit && seen.add(it.url)) entries += it }
         // "+type" impede o SQLite de escolher o índice de tipo (que varria a tabela inteira: 35 s na TV)
         for (t in listOf(0, 1)) add(query("norm >= ? AND norm < ? AND +type = $t LIMIT $limit", arrayOf(n, end)))
-        if (!quick && entries.size < limit) add(query("type != 2 AND norm LIKE ? LIMIT $limit", arrayOf("%$n%")))
+        if (!quick && entries.size < limit) {
+            if (summaryReady) {
+                val ids = keys("SELECT id FROM search_names WHERE norm LIKE ? LIMIT $limit", arrayOf("%$n%"))
+                ids.chunked(400).forEach { ch -> add(query("id IN (${ch.joinToString(",")})", emptyArray())) }
+            } else add(query("type != 2 AND norm LIKE ? LIMIT $limit", arrayOf("%$n%")))
+        }
         entries.sortBy { it.type.ordinal }
 
-        fun shows(where: String, args: Array<String>) = showsByKeys(keys("SELECT DISTINCT show_key FROM entries WHERE +type = 2 AND $where LIMIT 100", args))
+        fun shows(where: String, args: Array<String>) = showsByKeys(keys(
+            if (summaryReady) "SELECT show_key FROM show_info WHERE $where LIMIT 100" else "SELECT DISTINCT show_key FROM entries WHERE +type = 2 AND $where LIMIT 100", args))
         val showList = LinkedHashMap<String, Show>()
         shows("show_key >= ? AND show_key < ?", arrayOf(n, end)).forEach { showList[it.key] = it }
         if (!quick && showList.size < 100) shows("show_key LIKE ?", arrayOf("%$n%")).forEach { showList.putIfAbsent(it.key, it) }
