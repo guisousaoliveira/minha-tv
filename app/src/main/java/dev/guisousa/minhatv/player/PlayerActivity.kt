@@ -163,7 +163,7 @@ class PlayerActivity : ComponentActivity() {
                     Player.STATE_BUFFERING -> {
                         handler.postDelayed(showLoading, 400)
                         handler.removeCallbacks(stallCheck)
-                        handler.postDelayed(stallCheck, if (isLive) 15_000 else 30_000)
+                        handler.postDelayed(stallCheck, if (isLive) 10_000 else 12_000)
                     }
                     Player.STATE_READY -> {
                         retries = 0
@@ -351,6 +351,21 @@ class PlayerActivity : ComponentActivity() {
         if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
             exo.seekToDefaultPosition(); exo.prepare(); return
         }
+        // link morto (403/404/410, arquivo não existe, formato inválido): vai direto para a próxima fonte
+        val http = (error.cause as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)?.responseCode
+        val dead = http in setOf(401, 403, 404, 410) ||
+            error.errorCode == PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND ||
+            error.errorCode == PlaybackException.ERROR_CODE_IO_INVALID_HTTP_CONTENT_TYPE ||
+            error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS && (http == null || http in 400..499) ||
+            error.errorCode in PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED..PlaybackException.ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED
+        android.util.Log.i("MinhaTV", "player: erro ${error.errorCodeName} http=$http morto=$dead")
+        if (dead) {
+            playing?.let { Repository.markFailed(it.url) }
+            if (nextSource()) return
+            hideLoading()
+            notice(if (isLive) "Canal fora do ar agora. Aperte OK e escolha outro em Canais." else "Este conteúdo está fora do ar em todas as fontes.", 8000)
+            return
+        }
         if (retries < 2) {
             retries++
             loadingText.text = "Reconectando…"
@@ -370,7 +385,7 @@ class PlayerActivity : ComponentActivity() {
         sourceIndex++
         retries = 0
         val pos = player?.currentPosition ?: 0
-        loadingText.text = "Tentando outra fonte · ${sourceIndex + 1} de ${sources.size}"
+        loadingText.text = "Fonte fora do ar, tentando outra · ${sourceIndex + 1} de ${sources.size}"
         loadingBox.visibility = View.VISIBLE
         playSource(sources[sourceIndex], resume = false)
         if (!isLive && pos > 0) player?.seekTo(pos)
@@ -500,6 +515,8 @@ class PlayerActivity : ComponentActivity() {
     // ---------------- Controles na tela ----------------
 
     private val hideControlsTask = Runnable { controls.hide() }
+    /** O Voltar que fechou um painel não pode, ao soltar a tecla, fechar o player também. */
+    private var backConsumed = false
     private val tick = object : Runnable {
         override fun run() {
             updateTime()
@@ -572,7 +589,7 @@ class PlayerActivity : ComponentActivity() {
         return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%02d:%02d".format(m, sec)
     }
 
-    private fun showControls(ms: Long = 5000) {
+    private fun showControls(ms: Long = 8000) {
         infoPanel.visibility = View.GONE
         updateButtons()
         val wasVisible = controls.visible
@@ -642,20 +659,23 @@ class PlayerActivity : ComponentActivity() {
                 if (!down) controls.hide()
                 return true
             }
-            if (down) { handler.removeCallbacks(hideControlsTask); handler.postDelayed(hideControlsTask, 5000) }
+            if (down) { handler.removeCallbacks(hideControlsTask); handler.postDelayed(hideControlsTask, 8000) }
             if (code == KeyEvent.KEYCODE_DPAD_UP || code == KeyEvent.KEYCODE_DPAD_DOWN) return true
             return super.dispatchKeyEvent(event)
         }
 
         // barra fechada
-        if (!down) return center || super.dispatchKeyEvent(event)
+        if (!down) {
+            if (code == KeyEvent.KEYCODE_BACK && backConsumed) { backConsumed = false; return true }
+            return center || super.dispatchKeyEvent(event)
+        }
         when (code) {
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> { showControls(); return true }
             // ▲ ▼ nunca trocam de canal: só mostram o que está passando (ou a barra, no filme)
             KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> { if (isLive) showInfo(8000) else showControls(); return true }
             KeyEvent.KEYCODE_DPAD_LEFT -> { if (isLive) showInfo() else { seekBy(-10_000); showControls() }; return true }
             KeyEvent.KEYCODE_DPAD_RIGHT -> { if (isLive) showInfo() else { seekBy(10_000); showControls() }; return true }
-            KeyEvent.KEYCODE_BACK -> if (infoPanel.visibility == View.VISIBLE) { infoPanel.visibility = View.GONE; return true }
+            KeyEvent.KEYCODE_BACK -> if (infoPanel.visibility == View.VISIBLE) { infoPanel.visibility = View.GONE; backConsumed = true; return true }
         }
         return super.dispatchKeyEvent(event)
     }

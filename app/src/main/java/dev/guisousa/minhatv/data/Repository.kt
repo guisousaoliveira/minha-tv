@@ -513,7 +513,28 @@ object Repository {
     }
 
     suspend fun alternates(e: Entry): List<Entry> = withContext(Dispatchers.IO) {
-        runCatching { db.alternates(e.type, Normalize.name(e.name).ifEmpty { e.name.lowercase() }, e.url) }.getOrDefault(emptyList())
+        val list = runCatching { db.alternates(e.type, Normalize.name(e.name).ifEmpty { e.name.lowercase() }, e.url) }.getOrDefault(emptyList())
+        // fontes que falharam nas últimas 24 h vão para o fim da fila
+        val cutoff = System.currentTimeMillis() - 24 * 3_600_000L
+        val failed = failedUrls()
+        list.sortedBy { (failed[it.url.hashCode().toString()] ?: 0L) > cutoff }
+    }
+
+    private fun failedUrls(): Map<String, Long> = synchronized(this) {
+        prefs.getStringSet("failed_urls", emptySet()).orEmpty().mapNotNull {
+            val (k, t) = it.split(':').takeIf { p -> p.size == 2 } ?: return@mapNotNull null
+            k to (t.toLongOrNull() ?: 0L)
+        }.toMap()
+    }
+
+    /** Guarda que este link não abriu (link morto, 404...). */
+    fun markFailed(url: String) = synchronized(this) {
+        val now = System.currentTimeMillis()
+        val cutoff = now - 24 * 3_600_000L
+        val map = failedUrls().filterValues { it > cutoff }.toMutableMap()
+        map[url.hashCode().toString()] = now
+        val keep = map.entries.sortedByDescending { it.value }.take(500).map { "${it.key}:${it.value}" }.toSet()
+        prefs.edit().putStringSet("failed_urls", keep).apply()
     }
 
     // ---------- Recentes ----------
