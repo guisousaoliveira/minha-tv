@@ -351,7 +351,7 @@ class PlayerActivity : ComponentActivity() {
         infoNow.visibility = if (cur != null) View.VISIBLE else View.GONE
         val extra = mutableListOf<String>()
         next?.let { extra += "Depois   ${timeFmt.format(Date(it.start))}   ${it.title}" }
-        if (sources.size > 1) extra += "Fonte ${sourceIndex + 1} de ${sources.size}"
+        extra += (if (sources.size > 1) "Fonte ${sourceIndex + 1} de ${sources.size}" else "Fonte única") + " · " + formatName()
         if (e.url in Repository.favorites.value) extra += "Na Minha lista"
         infoNext.text = extra.joinToString("\n")
         infoNext.visibility = if (extra.isEmpty()) View.GONE else View.VISIBLE
@@ -395,6 +395,19 @@ class PlayerActivity : ComponentActivity() {
         sourcesJob = lifecycleScope.launch {
             val alts = Repository.alternates(e)
             if (index == wanted && alts.isNotEmpty()) { sources = listOf(e) + alts; updateButtons() }
+        }
+    }
+
+    /** Formato que está tocando agora, para mostrar no botão da fonte. */
+    private fun formatName(): String {
+        if (usingHlsVariant) return "HLS"
+        val p = (playing?.url ?: "").lowercase().substringBefore('?')
+        return when {
+            p.endsWith(".m3u8") || p.contains("/hls/") -> "HLS"
+            p.endsWith(".mpd") -> "DASH"
+            p.endsWith(".mp4") -> "MP4"
+            p.endsWith(".mkv") -> "MKV"
+            else -> "TS"
         }
     }
 
@@ -468,6 +481,7 @@ class PlayerActivity : ComponentActivity() {
         }
         exo.playWhenReady = true
         handler.postDelayed(showLoading, 400)
+        updateButtons()
     }
 
     private fun handleError(error: PlaybackException) {
@@ -709,7 +723,7 @@ class PlayerActivity : ComponentActivity() {
             b.setCompoundDrawables(icon, null, null, null)
             b.contentDescription = if (playing) "Pausar" else "Continuar"
         }
-        btnSource?.text = if (sources.size > 1) "Fonte ${sourceIndex + 1}/${sources.size}" else "Fonte"
+        btnSource?.text = (if (sources.size > 1) "Fonte ${sourceIndex + 1}/${sources.size}" else "Fonte") + " · " + formatName()
         btnFav?.text = if (items.isNotEmpty() && current.url in Repository.favorites.value) "Na Minha lista" else "+ Minha lista"
         val e = items.getOrNull(index) ?: return
         controls.kicker.text = if (isLive) "${index + 1}  ·  ${e.group}" else e.group
