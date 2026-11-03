@@ -250,12 +250,15 @@ class PlayerControls(private val context: Context, root: FrameLayout) {
                 setPadding(dp(14), dp(11), dp(14), dp(11))
                 setOnClickListener { hidePanel(); onPick(i) }
             }
-            row.addView(label(16f, Color.WHITE, bold = c.selected).apply {
-                text = c.label; setTextColor(textColors); isDuplicateParentStateEnabled = true
-            })
-            if (c.detail != null) row.addView(label(13f, 0xFFA3A3A3.toInt()).apply {
-                text = c.detail; setTextColor(dimOnFocus); isDuplicateParentStateEnabled = true
-            })
+            val main = label(16f, Color.WHITE, bold = c.selected).apply { text = c.label }
+            val sub = c.detail?.let { d -> label(13f, 0xFFA3A3A3.toInt()).apply { text = d } }
+            row.addView(main)
+            sub?.let { row.addView(it) }
+            // em foco: fundo branco, texto preto
+            row.setOnFocusChangeListener { _, has ->
+                main.setTextColor(if (has) Color.BLACK else Color.WHITE)
+                sub?.setTextColor(if (has) 0xFF404040.toInt() else 0xFFA3A3A3.toInt())
+            }
             panelList.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(4) })
             if (c.selected && focusView == null) focusView = row
         }

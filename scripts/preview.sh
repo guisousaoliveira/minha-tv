@@ -38,6 +38,7 @@ shot player-barra-botoes 1
 adb shell input keyevent KEYCODE_DPAD_CENTER
 shot player-painel-canais 2
 key KEYCODE_BACK
+key KEYCODE_DPAD_CENTER
 key KEYCODE_BACK
 shot player-sem-barra 1
 key KEYCODE_DPAD_RIGHT
