@@ -412,7 +412,7 @@ fun SeriesDetailScreen(show: Show) {
     if (all == null) { Loading(); return }
     if (all.isEmpty()) { Message("Nenhum episódio encontrado"); return }
     val seasons = remember(all) { all.groupBy { it.season ?: 0 }.toSortedMap().toList() }
-    var season by remember(show) { mutableStateOf(seasons.first().first) }
+    var season by rememberSaveable(show.key) { mutableStateOf(seasons.first().first) }
     val episodes = seasons.firstOrNull { it.first == season }?.second.orEmpty()
     Row(Modifier.fillMaxSize().padding(start = 48.dp, top = 12.dp)) {
         Column(Modifier.width(240.dp)) {

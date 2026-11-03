@@ -181,14 +181,17 @@ fun AppRoot(onLoaded: () -> Unit) {
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
             val top = stack.lastOrNull()
+            // guarda o estado de cada tela (termo da busca, rolagem, temporada...) quando ela sai da frente,
+            // para o Voltar devolver exatamente onde você estava
+            val holder = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
             when {
                 loading -> Message("Carregando…")
                 nothingAdded && Tab.entries[tab] != Tab.SETTINGS -> Welcome(onTyped = { url, name, epg -> addLink(context, url, name, epg) })
-                top is Detail.OfShow -> SeriesDetailScreen(top.show)
-                top is Detail.Category -> CategoryScreen(library, top.type, top.group, nav)
+                top is Detail.OfShow -> holder.SaveableStateProvider("show:${top.show.key}") { SeriesDetailScreen(top.show) }
+                top is Detail.Category -> holder.SaveableStateProvider("cat:${top.type}:${top.group}") { CategoryScreen(library, top.type, top.group, nav) }
                 // troca de aba com um fade rápido
                 else -> androidx.compose.animation.Crossfade(Tab.entries[tab], animationSpec = androidx.compose.animation.core.tween(180), label = "tab") { t ->
-                    when (t) {
+                    holder.SaveableStateProvider("tab:${t.name}") { when (t) {
                         Tab.HOME -> HomeScreen(library, nav)
                         Tab.LIVE -> LiveScreen(library)
                         Tab.MOVIES -> RowsScreen(library, ContentType.MOVIE, nav)
@@ -196,7 +199,7 @@ fun AppRoot(onLoaded: () -> Unit) {
                         Tab.MYLIST -> MyListScreen(library, nav)
                         Tab.SEARCH -> SearchScreen(library, nav)
                         Tab.SETTINGS -> SettingsScreen()
-                    }
+                    } }
                 }
             }
         }

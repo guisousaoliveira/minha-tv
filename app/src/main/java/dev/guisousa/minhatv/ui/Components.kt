@@ -43,6 +43,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
@@ -116,9 +117,17 @@ fun FocusBox(
     focusScale: Float = 1.03f,
     shape: Shape = RoundedCornerShape(6.dp),
     background: Color = Palette.Surface,
+    focusKey: String? = null,
     content: @Composable BoxScope.(focused: Boolean) -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
+    // ao voltar de uma tela (série, categoria), o foco volta para o cartão em que você estava
+    val requester = remember { androidx.compose.ui.focus.FocusRequester() }
+    if (focusKey != null) {
+        androidx.compose.runtime.LaunchedEffect(focusKey) {
+            if (FocusMemory.last == focusKey) { kotlinx.coroutines.delay(60); runCatching { requester.requestFocus() } }
+        }
+    }
     val scale by animateFloatAsState(if (focused) focusScale else 1f, tween(150), label = "scale")
     val bg = when {
         focused && !frame -> Palette.Focus
@@ -128,7 +137,9 @@ fun FocusBox(
     Box(
         modifier
             .graphicsLayer { scaleX = scale; scaleY = scale }
+            .then(if (focusKey != null) Modifier.focusRequester(requester) else Modifier)
             .onFocusChanged {
+                if (it.isFocused && focusKey != null) FocusMemory.last = focusKey
                 if (it.isFocused && !focused) onFocused?.invoke()
                 focused = it.isFocused
             }
@@ -145,6 +156,9 @@ fun FocusBox(
         content(focused)
     }
 }
+
+/** Último cartão focado, para devolver o foco ao voltar de outra tela. */
+object FocusMemory { var last: String? = null }
 
 /** Cor do texto dentro de um FocusBox "fill". */
 fun textOn(focused: Boolean, dim: Boolean = false) = when {
@@ -273,7 +287,7 @@ fun PosterCard(
     Column {
         FocusBox(
             onClick = onClick, onLongClick = onLongClick, onFocused = onFocused,
-            frame = true, focusScale = 1.07f, modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f),
+            frame = true, focusScale = 1.07f, modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f), focusKey = "p:$title",
         ) {
             Logo(image, Modifier.fillMaxSize(), fallback = title, crop = true)
             if (image.isNullOrBlank()) {
@@ -291,7 +305,7 @@ fun PosterCard(
 @Composable
 fun ChannelCard(title: String, logo: String?, subtitle: String?, onFocused: (() -> Unit)? = null, onClick: () -> Unit) {
     Column {
-        FocusBox(onClick = onClick, onFocused = onFocused, frame = true, focusScale = 1.06f, modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
+        FocusBox(onClick = onClick, onFocused = onFocused, frame = true, focusScale = 1.06f, modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f), focusKey = "c:$title") {
             Logo(logo, Modifier.fillMaxSize().padding(12.dp), fallback = title)
         }
         Text(title, Modifier.padding(top = 8.dp), fontSize = 13.sp, color = Palette.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
