@@ -62,7 +62,7 @@ private class GridItem(val title: String, val image: String?, val subtitle: Stri
 
 /** Fileira "Lançamentos" no topo das páginas de Filmes e Séries. */
 @Composable
-fun ReleasesRow(lib: Library, type: ContentType, nav: Nav, header: HeaderState) {
+internal fun ReleasesRow(lib: Library, type: ContentType, nav: Nav, header: HeaderState) {
     val context = LocalContext.current
     if (type == ContentType.MOVIE) {
         val items = load(lib.version, "rel-m") { Repository.recentMovies() } ?: return
