@@ -183,6 +183,10 @@ class PlayerControls(private val context: Context, root: FrameLayout) {
         maxLines = 1
         setPadding(dp(18), dp(11), dp(18), dp(11))
         setOnClickListener { onClick() }
+        // cor do texto trocada na mão: em algumas TVs a lista de cores por estado não era aplicada
+        // e o botão em foco ficava branco com texto branco
+        setTextColor(Color.WHITE)
+        setOnFocusChangeListener { _, has -> setTextColor(if (has) Color.BLACK else Color.WHITE) }
     }
 
     fun setButtons(left: List<View>, right: List<View>) {
