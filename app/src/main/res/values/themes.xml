@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.MinhaTV" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:colorAccent">#3D7BFF</item>
+        <item name="android:windowFullscreen">true</item>
+    </style>
+</resources>
