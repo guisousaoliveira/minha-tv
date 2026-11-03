@@ -471,13 +471,16 @@ class PlayerActivity : ComponentActivity() {
         usingHlsVariant = hls != null
         val url = hls ?: src.url
         val path = url.lowercase().substringBefore('?')
-        val base = DefaultDataSource.Factory(this, http)
-        // HLS ao vivo: link de pedaço/playlist com prazo dá 404 de vez em quando; tenta de novo
-        // algumas vezes antes de desistir, em vez de derrubar o canal
+        val base = DefaultDataSource.Factory(this, StableRedirectDataSource.Factory(http))
+        // ao vivo: playlist que dá 404/403/410 não volta repetindo o mesmo endereço (é link com prazo).
+        // Desiste na hora para reabrir o canal pelo link original, em vez de ficar ~24 s tentando com a tela parada.
         val retry404 = object : androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy(6) {
             override fun getRetryDelayMsFor(info: androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy.LoadErrorInfo): Long {
                 val code = (info.exception as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)?.responseCode
-                if (isLive && code != null && code in 400..499 && info.errorCount <= 3) return 1000L * info.errorCount
+                if (isLive && code != null && code in 400..499) {
+                    if (info.mediaLoadData.dataType == C.DATA_TYPE_MANIFEST) return C.TIME_UNSET
+                    if (info.errorCount <= 2) return 500L * info.errorCount
+                }
                 return super.getRetryDelayMsFor(info)
             }
         }
