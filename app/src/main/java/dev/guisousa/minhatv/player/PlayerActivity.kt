@@ -146,6 +146,8 @@ class PlayerActivity : ComponentActivity() {
 
     /** Evita que o vigia e o fim da transmissão reconectem duas vezes ao mesmo tempo. */
     private var reconnecting = false
+    /** Se a fonte atual já chegou a tocar (para saber se o erro foi na abertura). */
+    private var readyOnce = false
     @Volatile private var lastReopenAt = 0L
     private var lastReconnectAt = 0L
     private var limitRetried = false
@@ -239,6 +241,7 @@ class PlayerActivity : ComponentActivity() {
                     Player.STATE_READY -> {
                         retries = 0
                         limitRetried = false
+                        readyOnce = true
                         hideLoading()
                         playing?.url?.let { if (it != markedWorking) { markedWorking = it; Repository.markWorking(it) } }
                     }
@@ -395,26 +398,46 @@ class PlayerActivity : ComponentActivity() {
         }
     }
 
+    /** Links em que a versão .m3u8 não abriu: usa o original direto. */
+    private val hlsFailed = HashSet<String>()
+    private var usingHlsVariant = false
+
+    /** http://host/live/user/pass/123.ts ou http://host/user/pass/123 -> http://host/live/user/pass/123.m3u8 */
+    private fun hlsVariant(url: String): String? {
+        val u = android.net.Uri.parse(url)
+        val segs = u.pathSegments ?: return null
+        val base = "${u.scheme}://${u.encodedAuthority}"
+        val q = u.encodedQuery?.let { "?$it" } ?: ""
+        val last = segs.lastOrNull() ?: return null
+        return when {
+            segs.size == 4 && segs[0] == "live" && last.endsWith(".ts") -> "$base/live/${segs[1]}/${segs[2]}/${last.removeSuffix(".ts")}.m3u8$q"
+            segs.size == 3 && last.all { it.isDigit() } -> "$base/live/${segs[0]}/${segs[1]}/$last.m3u8$q"
+            segs.size == 3 && last.endsWith(".ts") && last.removeSuffix(".ts").all { it.isDigit() } -> "$base/live/${segs[0]}/${segs[1]}/${last.removeSuffix(".ts")}.m3u8$q"
+            else -> null
+        }
+    }
+
     private fun playSource(src: Entry, resume: Boolean) {
         val exo = player ?: return
         playing = src
         lastPos = -1L; lastFrames = -1; frozenFor = -4000 // dá uns segundos para começar
+        readyOnce = false
         val http = DefaultHttpDataSource.Factory()
             .setUserAgent(src.userAgent ?: Repository.DEFAULT_UA)
             .setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(12_000)
             .setReadTimeoutMs(20_000)
         src.referrer?.let { http.setDefaultRequestProperties(mapOf("Referer" to it)) }
-        val path = src.url.lowercase().substringBefore('?')
+        // ao vivo de servidor Xtream: toca a versão HLS (.m3u8) do mesmo canal, como os apps de IPTV.
+        // O .ts direto é cortado pelo servidor a cada poucos segundos; se o HLS não abrir, volta para o .ts.
+        val hls = if (isLive && !hlsFailed.contains(src.url)) hlsVariant(src.url) else null
+        usingHlsVariant = hls != null
+        val url = hls ?: src.url
+        val path = url.lowercase().substringBefore('?')
         val base = DefaultDataSource.Factory(this, http)
-        // ao vivo em .ts direto (não HLS): emenda a conexão quando o servidor fecha
-        val progressiveLive = isLive && !path.endsWith(".m3u8") && !path.endsWith(".mpd") && !path.contains("/hls/")
-        // emendar a conexão no meio do .ts bagunçava o tempo do áudio; agora, se o servidor fechar,
-        // o player recomeça a fonte limpa (reconnect em STATE_ENDED), com uma recarga curta
-        if (progressiveLive) lastReopenAt = 0L
         val factory = DefaultMediaSourceFactory(base)
         val item = MediaItem.Builder()
-            .setUri(src.url)
+            .setUri(url)
             .setMediaMetadata(MediaMetadata.Builder().setTitle(src.name).build())
             .apply {
                 when {
@@ -440,12 +463,17 @@ class PlayerActivity : ComponentActivity() {
         }
         // link morto (403/404/410, arquivo não existe, formato inválido): vai direto para a próxima fonte
         val http = (error.cause as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)?.responseCode
-        val dead = http in setOf(401, 403, 404, 410) ||
+        val dead = http in setOf(404, 410) ||
             error.errorCode == PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND ||
             error.errorCode == PlaybackException.ERROR_CODE_IO_INVALID_HTTP_CONTENT_TYPE ||
             error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS && (http == null || http in 400..499) ||
             error.errorCode in PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED..PlaybackException.ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED
         android.util.Log.w("MinhaTV", "player: erro ${error.errorCodeName} http=$http morto=$dead")
+        // a versão HLS não abriu: tenta o link original (.ts) antes de qualquer outra coisa
+        if (usingHlsVariant && !readyOnce) {
+            playing?.let { hlsFailed += it.url; android.util.Log.w("MinhaTV", "player: HLS não abriu (${error.errorCodeName}), usando o .ts"); playSource(it, resume = false) }
+            return
+        }
         // recusa (401/403) logo depois de reconectar: é o limite de telas do servidor contando a conexão velha.
         // Espera e tenta de novo, sem marcar a fonte como quebrada.
         val justReconnected = System.currentTimeMillis() - maxOf(lastReopenAt, lastReconnectAt) < 15_000
@@ -768,8 +796,8 @@ class PlayerActivity : ComponentActivity() {
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> { showControls(); return true }
             // ▲ ▼ nunca trocam de canal: só mostram o que está passando (ou a barra, no filme)
             KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> { if (isLive) showInfo(8000) else showControls(); return true }
-            KeyEvent.KEYCODE_DPAD_LEFT -> { if (isLive) showInfo() else { seekBy(-10_000); showControls() }; return true }
-            KeyEvent.KEYCODE_DPAD_RIGHT -> { if (isLive) showInfo() else { seekBy(10_000); showControls() }; return true }
+            // setas nunca avançam nem voltam sozinhas: só abrem a barra (no filme) ou o "agora passando" (ao vivo)
+            KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> { if (isLive) showInfo() else showControls(); return true }
             KeyEvent.KEYCODE_BACK -> if (infoPanel.visibility == View.VISIBLE) { infoPanel.visibility = View.GONE; backConsumed = true; return true }
         }
         return super.dispatchKeyEvent(event)
