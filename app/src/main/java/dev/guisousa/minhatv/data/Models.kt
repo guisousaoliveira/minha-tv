@@ -187,6 +187,9 @@ object Normalize {
     private val audioSuffix = Regex("""[\s\-|]+(dub|leg|dual)\s*$""", RegexOption.IGNORE_CASE)
     private val year = Regex("""^\s*(19|20)\d{2}\s*$""")
     private val edgeJunk = Regex("""^[\s|:\-–—·*#»>.,+_~]+|[\s|:\-–—·*#»>.,+_~]+$""")
+    private val superDigits = mapOf('⁰' to '0', '¹' to '1', '²' to '2', '³' to '3', '⁴' to '4', '⁵' to '5', '⁶' to '6', '⁷' to '7', '⁸' to '8', '⁹' to '9')
+    private val superK = Regex("""⁴\s*ᴷ""")
+    private val superDigit = Regex("""[⁰¹²³⁴-⁹]+""")
     private val modifiers = Regex("""[\p{Lm}²³¹⁰-₟]""") // ⁽ᴴᴰ⁾, ², ³
     private val emptyBrackets = Regex("""[\[(]\s*[\])]""")
 
@@ -196,6 +199,9 @@ object Normalize {
      */
     fun display(raw: String): Display {
         var t = clean(raw)
+        // "SPORTV²" é o SporTV 2, não o SporTV: número sobrescrito vira número normal antes de limpar
+        t = superK.replace(t, " 4K")
+        t = superDigit.replace(t) { m -> " " + m.value.map { superDigits[it] ?: ' ' }.joinToString("") }
         t = modifiers.replace(t, " ")
         var best = 0
         var audio: String? = null

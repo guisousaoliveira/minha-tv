@@ -268,6 +268,14 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
         return ids to names
     }
 
+    /** Refaz nome limpo e chave dos itens que batem com [where] (quando a regra de limpar nomes muda). */
+    fun redoTitles(where: String) {
+        val rows = readableDatabase.rawQuery("SELECT id, name FROM entries WHERE $where", null)
+            .use { c -> c.map { it.getLong(0) to it.getString(1) } }
+        if (rows.isEmpty()) return
+        writeTitles(rows)
+    }
+
     /**
      * Preenche nome limpo, etiqueta e chave de quem foi importado antes desta versão, aos poucos.
      * Devolve quantos itens arrumou (0 = acabou).
@@ -276,6 +284,11 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
         val rows = readableDatabase.rawQuery("SELECT id, name FROM entries WHERE title IS NULL LIMIT $batch", null)
             .use { c -> c.map { it.getLong(0) to it.getString(1) } }
         if (rows.isEmpty()) return 0
+        writeTitles(rows)
+        return rows.size
+    }
+
+    private fun writeTitles(rows: List<Pair<Long, String>>) {
         val db = writableDatabase
         db.beginTransaction()
         try {
@@ -293,7 +306,6 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
         } finally {
             db.endTransaction()
         }
-        return rows.size
     }
 
     // ---------- Saúde das fontes ----------

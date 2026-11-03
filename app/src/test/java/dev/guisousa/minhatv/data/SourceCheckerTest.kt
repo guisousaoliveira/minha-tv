@@ -41,6 +41,12 @@ class DisplayNameTest {
         assertEquals(Normalize.Display("Cartoon Network", null), d("Cartoon Network (Alternativo)"))
     }
 
+    @Test fun superscriptNumberIsTheChannelNumber() {
+        assertEquals("sportv2", Normalize.key(d("SPORTV² HD").title))
+        assertEquals("sportv3", Normalize.key(d("SPORTV³").title))
+        assertEquals(Normalize.Display("ESPN", "4K"), d("ESPN ⁴ᴷ"))
+    }
+
     @Test fun moviesKeepYearAndGetAudioTag() {
         assertEquals(Normalize.Display("Duna (2021)", "4K · Dublado"), d("Duna (2021) [Dublado] 4K"))
         assertEquals(Normalize.Display("Duna 2021", "FHD · Legendado"), d("Duna 2021 1080p Leg"))

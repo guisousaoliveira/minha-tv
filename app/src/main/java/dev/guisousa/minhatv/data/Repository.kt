@@ -41,7 +41,7 @@ object Repository {
     /** Fontes no máximo por canal/filme (contando a primeira). */
     const val MAX_SOURCES = 5
     /** Suba quando mudar o que aparece nas categorias (força reorganizar na próxima abertura). */
-    private const val LIBRARY_RULES = 2
+    private const val LIBRARY_RULES = 3
     private const val CHECK_PARALLEL = 3
     private const val CHECK_BATCH = 60
     private const val CHECK_OK_AGE = 24 * 3_600_000L
@@ -141,6 +141,8 @@ object Repository {
                 // regras de filtro mudaram nesta versão: as categorias salvas estão velhas, reorganiza
                 val stale = prefs.getInt("library_rules", 0) != LIBRARY_RULES
                 if (!hadCache || db.wasReset || stale) {
+                    // nomes com número sobrescrito ("SPORTV²") estavam juntando com o canal 1
+                    if (stale) runCatching { db.redoTitles("name GLOB '*[⁰¹²³⁴⁵⁶⁷⁸⁹]*'") }
                     rebuild()
                     prefs.edit().putInt("library_rules", LIBRARY_RULES).apply()
                 } else loadEpg()

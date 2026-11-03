@@ -18,6 +18,13 @@ class LibraryTest {
         }
     }
 
+    @Test fun leftoversFromTvTest() {
+        listOf("Russian VIP", "Ocea Newzealand VIP").forEach { assertTrue(it, Library.isForeignLiveGroup(it)) }
+        listOf("Exyu Sport VIP", "Es·Laliga VIP", "USA NFL Gamepass", "Lame·Brazil VIP", "Rádios Fm", "Outros").forEach {
+            assertFalse(it, Library.isForeignLiveGroup(it))
+        }
+    }
+
     @Test fun foreignChannelsInsideMixedGroups() {
         assertTrue(Library.isForeignLiveEntry(Entry(name = "AU: Seven", url = "a", group = "Mix")))
         assertTrue(Library.isForeignLiveEntry(Entry(name = "Fox", url = "b", tvgId = "Fox.us", group = "Mix")))
