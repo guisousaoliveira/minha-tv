@@ -199,7 +199,8 @@ private fun EntryRow(lib: Library, type: ContentType, group: String, count: Int,
     val context = LocalContext.current
     val items = load(lib.version, type, group) { Repository.entries(type, group, ROW_ITEMS) }
     SectionTitle(group, trailing = "$count")
-    if (items == null) { Box(Modifier.height(if (type == ContentType.LIVE) 150.dp else 250.dp)); return }
+    if (items == null) { LoadingRow(if (type == ContentType.LIVE) 150.dp else 250.dp, key = group); return }
+    FocusMemory.handoff(group, items.firstOrNull()?.let { "$group:${it.url}" })
     val live = type == ContentType.LIVE
     MediaRow(
         items, if (live) CHANNEL_W else POSTER_W,
@@ -231,7 +232,8 @@ private fun openLiveGroup(context: android.content.Context, type: ContentType, g
 private fun ShowRow(lib: Library, group: String, count: Int, nav: Nav, header: HeaderState) {
     val shows = load(lib.version, group) { Repository.shows(group, ROW_ITEMS) }
     SectionTitle(group, trailing = "$count")
-    if (shows == null) { Box(Modifier.height(250.dp)); return }
+    if (shows == null) { LoadingRow(250.dp, key = group); return }
+    FocusMemory.handoff(group, shows.firstOrNull()?.let { "$group:${it.key}" })
     MediaRow(
         shows, POSTER_W,
         seeAll = if (count > shows.size) ({ nav.openCategory(ContentType.SERIES, group) }) else null,

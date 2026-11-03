@@ -181,6 +181,8 @@ object FocusMemory {
         restore.intValue++
     }
     fun clear() = stack.clear()
+    /** Se o foco estava no esqueleto da fileira [row] enquanto carregava, passa para o primeiro cartão. */
+    fun handoff(row: String, firstKey: String?) { if (last == "load:$row" && firstKey != null) last = firstKey }
 }
 
 /** Cor do texto dentro de um FocusBox "fill". */
@@ -544,5 +546,24 @@ fun QrCode(text: String, modifier: Modifier = Modifier) {
     }
     if (bitmap != null) {
         Image(bitmap, contentDescription = "QR Code", modifier = modifier.clip(RoundedCornerShape(6.dp)))
+    }
+}
+
+
+/**
+ * Fileira ainda carregando: um cartão "esqueleto" que pode receber o foco (descendo com ▼ o foco
+ * não some). Quando a fileira chega, o foco passa para o primeiro cartão dela.
+ */
+@Composable
+fun LoadingRow(height: Dp, key: String? = null) {
+    androidx.compose.foundation.layout.Row(
+        Modifier.padding(horizontal = 48.dp, vertical = 10.dp).height(height),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        FocusBox(onClick = {}, frame = true, focusScale = 1f, modifier = Modifier.width(136.dp).fillMaxHeight(), focusKey = key?.let { "load:$it" }) {
+            Skeleton(Modifier.fillMaxSize())
+            Spinner(22.dp, Modifier.align(Alignment.Center))
+        }
+        repeat(6) { Skeleton(Modifier.width(136.dp).fillMaxHeight()) }
     }
 }

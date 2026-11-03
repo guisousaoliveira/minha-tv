@@ -174,7 +174,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
                 "SELECT show_key, logo, COUNT(*) FROM entries WHERE show_key IN ($marks) AND logo IS NOT NULL GROUP BY show_key, logo", args,
             ).use { c -> while (c.moveToNext()) { val k = c.getString(0); val n = c.getInt(2); if ((logos[k]?.second ?: -1) < n) logos[k] = c.getString(1) to n } }
             readableDatabase.rawQuery(
-                "SELECT show_key, MIN(series), MIN(grp), COUNT(DISTINCT CASE WHEN episode IS NULL THEN 'u' || id ELSE COALESCE(season, 0) || 'x' || episode END) FROM entries WHERE show_key IN ($marks) AND type = 2 GROUP BY show_key", args,
+                "SELECT show_key, MIN(series), MIN(grp), COUNT(DISTINCT CASE WHEN episode IS NULL THEN 'u' || id ELSE COALESCE(season, 0) || 'x' || episode END) FROM entries WHERE show_key IN ($marks) AND +type = 2 GROUP BY show_key", args,
             ).use { c -> while (c.moveToNext()) { val k = c.getString(0); info[k] = Show(k, Normalize.displayCached(c.getString(1)).title, c.getString(2), logos[k]?.first, c.getInt(3)) } }
         }
         return keys.mapNotNull { info[it] }
@@ -185,7 +185,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
 
     fun shows(group: String?, limit: Int = 20_000): List<Show> {
         val (where, args) = if (group == null) "type = 2" to emptyArray<String>() else "type = 2 AND grp = ?" to arrayOf(group)
-        return showsByKeys(keys("SELECT show_key FROM entries WHERE $where GROUP BY show_key ORDER BY MIN(id) LIMIT $limit", args))
+        return showsByKeys(keys("SELECT show_key FROM entries INDEXED BY idx_type_grp WHERE $where GROUP BY show_key ORDER BY MIN(id) LIMIT $limit", args))
     }
 
     private fun letterWhere(col: String, letter: Char): Pair<String, Array<String>> =
@@ -207,7 +207,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
         val (lw, la) = if (letter == null) "1" to emptyArray<String>() else letterWhere("series", letter)
         val (gw, ga) = if (group == null) "" to emptyArray<String>() else " AND grp = ?" to arrayOf(group)
         val order = if (letter == null) "MAX(id) DESC" else "MIN(series) COLLATE NOCASE"
-        return showsByKeys(keys("SELECT show_key FROM entries WHERE type = 2$gw AND $lw GROUP BY show_key ORDER BY $order LIMIT $limit", ga + la))
+        return showsByKeys(keys("SELECT show_key FROM entries INDEXED BY idx_type_grp WHERE type = 2$gw AND $lw GROUP BY show_key ORDER BY $order LIMIT $limit", ga + la))
     }
 
     /** Lançamentos: filmes com o ano atual ou o anterior no nome, os adicionados por último primeiro. */
@@ -220,7 +220,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
     fun recentShows(limit: Int): List<Show> {
         val y = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
         return showsByKeys(keys(
-            "SELECT show_key FROM entries WHERE type = 2 AND (series LIKE ? OR series LIKE ?) GROUP BY show_key ORDER BY MAX(id) DESC LIMIT $limit",
+            "SELECT show_key FROM entries INDEXED BY idx_type_grp WHERE type = 2 AND (series LIKE ? OR series LIKE ?) GROUP BY show_key ORDER BY MAX(id) DESC LIMIT $limit",
             arrayOf("%$y%", "%${y - 1}%"),
         ))
     }

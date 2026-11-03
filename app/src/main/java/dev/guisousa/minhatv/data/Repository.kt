@@ -595,6 +595,7 @@ object Repository {
             movieGroups = db.groups(ContentType.MOVIE).visible(),
             showGroups = db.showGroups().visible(),
         )
+        rowCache.clear()
         _library.value = lib
         writeLibraryCache(lib)
         loadEpg()
@@ -658,7 +659,17 @@ object Repository {
         else -> 200_000L
     }
 
-    suspend fun entries(type: ContentType, group: String?, limit: Int = 60_000): List<Entry> = withContext(Dispatchers.IO) {
+    /** Fileiras já carregadas (voltar a elas ou rolar de volta não consulta o banco de novo). */
+    private val rowCache = java.util.concurrent.ConcurrentHashMap<String, List<Any>>()
+
+    suspend fun entries(type: ContentType, group: String?, limit: Int = 60_000): List<Entry> {
+        val ck = "e|$type|$group|$limit"
+        @Suppress("UNCHECKED_CAST")
+        if (limit <= 50) (rowCache[ck] as? List<Entry>)?.let { return it }
+        return entriesUncached(type, group, limit).also { if (limit <= 50 && it.isNotEmpty()) rowCache[ck] = it }
+    }
+
+    private suspend fun entriesUncached(type: ContentType, group: String?, limit: Int): List<Entry> = withContext(Dispatchers.IO) {
         val t0 = System.currentTimeMillis()
         val r = runCatching { db.entries(type, group, limit * 2).visible().unique().take(limit) }.getOrDefault(emptyList())
         val ms = System.currentTimeMillis() - t0
@@ -806,7 +817,14 @@ object Repository {
         prefs.edit().putString("recent_searches", list.joinToString("\n")).apply()
     }
 
-    suspend fun shows(group: String?, limit: Int = 20_000): List<Show> = withContext(Dispatchers.IO) {
+    suspend fun shows(group: String?, limit: Int = 20_000): List<Show> {
+        val ck = "s|$group|$limit"
+        @Suppress("UNCHECKED_CAST")
+        if (limit <= 50) (rowCache[ck] as? List<Show>)?.let { return it }
+        return showsUncached(group, limit).also { if (limit <= 50 && it.isNotEmpty()) rowCache[ck] = it }
+    }
+
+    private suspend fun showsUncached(group: String?, limit: Int): List<Show> = withContext(Dispatchers.IO) {
         val t0 = System.currentTimeMillis()
         val r = runCatching { db.shows(group, limit).let { l -> if (hideAdult) l.filterNot { Library.isAdult(it.group) } else l } }
             .getOrDefault(emptyList())
