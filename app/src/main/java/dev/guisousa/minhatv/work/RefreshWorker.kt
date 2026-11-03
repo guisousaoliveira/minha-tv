@@ -40,6 +40,7 @@ class RefreshWorker(context: Context, params: WorkerParameters) : CoroutineWorke
         }
         try {
             Repository.refreshAll(onlyStale = true)
+            Repository.checkSources(budget = 1500)
         } finally {
             progress.cancel()
         }

@@ -38,6 +38,12 @@ object Repository {
     val INTERVAL_OPTIONS = listOf(3, 6, 12, 24)
     private const val BUILTIN_EPG_URL = "https://raw.githubusercontent.com/marcoshimselfxd/EPG-Scrapper-BR/main/epg.xml"
     private const val BUILTIN_EPG_FILE = "epg_builtin.json"
+    /** Fontes no máximo por canal/filme (contando a primeira). */
+    const val MAX_SOURCES = 5
+    private const val CHECK_PARALLEL = 3
+    private const val CHECK_BATCH = 60
+    private const val CHECK_OK_AGE = 24 * 3_600_000L
+    private const val CHECK_BAD_AGE = 6 * 3_600_000L
 
     private lateinit var app: Context
     private lateinit var prefs: SharedPreferences
@@ -138,6 +144,15 @@ object Repository {
                 loaded.complete(Unit)
             }
         }
+        // testa as fontes um pouco depois de abrir e a cada 2 horas enquanto o app estiver aberto
+        scope.launch {
+            prefs.edit().remove("failed_urls").apply() // formato antigo, agora fica no banco
+            kotlinx.coroutines.delay(30_000)
+            while (true) {
+                runCatching { checkSources() }
+                kotlinx.coroutines.delay(2 * 3_600_000L)
+            }
+        }
     }
 
     @kotlinx.serialization.Serializable
@@ -213,6 +228,11 @@ object Repository {
     var hideAdult: Boolean
         get() = prefs.getBoolean("hide_adult", true)
         set(v) { prefs.edit().putBoolean("hide_adult", v).apply(); scope.launch { rebuild() } }
+
+    /** Testa as fontes em segundo plano (ligado por padrão). */
+    var checkSourcesEnabled: Boolean
+        get() = prefs.getBoolean("check_sources", true)
+        set(v) { prefs.edit().putBoolean("check_sources", v).apply(); if (v) checkSourcesAsync() }
 
     /** Formato da tela do player (AspectRatioFrameLayout.RESIZE_MODE_*). */
     var resizeMode: Int
@@ -407,6 +427,7 @@ object Repository {
         _status.value = "Organizando…"
         rebuild()
         _status.value = null
+        checkSourcesAsync()
     }
 
     private fun builtinEpgStale(): Boolean {
@@ -502,40 +523,133 @@ object Repository {
 
     private fun List<Entry>.visible() = if (hideAdult) filterNot { Library.isAdult(it.group) } else this
 
-    /** Junta itens repetidos (mesmo nome em várias fontes): o player tenta as outras se uma falhar. */
-    private fun List<Entry>.unique(): List<Entry> {
-        val seen = HashSet<String>()
-        return filter { e -> if (e.type == ContentType.SERIES) true else seen.add(Normalize.name(e.name).ifEmpty { e.url }) }
+    /**
+     * Um item por título: várias fontes com o mesmo nome viram uma só na tela (o player tenta as
+     * outras se uma falhar). Fica a fonte que respondeu mais rápido no teste; títulos mortos em
+     * todas as fontes somem.
+     */
+    private fun List<Entry>.unique(hideDead: Boolean = true): List<Entry> {
+        if (isEmpty()) return this
+        val health = runCatching { db.health(map { it.url }) }.getOrDefault(emptyMap())
+        val favs = _favorites.value
+        val order = LinkedHashMap<String, MutableList<Entry>>()
+        val out = ArrayList<Any>(size) // Entry (série) ou chave do grupo, na ordem original
+        for (e in this) {
+            if (e.type == ContentType.SERIES) { out += e; continue }
+            val key = e.type.ordinal.toString() + ":" + Normalize.name(e.name).ifEmpty { e.url }
+            val list = order[key]
+            if (list == null) { order[key] = mutableListOf(e); out += key } else list += e
+        }
+        // títulos com todas as fontes mortas aqui: confere se não há fonte boa em outra categoria
+        val deadHere = order.filterValues { l -> l.all { health[it.url]?.dead == true } }
+        val rescued = HashSet<String>()
+        if (hideDead && deadHere.isNotEmpty()) {
+            deadHere.keys.groupBy { it.substringBefore(':') }.forEach { (t, keys) ->
+                val type = ContentType.entries[t.toInt()]
+                runCatching { db.aliveNorms(type, keys.map { it.substringAfter(':') }) }.getOrNull()
+                    ?.forEach { rescued += "$t:$it" }
+            }
+        }
+        return out.mapNotNull { o ->
+            if (o is Entry) return@mapNotNull o
+            val key = o as String
+            val list = order.getValue(key)
+            if (hideDead && key in deadHere && key !in rescued) return@mapNotNull null
+            list.minWith(compareBy<Entry>({ if (it.url in favs && health[it.url]?.dead != true) 0 else 1 }, { rank(health[it.url]) }))
+        }
+    }
+
+    /** Ordem das fontes: boas (mais rápidas primeiro), não testadas, falhou uma vez, mortas. */
+    private fun rank(h: Health?): Long = when {
+        h == null -> 100_000L
+        h.ok -> (h.ms ?: 50_000L).coerceAtMost(99_999L)
+        h.dead -> 300_000L
+        else -> 200_000L
     }
 
     suspend fun entries(type: ContentType, group: String?, limit: Int = 60_000): List<Entry> = withContext(Dispatchers.IO) {
         runCatching { db.entries(type, group, limit * 2).visible().unique().take(limit) }.getOrDefault(emptyList())
     }
 
+    /** Outras fontes do mesmo título, as melhores primeiro, no máximo [MAX_SOURCES] contando a atual. */
     suspend fun alternates(e: Entry): List<Entry> = withContext(Dispatchers.IO) {
-        val list = runCatching { db.alternates(e.type, Normalize.name(e.name).ifEmpty { e.name.lowercase() }, e.url) }.getOrDefault(emptyList())
-        // fontes que falharam nas últimas 24 h vão para o fim da fila
-        val cutoff = System.currentTimeMillis() - 24 * 3_600_000L
-        val failed = failedUrls()
-        list.sortedBy { (failed[it.url.hashCode().toString()] ?: 0L) > cutoff }
+        val list = runCatching { db.alternates(e.type, Normalize.name(e.name).ifEmpty { e.name.lowercase() }, e.url) }
+            .getOrDefault(emptyList()).distinctBy { it.url }
+        val health = runCatching { db.health(list.map { it.url }) }.getOrDefault(emptyMap())
+        val (dead, alive) = list.partition { health[it.url]?.dead == true }
+        val best = alive.sortedBy { rank(health[it.url]) }.take(MAX_SOURCES - 1)
+        // se não sobrou nenhuma boa, deixa uma morta como última tentativa (o teste pode ter errado)
+        if (best.isEmpty()) dead.sortedByDescending { health[it.url]?.checked ?: 0 }.take(1) else best
     }
 
-    private fun failedUrls(): Map<String, Long> = synchronized(this) {
-        prefs.getStringSet("failed_urls", emptySet()).orEmpty().mapNotNull {
-            val (k, t) = it.split(':').takeIf { p -> p.size == 2 } ?: return@mapNotNull null
-            k to (t.toLongOrNull() ?: 0L)
-        }.toMap()
+    /** Guarda que este link não abriu (link morto, 404, imagem congelada...). */
+    fun markFailed(url: String) {
+        scope.launch { runCatching { db.setHealth(url, ok = false, ms = null) } }
     }
 
-    /** Guarda que este link não abriu (link morto, 404...). */
-    fun markFailed(url: String) = synchronized(this) {
-        val now = System.currentTimeMillis()
-        val cutoff = now - 24 * 3_600_000L
-        val map = failedUrls().filterValues { it > cutoff }.toMutableMap()
-        map[url.hashCode().toString()] = now
-        val keep = map.entries.sortedByDescending { it.value }.take(500).map { "${it.key}:${it.value}" }.toSet()
-        prefs.edit().putStringSet("failed_urls", keep).apply()
+    /** Guarda que este link tocou de verdade no player. */
+    fun markWorking(url: String) {
+        scope.launch { runCatching { db.setHealth(url, ok = true, ms = null) } }
     }
+
+    // ---------- Teste das fontes em segundo plano ----------
+
+    private val checkLock = Mutex()
+    private val checker by lazy { SourceChecker(http) }
+
+    /** Poucas linhas de baixa prioridade: testar links é quase só esperar a rede. */
+    private val checkPool = java.util.concurrent.Executors.newFixedThreadPool(CHECK_PARALLEL) { r ->
+        Thread({
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND + android.os.Process.THREAD_PRIORITY_LESS_FAVORABLE)
+            r.run()
+        }, "minhatv-check").apply { isDaemon = true }
+    }
+
+    fun checkSourcesAsync(budget: Int = 3000) { scope.launch { checkSources(budget) } }
+
+    /**
+     * Testa até [budget] links (canais ao vivo primeiro). Para assim que o player abre,
+     * para não roubar internet do vídeo. O que faltar continua na próxima rodada.
+     */
+    suspend fun checkSources(budget: Int = 3000) = withContext(Dispatchers.IO) {
+        if (checkLock.isLocked || !checkSourcesEnabled) return@withContext
+        checkLock.withLock {
+            awaitLoaded()
+            var done = 0
+            var alive = 0
+            var deadCount = 0
+            runCatching { db.pruneHealth() }
+            // uma consulta só por rodada (a lista inteira de filmes pode ter centenas de milhares de itens)
+            val queue = runCatching { db.toProbe(budget, CHECK_OK_AGE, CHECK_BAD_AGE) }.getOrDefault(emptyList())
+            for (batch in queue.chunked(CHECK_BATCH)) {
+                if (playbackActive || !checkSourcesEnabled || !networkUp()) break
+                if (done > 0) kotlinx.coroutines.delay(1_000) // folga entre um lote e outro
+                val results = batch.map { p ->
+                    checkPool.submit<Pair<SourceChecker.Result, Db.Probe>> {
+                        if (playbackActive) SourceChecker.Result.Unknown to p
+                        else checker.check(p.url, p.userAgent, p.referrer) to p
+                    }
+                }.map { it.get() }
+                // tudo falhou de uma vez e a rede caiu: não marca nada
+                if (results.none { it.first is SourceChecker.Result.Ok } && !networkUp()) break
+                for ((r, p) in results) {
+                    when (r) {
+                        is SourceChecker.Result.Ok -> { db.setHealth(p.url, true, r.ms); alive++ }
+                        SourceChecker.Result.Dead -> { db.setHealth(p.url, false, null); deadCount++ }
+                        SourceChecker.Result.Unknown -> Unit
+                    }
+                }
+                done += batch.size
+            }
+            if (done > 0) android.util.Log.i("MinhaTV", "teste de fontes: $done links, $alive ok, $deadCount com falha")
+        }
+    }
+
+    private fun networkUp(): Boolean = runCatching {
+        val cm = app.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        @Suppress("DEPRECATION")
+        cm.activeNetworkInfo?.isConnected == true
+    }.getOrDefault(true)
 
     // ---------- Recentes ----------
 
@@ -575,7 +689,7 @@ object Repository {
     }
 
     suspend fun favoriteEntries(): List<Entry> = withContext(Dispatchers.IO) {
-        runCatching { db.byUrls(_favorites.value).unique() }.getOrDefault(emptyList())
+        runCatching { db.byUrls(_favorites.value).unique(hideDead = false) }.getOrDefault(emptyList())
     }
 
     /** Último canal assistido + a categoria dele (para trocar de canal com ▲▼). */
