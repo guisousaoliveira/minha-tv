@@ -106,7 +106,8 @@ class PlayerActivity : ComponentActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private val hideInfo = Runnable { infoPanel.visibility = View.GONE }
     private val hideToast = Runnable { toast.visibility = View.GONE }
-    private val showLoading = Runnable { loadingBox.visibility = View.VISIBLE }
+    // com um painel aberto (ex.: "Continuar de..."), o aviso de carregando não aparece por cima do título dele
+    private val showLoading = Runnable { if (!controls.panelVisible) loadingBox.visibility = View.VISIBLE }
     private val stallCheck = Runnable { onStall() }
 
     /**
@@ -578,7 +579,7 @@ class PlayerActivity : ComponentActivity() {
         firstFrame = false
         livePos = -1L; liveStillMs = 0
         handler.removeCallbacks(firstFrameWatch)
-        handler.postDelayed(firstFrameWatch, if (isLive) 12_000L else 15_000L)
+        handler.postDelayed(firstFrameWatch, 12_000L)
         // conexão igual à do Saimo: OkHttp, UA do Safari (se a lista não definir outro) e Accept */*
         val http = androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(PlayerHttp.client)
             .setUserAgent(src.userAgent ?: PlayerHttp.SAFARI_UA)
@@ -599,6 +600,8 @@ class PlayerActivity : ComponentActivity() {
             override fun getRetryDelayMsFor(info: androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy.LoadErrorInfo): Long {
                 val code = (info.exception as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)?.responseCode
                 if (isLive && code != null && code in 400..499 && info.mediaLoadData.dataType == C.DATA_TYPE_MANIFEST) return C.TIME_UNSET
+                // filme/série: link que dá 404/403 não volta; desiste na hora para ir à próxima fonte (antes: ~15 s de tela preta)
+                if (!isLive && code != null && code in 400..499) return C.TIME_UNSET
                 return super.getRetryDelayMsFor(info)
             }
         }

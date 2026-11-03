@@ -378,11 +378,18 @@ fun FocusHeader(
     Box(modifier.fillMaxWidth().height(if (tall) 240.dp else 110.dp)) {
         if (backdrop) {
             // destaque estilo Prime Video: a capa ocupando a direita, sumindo no preto
+            // o degradê só aparece depois que a imagem carregou (sem imagem, fica tudo preto)
+            var loaded by remember(image) { mutableStateOf(false) }
             androidx.compose.animation.Crossfade(image, animationSpec = tween(220), label = "hero", modifier = Modifier.align(Alignment.CenterEnd).fillMaxWidth(0.62f).fillMaxHeight()) { img ->
-                AsyncImage(model = img, contentDescription = null, contentScale = ContentScale.Crop, alignment = Alignment.TopCenter, alpha = 0.6f, modifier = Modifier.fillMaxSize())
+                AsyncImage(
+                    model = img, contentDescription = null, contentScale = ContentScale.Crop, alignment = Alignment.TopCenter, alpha = 0.6f,
+                    modifier = Modifier.fillMaxSize(), onSuccess = { if (img == image) loaded = true },
+                )
             }
-            Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0.30f to Palette.Background, 0.62f to Color(0x99000000), 1f to Color.Transparent)))
-            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.55f to Color.Transparent, 1f to Palette.Background)))
+            if (loaded) {
+                Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0.30f to Palette.Background, 0.62f to Color(0x99000000), 1f to Color.Transparent)))
+                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.55f to Color.Transparent, 1f to Palette.Background)))
+            }
         }
         Row(
             Modifier.fillMaxSize().padding(start = 48.dp, end = 48.dp, top = 12.dp, bottom = 14.dp),
