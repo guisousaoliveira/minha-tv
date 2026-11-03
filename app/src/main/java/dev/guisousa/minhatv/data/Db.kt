@@ -145,14 +145,31 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
     fun episodes(showKey: String): List<Entry> =
         query("show_key = ? ORDER BY COALESCE(season, 0), COALESCE(episode, 99999), id", arrayOf(showKey))
 
+    /**
+     * Busca rápida: primeiro os nomes que começam com o texto (usa o índice, sai na hora),
+     * depois os que contêm o texto em qualquer parte. Compara sem acento, maiúscula nem espaço.
+     */
     fun search(q: String, limit: Int = 300): Pair<List<Entry>, List<Show>> {
-        val like = "%" + q.replace("%", "").replace("_", "") + "%"
-        val entries = query("type != 2 AND name LIKE ? ORDER BY type, id LIMIT $limit", arrayOf(like))
-        val shows = readableDatabase.rawQuery(
-            "SELECT show_key, MIN(series), MIN(grp), MAX(logo), COUNT(*) FROM entries WHERE type = 2 AND series LIKE ? GROUP BY show_key ORDER BY MIN(id) LIMIT 100",
-            arrayOf(like),
+        val n = Normalize.name(q)
+        if (n.isEmpty()) {
+            val like = "%" + q.replace("%", "").replace("_", "") + "%"
+            return query("type != 2 AND name LIKE ? LIMIT $limit", arrayOf(like)) to emptyList()
+        }
+        val end = n + "\uFFFF"
+        val seen = HashSet<String>()
+        val entries = ArrayList<Entry>()
+        fun add(list: List<Entry>) = list.forEach { if (entries.size < limit && seen.add(it.url)) entries += it }
+        for (t in listOf(0, 1)) add(query("norm >= ? AND norm < ? AND type = $t LIMIT $limit", arrayOf(n, end)))
+        if (entries.size < limit) add(query("type != 2 AND norm LIKE ? LIMIT $limit", arrayOf("%$n%")))
+        entries.sortBy { it.type.ordinal }
+
+        fun shows(where: String, args: Array<String>) = readableDatabase.rawQuery(
+            "SELECT show_key, MIN(series), MIN(grp), MAX(logo), COUNT(*) FROM entries WHERE type = 2 AND $where GROUP BY show_key LIMIT 100", args,
         ).use { c -> c.map { Show(it.getString(0), it.getString(1), it.getString(2), it.getStringOrNull(3), it.getInt(4)) } }
-        return entries to shows
+        val showList = LinkedHashMap<String, Show>()
+        shows("show_key >= ? AND show_key < ?", arrayOf(n, end)).forEach { showList[it.key] = it }
+        if (showList.size < 100) shows("show_key LIKE ?", arrayOf("%$n%")).forEach { showList.putIfAbsent(it.key, it) }
+        return entries to showList.values.toList()
     }
 
     fun byUrls(urls: Collection<String>): List<Entry> {

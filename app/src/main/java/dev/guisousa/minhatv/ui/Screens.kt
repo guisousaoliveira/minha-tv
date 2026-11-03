@@ -551,7 +551,7 @@ fun SearchScreen(lib: Library, nav: Nav) {
             Message("O que você quer assistir?", "Aperte OK no campo acima e digite parte do nome.")
             return@Column
         }
-        if (results == null) { Loading(); return@Column }
+        if (results == null) { Message("Carregando resultados para \"$query\"…"); return@Column }
         val (entries, shows) = results
         if (entries.isEmpty() && shows.isEmpty()) { Message("Nada encontrado para \"$query\""); return@Column }
         val live = entries.filter { it.type == ContentType.LIVE }
