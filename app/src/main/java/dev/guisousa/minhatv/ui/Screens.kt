@@ -74,7 +74,19 @@ private fun <T> load(vararg keys: Any?, loader: suspend () -> T): T? {
 }
 
 @Composable
-private fun Loading() = Message("Carregando…")
+private fun Loading() {
+    // esqueleto das fileiras enquanto carrega, em vez de só um texto
+    Column(Modifier.fillMaxSize().padding(start = 48.dp, top = 24.dp)) {
+        repeat(2) {
+            Skeleton(Modifier.width(180.dp).height(18.dp))
+            Spacer(Modifier.height(14.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                repeat(8) { Skeleton(Modifier.width(140.dp).height(210.dp)) }
+            }
+            Spacer(Modifier.height(28.dp))
+        }
+    }
+}
 
 private fun toggleFav(context: android.content.Context, e: Entry) {
     val added = Repository.toggleFavorite(e.url)
@@ -94,7 +106,22 @@ private class HeaderState {
     var title by mutableStateOf<String?>(null)
     var subtitle by mutableStateOf<String?>(null)
     var image by mutableStateOf<String?>(null)
-    fun show(t: String, s: String?, img: String? = null) { title = t; subtitle = s; image = img }
+    var detail by mutableStateOf<String?>(null)
+    var isLogo by mutableStateOf(false)
+    fun show(t: String, s: String?, img: String? = null) { title = t; subtitle = s; image = img; detail = null; isLogo = false }
+
+    /** Canal em foco: mostra a logo inteira e o que está passando agora/depois. */
+    fun channel(e: Entry, s: String) {
+        val now = System.currentTimeMillis()
+        val epg = Repository.epg.value
+        title = e.name; subtitle = s; image = e.logo; isLogo = true
+        val cur = epg.current(e, now)
+        val next = epg.next(e, now)
+        detail = listOfNotNull(
+            cur?.let { "Agora  ${timeFmt.format(java.util.Date(it.start))}–${timeFmt.format(java.util.Date(it.stop))}  ${it.title}" },
+            next?.let { "Depois  ${timeFmt.format(java.util.Date(it.start))}  ${it.title}" },
+        ).joinToString("\n").ifBlank { null }
+    }
 }
 
 // ======================= Início =======================
@@ -115,7 +142,7 @@ fun HomeScreen(lib: Library, nav: Nav) {
         return
     }
     Column(Modifier.fillMaxSize()) {
-        FocusHeader(header.title ?: "O que vamos assistir?", header.subtitle ?: "Início", image = header.image)
+        FocusHeader(header.title ?: "O que vamos assistir?", header.subtitle ?: "Início", image = header.image, detail = header.detail, logo = header.isLogo)
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 48.dp)) {
             if (cont.isNotEmpty()) item("cont") {
                 SectionTitle("Continuar assistindo")
@@ -130,7 +157,7 @@ fun HomeScreen(lib: Library, nav: Nav) {
             if (recentLive.isNotEmpty()) item("recent") {
                 SectionTitle("Assistidos recentemente")
                 MediaRow(recentLive, CHANNEL_W) { i, e ->
-                    ChannelCard(e.name, e.logo, e.group, onFocused = { header.show(e.name, "Canal · ${e.group}", e.logo) }) {
+                    ChannelCard(e.name, e.logo, e.group, onFocused = { header.channel(e, "Canal · ${e.group}") }) {
                         PlaybackQueue.start(context, recentLive, i)
                     }
                 }
@@ -138,7 +165,7 @@ fun HomeScreen(lib: Library, nav: Nav) {
             if (favLive.isNotEmpty()) item("favlive") {
                 SectionTitle("Meus canais")
                 MediaRow(favLive, CHANNEL_W) { i, e ->
-                    ChannelCard(e.name, e.logo, e.group, onFocused = { header.show(e.name, "Canal · ${e.group}", e.logo) }) {
+                    ChannelCard(e.name, e.logo, e.group, onFocused = { header.channel(e, "Canal · ${e.group}") }) {
                         PlaybackQueue.start(context, favLive, i)
                     }
                 }
@@ -179,7 +206,7 @@ private fun EntryRow(lib: Library, type: ContentType, group: String, count: Int,
         seeAllAspect = if (live) 16f / 9f else 2f / 3f,
     ) { i, e ->
         if (live) {
-            ChannelCard(e.name, e.logo, null, onFocused = { header.show(e.name, "Canal · $group", e.logo) }) {
+            ChannelCard(e.name, e.logo, null, onFocused = { header.channel(e, "Canal · $group") }) {
                 openLiveGroup(context, type, group, e, items, i)
             }
         } else {
@@ -223,7 +250,7 @@ fun RowsScreen(lib: Library, type: ContentType, nav: Nav) {
         return
     }
     Column(Modifier.fillMaxSize()) {
-        FocusHeader(header.title ?: (if (type == ContentType.SERIES) "Séries" else "Filmes"), header.subtitle ?: "${groups.size} categorias", image = header.image)
+        FocusHeader(header.title ?: (if (type == ContentType.SERIES) "Séries" else "Filmes"), header.subtitle ?: "${groups.size} categorias", image = header.image, detail = header.detail, logo = header.isLogo)
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 48.dp)) {
             groups.forEach { g ->
                 item(g.name) {
@@ -241,7 +268,7 @@ fun CategoryScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
     val context = LocalContext.current
     val header = remember(group) { HeaderState() }
     Column(Modifier.fillMaxSize()) {
-        FocusHeader(header.title ?: group, header.subtitle ?: group, image = header.image, tall = type != ContentType.LIVE)
+        FocusHeader(header.title ?: group, header.subtitle ?: group, image = header.image, detail = header.detail, logo = header.isLogo, tall = type != ContentType.LIVE)
         when (type) {
             ContentType.LIVE -> {
                 val items = load(lib.version, group) { Repository.entries(type, group) }
@@ -471,12 +498,12 @@ fun MyListScreen(lib: Library, nav: Nav) {
             val live = items.filter { it.type == ContentType.LIVE }
             val vod = items.filter { it.type != ContentType.LIVE }
             Column(Modifier.fillMaxSize()) {
-            FocusHeader(header.title ?: "Minha lista", header.subtitle ?: "${items.size} itens", image = header.image)
+            FocusHeader(header.title ?: "Minha lista", header.subtitle ?: "${items.size} itens", image = header.image, detail = header.detail, logo = header.isLogo)
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(top = 8.dp, bottom = 48.dp)) {
                 if (live.isNotEmpty()) item("live") {
                     SectionTitle("Canais", trailing = "${live.size}")
                     MediaRow(live, CHANNEL_W) { i, e ->
-                        ChannelCard(e.name, e.logo, e.group, onFocused = { header.show(e.name, "Canal · ${e.group}", e.logo) }) { PlaybackQueue.start(context, live, i) }
+                        ChannelCard(e.name, e.logo, e.group, onFocused = { header.channel(e, "Canal · ${e.group}") }) { PlaybackQueue.start(context, live, i) }
                     }
                 }
                 if (vod.isNotEmpty()) item("vod") {
@@ -529,12 +556,12 @@ fun SearchScreen(lib: Library, nav: Nav) {
         if (entries.isEmpty() && shows.isEmpty()) { Message("Nada encontrado para \"$query\""); return@Column }
         val live = entries.filter { it.type == ContentType.LIVE }
         val movies = entries.filter { it.type == ContentType.MOVIE }
-        FocusHeader(header.title ?: "Resultados", header.subtitle ?: "\"$query\"", image = header.image)
+        FocusHeader(header.title ?: "Resultados", header.subtitle ?: "\"$query\"", image = header.image, detail = header.detail, logo = header.isLogo)
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(top = 8.dp, bottom = 48.dp)) {
             if (live.isNotEmpty()) item("live") {
                 SectionTitle("Canais", trailing = "${live.size}")
                 MediaRow(live, CHANNEL_W) { i, e ->
-                    ChannelCard(e.name, e.logo, e.group, onFocused = { header.show(e.name, "Canal · ${e.group}", e.logo) }) { PlaybackQueue.start(context, live, i) }
+                    ChannelCard(e.name, e.logo, e.group, onFocused = { header.channel(e, "Canal · ${e.group}") }) { PlaybackQueue.start(context, live, i) }
                 }
             }
             if (movies.isNotEmpty()) item("movies") {

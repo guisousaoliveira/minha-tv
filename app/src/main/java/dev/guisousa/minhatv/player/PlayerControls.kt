@@ -21,6 +21,14 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 
+/** Mesma escala das telas: a tela mede 1280 pontos de largura em qualquer TV. */
+fun Context.ui(v: Float): Float {
+    val m = resources.displayMetrics
+    return v * maxOf(m.widthPixels, m.heightPixels) / 1280f
+}
+fun Context.ui(v: Int): Int = ui(v.toFloat()).toInt()
+fun TextView.textSizeUi(sp: Float) = setTextSize(TypedValue.COMPLEX_UNIT_PX, context.ui(sp))
+
 /** Ícones simples desenhados em código (sem emoji), que ficam pretos quando o botão está em foco. */
 class IconDrawable(private val kind: Kind, private val sizePx: Int) : Drawable() {
     enum class Kind { PLAY, PAUSE, BACK10, FWD10, PREV, NEXT }
@@ -77,7 +85,7 @@ class IconDrawable(private val kind: Kind, private val sizePx: Int) : Drawable()
 /** Barra de controles do player, no estilo da prévia: título em cima, tempo e botões embaixo. */
 class PlayerControls(private val context: Context, root: FrameLayout) {
 
-    private fun dp(v: Int) = (v * context.resources.displayMetrics.density).toInt()
+    private fun dp(v: Int) = context.ui(v)
 
     val top: LinearLayout
     val bottom: LinearLayout
@@ -132,7 +140,7 @@ class PlayerControls(private val context: Context, root: FrameLayout) {
 
     private fun label(sp: Float, color: Int, bold: Boolean = false) = TextView(context).apply {
         setTextColor(color)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, sp)
+        textSizeUi(sp)
         if (bold) typeface = Typeface.DEFAULT_BOLD
         maxLines = 1
         ellipsize = android.text.TextUtils.TruncateAt.END
@@ -170,7 +178,7 @@ class PlayerControls(private val context: Context, root: FrameLayout) {
         isClickable = true
         this.text = text
         setTextColor(textColors)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+        textSizeUi(15f)
         typeface = Typeface.DEFAULT_BOLD
         maxLines = 1
         setPadding(dp(18), dp(11), dp(18), dp(11))
@@ -195,5 +203,73 @@ class PlayerControls(private val context: Context, root: FrameLayout) {
         top.visibility = View.GONE
         bottom.visibility = View.GONE
         visible = false
+    }
+
+    // ---------- Painel de escolhas (legendas, áudio, fonte, canais...) ----------
+
+    data class Choice(val label: String, val detail: String? = null, val selected: Boolean = false)
+
+    private val panel = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        setBackgroundColor(0xF20A0A0A.toInt())
+        setPadding(dp(28), dp(36), dp(28), dp(28))
+        visibility = View.GONE
+    }
+    private val panelTitle = label(20f, Color.WHITE, bold = true).apply { setPadding(dp(12), 0, dp(12), dp(16)) }
+    private val panelList = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+    private val panelScroll = android.widget.ScrollView(context).apply { isVerticalScrollBarEnabled = false; addView(panelList) }
+    var panelVisible = false
+        private set
+    private var onPanelClosed: (() -> Unit)? = null
+
+    init {
+        panel.addView(panelTitle)
+        panel.addView(panelScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        root.addView(panel, FrameLayout.LayoutParams(dp(420), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.END))
+    }
+
+    private val dimOnFocus = ColorStateList(
+        arrayOf(intArrayOf(android.R.attr.state_focused), intArrayOf()),
+        intArrayOf(0xFF404040.toInt(), 0xFFA3A3A3.toInt()),
+    )
+
+    /** Abre o painel do lado direito. O foco começa no item escolhido agora. */
+    fun showPanel(title: String, items: List<Choice>, onClosed: (() -> Unit)? = null, onPick: (Int) -> Unit) {
+        panelTitle.text = title
+        panelList.removeAllViews()
+        var focusView: View? = null
+        items.forEachIndexed { i, c ->
+            val row = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                background = StateListDrawable().apply {
+                    addState(intArrayOf(android.R.attr.state_focused), GradientDrawable().apply { setColor(Color.WHITE); cornerRadius = dp(4).toFloat() })
+                    addState(intArrayOf(), GradientDrawable().apply { setColor(if (c.selected) 0x2EFFFFFF else 0x00000000); cornerRadius = dp(4).toFloat() })
+                }
+                isFocusable = true
+                isClickable = true
+                setPadding(dp(14), dp(11), dp(14), dp(11))
+                setOnClickListener { hidePanel(); onPick(i) }
+            }
+            row.addView(label(16f, Color.WHITE, bold = c.selected).apply {
+                text = c.label; setTextColor(textColors); isDuplicateParentStateEnabled = true
+            })
+            if (c.detail != null) row.addView(label(13f, 0xFFA3A3A3.toInt()).apply {
+                text = c.detail; setTextColor(dimOnFocus); isDuplicateParentStateEnabled = true
+            })
+            panelList.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(4) })
+            if (c.selected && focusView == null) focusView = row
+        }
+        onPanelClosed = onClosed
+        panel.visibility = View.VISIBLE
+        panelVisible = true
+        hide()
+        (focusView ?: panelList.getChildAt(0))?.let { v -> v.requestFocus(); panelScroll.post { panelScroll.scrollTo(0, (v.top - dp(120)).coerceAtLeast(0)) } }
+    }
+
+    fun hidePanel() {
+        panel.visibility = View.GONE
+        panelVisible = false
+        onPanelClosed?.invoke()
+        onPanelClosed = null
     }
 }

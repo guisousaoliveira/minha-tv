@@ -4,6 +4,7 @@ package dev.guisousa.minhatv.ui
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -76,6 +77,17 @@ object Palette {
 
 @Composable
 fun MinhaTvTheme(content: @Composable () -> Unit) {
+    // A tela inteira mede sempre 1280 "pontos" de largura, como na prévia aprovada.
+    // Assim o tamanho não muda de TV para TV e nada fica com cara de zoom.
+    val metrics = androidx.compose.ui.platform.LocalContext.current.resources.displayMetrics
+    val density = androidx.compose.ui.unit.Density(maxOf(metrics.widthPixels, metrics.heightPixels) / 1280f, 1f)
+    androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides density) {
+        ThemeColors(content)
+    }
+}
+
+@Composable
+private fun ThemeColors(content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = darkColorScheme(
             primary = Palette.Text,
@@ -306,7 +318,15 @@ fun ProgressLine(fraction: Float, modifier: Modifier = Modifier) {
 
 /** Destaque no topo: o item focado em letras grandes, com a imagem dele à direita. */
 @Composable
-fun FocusHeader(title: String?, subtitle: String?, modifier: Modifier = Modifier, image: String? = null, tall: Boolean = true) {
+fun FocusHeader(
+    title: String?,
+    subtitle: String?,
+    modifier: Modifier = Modifier,
+    image: String? = null,
+    tall: Boolean = true,
+    detail: String? = null,
+    logo: Boolean = false,
+) {
     Row(
         modifier
             .fillMaxWidth()
@@ -323,16 +343,33 @@ fun FocusHeader(title: String?, subtitle: String?, modifier: Modifier = Modifier
                 )
                 Spacer(Modifier.height(8.dp))
             }
-            Text(
-                title ?: "", fontSize = if (tall) 38.sp else 30.sp, fontWeight = FontWeight.Bold, color = Palette.Text,
-                lineHeight = if (tall) 44.sp else 36.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
-            )
+            androidx.compose.animation.AnimatedContent(
+                title ?: "",
+                transitionSpec = { androidx.compose.animation.fadeIn(tween(160)) togetherWith androidx.compose.animation.fadeOut(tween(120)) },
+                label = "title",
+            ) { t ->
+                Text(
+                    t, fontSize = if (tall) 36.sp else 28.sp, fontWeight = FontWeight.Bold, color = Palette.Text,
+                    lineHeight = if (tall) 42.sp else 34.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (!detail.isNullOrBlank()) {
+                Spacer(Modifier.height(8.dp))
+                Text(detail, fontSize = 15.sp, color = Palette.TextDim, lineHeight = 22.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
         }
         if (tall) {
             Box(Modifier.width(420.dp).fillMaxHeight().clip(RoundedCornerShape(6.dp)).background(Color(0xFF1B1B1B))) {
                 if (!image.isNullOrBlank()) {
-                    AsyncImage(model = image, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                    Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(Color(0xCC000000), Color.Transparent))))
+                    if (logo) {
+                        // logo de canal: inteira, sem cortar nem esticar
+                        AsyncImage(model = image, contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize().padding(36.dp))
+                    } else {
+                        // capa vertical: inteira à direita, com a própria capa ampliada e escurecida atrás
+                        AsyncImage(model = image, contentDescription = null, contentScale = ContentScale.Crop, alpha = 0.25f, modifier = Modifier.fillMaxSize())
+                        AsyncImage(model = image, contentDescription = null, contentScale = ContentScale.Fit, alignment = Alignment.CenterEnd, modifier = Modifier.fillMaxSize())
+                        Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(Color(0xCC000000), Color.Transparent))))
+                    }
                 }
             }
         }
@@ -380,11 +417,13 @@ fun defaultGroup(groups: List<GroupInfo>, total: Int): String? =
 
 @Composable
 fun Message(title: String, body: String? = null, modifier: Modifier = Modifier, content: @Composable () -> Unit = {}) {
+    val loading = title.startsWith("Carregando") || title.startsWith("Preparando")
     Column(
         modifier.fillMaxSize().padding(48.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
+        if (loading) { Spinner(36.dp); Spacer(Modifier.height(20.dp)) }
         Text(title, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, color = Palette.Text, textAlign = TextAlign.Center)
         if (body != null) {
             Spacer(Modifier.height(10.dp))
@@ -393,6 +432,29 @@ fun Message(title: String, body: String? = null, modifier: Modifier = Modifier, 
         Spacer(Modifier.height(24.dp))
         content()
     }
+}
+
+/** Indicador de carregamento: arco branco girando, fino. */
+@Composable
+fun Spinner(size: Dp, modifier: Modifier = Modifier) {
+    androidx.compose.material3.CircularProgressIndicator(
+        modifier = modifier.size(size),
+        color = Palette.Text,
+        trackColor = Color(0x33FFFFFF),
+        strokeWidth = if (size < 20.dp) 1.5.dp else 3.dp,
+    )
+}
+
+/** Retângulo cinza "pulsando" no lugar de algo que ainda está carregando. */
+@Composable
+fun Skeleton(modifier: Modifier = Modifier) {
+    val t = androidx.compose.animation.core.rememberInfiniteTransition(label = "skeleton")
+    val a by t.animateFloat(
+        0.35f, 0.7f,
+        androidx.compose.animation.core.infiniteRepeatable(tween(900), androidx.compose.animation.core.RepeatMode.Reverse),
+        label = "alpha",
+    )
+    Box(modifier.clip(RoundedCornerShape(6.dp)).background(Palette.SurfaceHigh.copy(alpha = a)))
 }
 
 /** QR Code desenhado com ZXing. */

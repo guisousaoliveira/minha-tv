@@ -6,6 +6,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -105,8 +107,19 @@ sealed class Detail {
 @Composable
 private fun StatusText() {
     val status by Repository.status.collectAsState()
-    status?.let {
-        Text(it, fontSize = 12.sp, color = Palette.TextFaint, maxLines = 1, modifier = Modifier.width(300.dp))
+    androidx.compose.animation.AnimatedVisibility(
+        visible = status != null,
+        enter = androidx.compose.animation.fadeIn(),
+        exit = androidx.compose.animation.fadeOut(),
+    ) {
+        Row(
+            Modifier.clip(RoundedCornerShape(50)).background(Palette.Surface).padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Spinner(12.dp)
+            Spacer(Modifier.width(8.dp))
+            Text(status.orEmpty(), fontSize = 12.sp, color = Palette.TextDim, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 280.dp))
+        }
     }
 }
 
@@ -173,14 +186,17 @@ fun AppRoot(onLoaded: () -> Unit) {
                 nothingAdded && Tab.entries[tab] != Tab.SETTINGS -> Welcome(onTyped = { url, name, epg -> addLink(context, url, name, epg) })
                 top is Detail.OfShow -> SeriesDetailScreen(top.show)
                 top is Detail.Category -> CategoryScreen(library, top.type, top.group, nav)
-                else -> when (Tab.entries[tab]) {
-                    Tab.HOME -> HomeScreen(library, nav)
-                    Tab.LIVE -> LiveScreen(library)
-                    Tab.MOVIES -> RowsScreen(library, ContentType.MOVIE, nav)
-                    Tab.SERIES -> RowsScreen(library, ContentType.SERIES, nav)
-                    Tab.MYLIST -> MyListScreen(library, nav)
-                    Tab.SEARCH -> SearchScreen(library, nav)
-                    Tab.SETTINGS -> SettingsScreen()
+                // troca de aba com um fade rápido
+                else -> androidx.compose.animation.Crossfade(Tab.entries[tab], animationSpec = androidx.compose.animation.core.tween(180), label = "tab") { t ->
+                    when (t) {
+                        Tab.HOME -> HomeScreen(library, nav)
+                        Tab.LIVE -> LiveScreen(library)
+                        Tab.MOVIES -> RowsScreen(library, ContentType.MOVIE, nav)
+                        Tab.SERIES -> RowsScreen(library, ContentType.SERIES, nav)
+                        Tab.MYLIST -> MyListScreen(library, nav)
+                        Tab.SEARCH -> SearchScreen(library, nav)
+                        Tab.SETTINGS -> SettingsScreen()
+                    }
                 }
             }
         }

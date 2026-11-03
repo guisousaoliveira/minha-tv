@@ -14,8 +14,10 @@ shot boas-vindas 10
 
 # coloca uma lista de teste pelo mesmo formulário que o celular usa
 adb forward tcp:8765 tcp:8765
-curl -s -m 20 --data-urlencode "url=https://iptv-org.github.io/iptv/countries/br.m3u" \
-  --data-urlencode "name=Teste" http://127.0.0.1:8765/ > /dev/null || echo "falhou ao enviar a lista"
+for u in https://iptv-org.github.io/iptv/countries/br.m3u https://iptv-org.github.io/iptv/languages/por.m3u https://iptv-org.github.io/iptv/countries/pt.m3u; do
+  curl -s -m 20 --data-urlencode "url=$u" http://127.0.0.1:8765/ > /dev/null || echo "falhou ao enviar $u"
+  sleep 3
+done
 shot importando 15
 shot inicio 60
 
@@ -54,3 +56,4 @@ for i in 1 2 3 4 5 6; do key KEYCODE_DPAD_UP; done
 key KEYCODE_DPAD_RIGHT KEYCODE_DPAD_RIGHT KEYCODE_DPAD_RIGHT KEYCODE_DPAD_RIGHT KEYCODE_DPAD_RIGHT
 shot ajustes 3
 adb logcat -d -t 400 '*:E' > "$OUT/erros.txt" || true
+adb logcat -d -s MinhaTV:I > "$OUT/minhatv-log.txt" || true

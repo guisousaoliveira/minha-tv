@@ -27,7 +27,7 @@ fun showAddLinkDialog(context: Context, onSave: (url: String, name: String?, epg
     val url = context.field(layout, "Link da playlist ou da página (https://...)", uri)
     val name = context.field(layout, "Nome (opcional)", InputType.TYPE_CLASS_TEXT)
     val epg = context.field(layout, "Guia XMLTV (opcional)", uri)
-    AlertDialog.Builder(context, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+    AlertDialog.Builder(context, dev.guisousa.minhatv.R.style.Theme_MinhaTV_Dialog)
         .setTitle("Adicionar link")
         .setView(layout)
         .setPositiveButton("Adicionar") { _, _ ->
@@ -46,7 +46,7 @@ fun showSearchDialog(context: Context, initial: String, onSearch: (String) -> Un
     }
     val q = context.field(layout, "Nome do canal, filme ou série", InputType.TYPE_CLASS_TEXT)
     q.setText(initial)
-    AlertDialog.Builder(context, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+    AlertDialog.Builder(context, dev.guisousa.minhatv.R.style.Theme_MinhaTV_Dialog)
         .setTitle("Buscar")
         .setView(layout)
         .setPositiveButton("Buscar") { _, _ -> onSearch(q.text.toString()) }
@@ -56,7 +56,7 @@ fun showSearchDialog(context: Context, initial: String, onSearch: (String) -> Un
 }
 
 fun confirm(context: Context, title: String, message: String, yes: String, onYes: () -> Unit) {
-    AlertDialog.Builder(context, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+    AlertDialog.Builder(context, dev.guisousa.minhatv.R.style.Theme_MinhaTV_Dialog)
         .setTitle(title)
         .setMessage(message)
         .setPositiveButton(yes) { _, _ -> onYes() }

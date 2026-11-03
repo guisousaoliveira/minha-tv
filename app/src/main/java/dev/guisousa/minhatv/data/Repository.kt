@@ -51,6 +51,9 @@ object Repository {
         }, "minhatv-import")
     }.asCoroutineDispatcher()
 
+    /** Verdadeiro enquanto o player está aberto: a atualização automática espera o vídeo acabar. */
+    @Volatile var playbackActive = false
+
     /** Status da importação no máximo uma vez por segundo. */
     private var lastStatusAt = 0L
     private fun importStatus(text: String) {
@@ -367,6 +370,7 @@ object Repository {
      */
     suspend fun refreshAll(onlyStale: Boolean = false) {
         awaitLoaded()
+        if (onlyStale && playbackActive) return
         if (refreshLock.isLocked) return
         refreshLock.withLock {
             try {
@@ -417,6 +421,7 @@ object Repository {
             if (names.isEmpty() && ids.isEmpty()) return@runCatching
             val now = System.currentTimeMillis()
             val data = open(BUILTIN_EPG_URL) { EpgParser.parse(it, ids, names, now - 2 * 3_600_000L, now + 36 * 3_600_000L) }
+            android.util.Log.i("MinhaTV", "guia embutido: ${data.programmes.size} canais com programação (de ${names.size} nomes)")
             if (data.programmes.isEmpty()) return@runCatching
             val tmp = file("$BUILTIN_EPG_FILE.tmp")
             tmp.outputStream().buffered().use { json.encodeToStream(EpgData.serializer(), data, it) }

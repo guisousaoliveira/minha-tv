@@ -63,7 +63,7 @@ object Updater {
 
     /** Pergunta se quer atualizar; se sim, baixa e abre o instalador do Android. */
     fun offer(activity: Activity, r: Release, launch: (suspend () -> Unit) -> Unit) {
-        AlertDialog.Builder(activity, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        AlertDialog.Builder(activity, dev.guisousa.minhatv.R.style.Theme_MinhaTV_Dialog)
             .setTitle("Nova versão disponível")
             .setMessage("A versão ${r.name} do Minha TV está pronta (você está na ${currentName}). Atualizar agora? Leva menos de um minuto e nada se perde.")
             .setPositiveButton("Atualizar") { _, _ ->

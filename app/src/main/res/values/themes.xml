@@ -1,7 +1,26 @@
 <resources>
     <style name="Theme.MinhaTV" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@android:color/black</item>
-        <item name="android:colorAccent">#3D7BFF</item>
+        <item name="android:colorAccent">#FFFFFF</item>
         <item name="android:windowFullscreen">true</item>
+    </style>
+
+    <!-- Diálogos: botão em foco fica branco com texto preto (antes ficava branco com texto branco) -->
+    <style name="Theme.MinhaTV.Dialog" parent="android:Theme.Material.Dialog.Alert">
+        <item name="android:colorAccent">#FFFFFF</item>
+        <item name="android:textColorPrimary">#FFFFFF</item>
+        <item name="android:buttonBarButtonStyle">@style/MinhaTV.DialogButton</item>
+        <item name="android:buttonBarPositiveButtonStyle">@style/MinhaTV.DialogButton</item>
+        <item name="android:buttonBarNegativeButtonStyle">@style/MinhaTV.DialogButton</item>
+        <item name="android:buttonBarNeutralButtonStyle">@style/MinhaTV.DialogButton</item>
+    </style>
+
+    <style name="MinhaTV.DialogButton" parent="android:Widget.Material.Button.Borderless">
+        <item name="android:background">@drawable/dlg_btn_bg</item>
+        <item name="android:textColor">@color/dlg_text</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:layout_marginStart">8dp</item>
+        <item name="android:paddingStart">18dp</item>
+        <item name="android:paddingEnd">18dp</item>
     </style>
 </resources>
