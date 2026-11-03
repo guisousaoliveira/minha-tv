@@ -150,6 +150,7 @@ fun HomeScreen(lib: Library, nav: Nav) {
                 MediaRow(cont, POSTER_W) { i, e ->
                     PosterCard(
                         e.name, e.logo, key = "cont:${e.url}", progress = Repository.progress(e.url) ?: 0f,
+                        tmdbTitle = e.seriesName ?: e.name, tv = e.type == ContentType.SERIES,
                         onFocused = { header.show(e.name, "Continuar · ${e.group}", e.logo) },
                         onClick = { PlaybackQueue.start(context, cont, i) },
                     )
@@ -236,7 +237,7 @@ private fun ShowRow(lib: Library, group: String, count: Int, nav: Nav, header: H
         seeAll = if (count > shows.size) ({ nav.openCategory(ContentType.SERIES, group) }) else null,
         seeAllCount = count,
     ) { _, s ->
-        PosterCard(s.name, s.logo, key = "$group:${s.key}", onFocused = { header.show(s.name, "Série · ${s.episodeCount} episódios", s.logo) }, onClick = { nav.openShow(s) })
+        PosterCard(s.name, s.logo, key = "$group:${s.key}", tmdbTitle = s.name, tv = true, onFocused = { header.show(s.name, "Série · ${s.episodeCount} episódios", s.logo) }, onClick = { nav.openShow(s) })
     }
 }
 
@@ -257,7 +258,7 @@ fun RowsScreen(lib: Library, type: ContentType, nav: Nav) {
             // atalho logo no topo para a grade com tudo de A a Z
             item("all-top") {
                 Row(Modifier.padding(start = 48.dp, top = 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    TvButton("Todos de A a Z  ·  ${groups.sumOf { it.count }}", onClick = { nav.openCategory(type, ALL_GROUP) })
+                    TvButton("Todos de A a Z  ·  ${groups.sumOf { it.count }}", onClick = { nav.openCategory(type, ALL_GROUP) }, focusKey = "all:$type")
                 }
             }
             item("releases") { ReleasesRow(lib, type, nav, header) }
@@ -531,7 +532,7 @@ fun SearchScreen(lib: Library, nav: Nav) {
             if (shows.isNotEmpty()) item("shows") {
                 SectionTitle("Séries", trailing = "${shows.size}")
                 MediaRow(shows, POSTER_W) { _, s ->
-                    PosterCard(s.name, s.logo, key = "s:${s.key}", onFocused = { header.show(s.name, "Série · ${s.episodeCount} episódios", s.logo) }, onClick = { nav.openShow(s) })
+                    PosterCard(s.name, s.logo, key = "s:${s.key}", tmdbTitle = s.name, tv = true, onFocused = { header.show(s.name, "Série · ${s.episodeCount} episódios", s.logo) }, onClick = { nav.openShow(s) })
                 }
             }
         }

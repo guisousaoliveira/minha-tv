@@ -45,6 +45,15 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
                 url TEXT PRIMARY KEY, ok INTEGER NOT NULL, fails INTEGER NOT NULL DEFAULT 0,
                 checked INTEGER NOT NULL, ms INTEGER)"""
         )
+        db.execSQL("CREATE TABLE IF NOT EXISTS tmdb(k TEXT PRIMARY KEY, poster TEXT, backdrop TEXT, overview TEXT, ts INTEGER NOT NULL)")
+    }
+
+    fun tmdbGet(k: String): Array<String?>? = readableDatabase.rawQuery("SELECT poster, backdrop, overview, ts FROM tmdb WHERE k = ?", arrayOf(k)).use { c ->
+        if (c.moveToFirst()) arrayOf(c.getStringOrNull(0), c.getStringOrNull(1), c.getStringOrNull(2), c.getLong(3).toString()) else null
+    }
+
+    fun tmdbPut(k: String, poster: String?, backdrop: String?, overview: String?) {
+        writableDatabase.execSQL("INSERT OR REPLACE INTO tmdb(k, poster, backdrop, overview, ts) VALUES (?, ?, ?, ?, ?)", arrayOf(k, poster, backdrop, overview, System.currentTimeMillis()))
     }
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -149,12 +158,34 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
         return query("$where ORDER BY id LIMIT $limit", args)
     }
 
+    /**
+     * Séries em 2 passos (rápido mesmo em categorias com dezenas de milhares de episódios):
+     * 1) só as chaves das séries, na ordem e com o limite; 2) os detalhes só dessas séries, pelo índice.
+     */
+    private fun showsByKeys(keys: List<String>): List<Show> {
+        if (keys.isEmpty()) return emptyList()
+        val info = HashMap<String, Show>()
+        keys.chunked(400).forEach { chunk ->
+            val marks = chunk.joinToString(",") { "?" }
+            val args = chunk.toTypedArray()
+            val logos = HashMap<String, Pair<String, Int>>()
+            // capa = a imagem que mais se repete entre os episódios (as outras costumam ser quadros do episódio)
+            readableDatabase.rawQuery(
+                "SELECT show_key, logo, COUNT(*) FROM entries WHERE show_key IN ($marks) AND logo IS NOT NULL GROUP BY show_key, logo", args,
+            ).use { c -> while (c.moveToNext()) { val k = c.getString(0); val n = c.getInt(2); if ((logos[k]?.second ?: -1) < n) logos[k] = c.getString(1) to n } }
+            readableDatabase.rawQuery(
+                "SELECT show_key, MIN(series), MIN(grp), COUNT(DISTINCT CASE WHEN episode IS NULL THEN 'u' || id ELSE COALESCE(season, 0) || 'x' || episode END) FROM entries WHERE show_key IN ($marks) AND type = 2 GROUP BY show_key", args,
+            ).use { c -> while (c.moveToNext()) { val k = c.getString(0); info[k] = Show(k, Normalize.displayCached(c.getString(1)).title, c.getString(2), logos[k]?.first, c.getInt(3)) } }
+        }
+        return keys.mapNotNull { info[it] }
+    }
+
+    private fun keys(sql: String, args: Array<String>): List<String> =
+        readableDatabase.rawQuery(sql, args).use { c -> c.map { it.getString(0) } }
+
     fun shows(group: String?, limit: Int = 20_000): List<Show> {
         val (where, args) = if (group == null) "type = 2" to emptyArray<String>() else "type = 2 AND grp = ?" to arrayOf(group)
-        return readableDatabase.rawQuery(
-            "SELECT show_key, MIN(series), MIN(grp), (SELECT e2.logo FROM entries e2 WHERE e2.show_key = entries.show_key AND e2.logo IS NOT NULL GROUP BY e2.logo ORDER BY COUNT(*) DESC LIMIT 1), COUNT(DISTINCT CASE WHEN episode IS NULL THEN 'u' || id ELSE COALESCE(season, 0) || 'x' || episode END) FROM entries WHERE $where GROUP BY show_key ORDER BY MIN(id) LIMIT $limit",
-            args,
-        ).use { c -> c.map { Show(it.getString(0), Normalize.displayCached(it.getString(1)).title, it.getString(2), it.getStringOrNull(3), it.getInt(4)) } }
+        return showsByKeys(keys("SELECT show_key FROM entries WHERE $where GROUP BY show_key ORDER BY MIN(id) LIMIT $limit", args))
     }
 
     private fun letterWhere(col: String, letter: Char): Pair<String, Array<String>> =
@@ -176,10 +207,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
         val (lw, la) = if (letter == null) "1" to emptyArray<String>() else letterWhere("series", letter)
         val (gw, ga) = if (group == null) "" to emptyArray<String>() else " AND grp = ?" to arrayOf(group)
         val order = if (letter == null) "MAX(id) DESC" else "MIN(series) COLLATE NOCASE"
-        return readableDatabase.rawQuery(
-            "SELECT show_key, MIN(series), MIN(grp), (SELECT e2.logo FROM entries e2 WHERE e2.show_key = entries.show_key AND e2.logo IS NOT NULL GROUP BY e2.logo ORDER BY COUNT(*) DESC LIMIT 1), COUNT(*) FROM entries WHERE type = 2$gw AND $lw GROUP BY show_key ORDER BY $order LIMIT $limit",
-            ga + la,
-        ).use { c -> c.map { Show(it.getString(0), Normalize.displayCached(it.getString(1)).title, it.getString(2), it.getStringOrNull(3), it.getInt(4)) } }
+        return showsByKeys(keys("SELECT show_key FROM entries WHERE type = 2$gw AND $lw GROUP BY show_key ORDER BY $order LIMIT $limit", ga + la))
     }
 
     /** Lançamentos: filmes com o ano atual ou o anterior no nome, os adicionados por último primeiro. */
@@ -191,10 +219,10 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
     /** Séries com o ano atual ou o anterior no nome. */
     fun recentShows(limit: Int): List<Show> {
         val y = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
-        return readableDatabase.rawQuery(
-            "SELECT show_key, MIN(series), MIN(grp), (SELECT e2.logo FROM entries e2 WHERE e2.show_key = entries.show_key AND e2.logo IS NOT NULL GROUP BY e2.logo ORDER BY COUNT(*) DESC LIMIT 1), COUNT(*) FROM entries WHERE type = 2 AND (series LIKE ? OR series LIKE ?) GROUP BY show_key ORDER BY MAX(id) DESC LIMIT $limit",
+        return showsByKeys(keys(
+            "SELECT show_key FROM entries WHERE type = 2 AND (series LIKE ? OR series LIKE ?) GROUP BY show_key ORDER BY MAX(id) DESC LIMIT $limit",
             arrayOf("%$y%", "%${y - 1}%"),
-        ).use { c -> c.map { Show(it.getString(0), Normalize.displayCached(it.getString(1)).title, it.getString(2), it.getStringOrNull(3), it.getInt(4)) } }
+        ))
     }
 
     fun episodes(showKey: String): List<Entry> =
@@ -219,9 +247,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
         if (!quick && entries.size < limit) add(query("type != 2 AND norm LIKE ? LIMIT $limit", arrayOf("%$n%")))
         entries.sortBy { it.type.ordinal }
 
-        fun shows(where: String, args: Array<String>) = readableDatabase.rawQuery(
-            "SELECT show_key, MIN(series), MIN(grp), (SELECT e2.logo FROM entries e2 WHERE e2.show_key = entries.show_key AND e2.logo IS NOT NULL GROUP BY e2.logo ORDER BY COUNT(*) DESC LIMIT 1), COUNT(DISTINCT CASE WHEN episode IS NULL THEN 'u' || id ELSE COALESCE(season, 0) || 'x' || episode END) FROM entries WHERE +type = 2 AND $where GROUP BY show_key LIMIT 100", args,
-        ).use { c -> c.map { Show(it.getString(0), Normalize.displayCached(it.getString(1)).title, it.getString(2), it.getStringOrNull(3), it.getInt(4)) } }
+        fun shows(where: String, args: Array<String>) = showsByKeys(keys("SELECT DISTINCT show_key FROM entries WHERE +type = 2 AND $where LIMIT 100", args))
         val showList = LinkedHashMap<String, Show>()
         shows("show_key >= ? AND show_key < ?", arrayOf(n, end)).forEach { showList[it.key] = it }
         if (!quick && showList.size < 100) shows("show_key LIKE ?", arrayOf("%$n%")).forEach { showList.putIfAbsent(it.key, it) }

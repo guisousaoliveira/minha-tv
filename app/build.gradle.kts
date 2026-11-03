@@ -17,6 +17,8 @@ android {
         targetSdk = 35
         versionCode = buildNumber
         versionName = "1.0.$buildNumber"
+        // chave do TMDB (capas e sinopses): vem do segredo TMDB_KEY do GitHub, nunca do código
+        buildConfigField("String", "TMDB_KEY", "\"${System.getenv("TMDB_KEY") ?: ""}\"")
     }
 
     signingConfigs {

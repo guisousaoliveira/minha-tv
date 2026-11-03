@@ -128,7 +128,7 @@ fun FocusBox(
         val tick = FocusMemory.restore.intValue
         androidx.compose.runtime.LaunchedEffect(focusKey, tick) {
             if (FocusMemory.last == focusKey) {
-                kotlinx.coroutines.delay(if (tick > 0) 150 else 60)
+                kotlinx.coroutines.delay(if (tick > 0) 40 else 60)
                 runCatching { requester.requestFocus() }
             }
         }
@@ -191,8 +191,8 @@ fun textOn(focused: Boolean, dim: Boolean = false) = when {
 }
 
 @Composable
-fun TvButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, selected: Boolean = false) {
-    FocusBox(onClick = onClick, modifier = modifier, selected = selected, shape = RoundedCornerShape(4.dp)) { focused ->
+fun TvButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, selected: Boolean = false, focusKey: String? = null) {
+    FocusBox(onClick = onClick, modifier = modifier, selected = selected, shape = RoundedCornerShape(4.dp), focusKey = focusKey) { focused ->
         Text(
             text,
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
@@ -308,7 +308,14 @@ fun PosterCard(
     progress: Float? = null,
     requester: FocusRequester? = null,
     key: String = title,
+    tmdbTitle: String? = null,
+    tv: Boolean = false,
 ) {
+    // série: a lista costuma trazer um quadro do episódio; usa o pôster oficial do TMDB quando achar
+    val official = if (tmdbTitle != null && dev.guisousa.minhatv.data.Tmdb.enabled) {
+        androidx.compose.runtime.produceState<String?>(null, tmdbTitle) { value = dev.guisousa.minhatv.data.Tmdb.lookup(tmdbTitle, tv)?.poster }.value
+    } else null
+    @Suppress("NAME_SHADOWING") val image = if (tv) official ?: image else image ?: official
     Column {
         FocusBox(
             onClick = onClick, onLongClick = onLongClick, onFocused = onFocused,

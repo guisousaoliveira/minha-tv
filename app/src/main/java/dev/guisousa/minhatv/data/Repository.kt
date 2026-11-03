@@ -70,7 +70,7 @@ object Repository {
     }
     private val mutex = Mutex()
     private val loaded = CompletableDeferred<Unit>()
-    private lateinit var db: Db
+    internal lateinit var db: Db
     private var version = 0L
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = false }
 

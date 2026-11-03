@@ -84,7 +84,7 @@ internal fun ReleasesRow(lib: Library, type: ContentType, nav: Nav, header: Head
         if (shows.isEmpty()) return
         SectionTitle("Lançamentos", trailing = "${shows.size}")
         MediaRow(shows, POSTER_SAIMO_W) { _, s ->
-            PosterCard(s.name, s.logo, key = "rel:${s.key}", onFocused = { header.show(s.name, "Série · ${s.group}", s.logo) }, onClick = { nav.openShow(s) })
+            PosterCard(s.name, s.logo, key = "rel:${s.key}", tmdbTitle = s.name, tv = true, onFocused = { header.show(s.name, "Série · ${s.group}", s.logo) }, onClick = { nav.openShow(s) })
         }
     }
 }
@@ -133,6 +133,9 @@ fun VodGridScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
             // ordena fora da tela principal, calculando a chave uma vez só por item
             if (newest) list.sortedWith(compareByDescending<GridItem> { it.year }.thenBy { if (paged) it.order else -it.order })
             else list.map { sortKey(it.title) to it }.sortedBy { it.first }.map { it.second }
+        }.let { l ->
+            // o mesmo título repetido (dublado e legendado, outra qualidade): um cartão só, as versões ficam nos detalhes
+            l.distinctBy { sortKey(it.title) + "|" + it.year }
         }
     }
     val letters = remember(items, newest, paged) {
@@ -153,7 +156,7 @@ fun VodGridScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
     var focusedOnce by rememberSaveable(type, group) { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val groups = if (type == ContentType.SERIES) lib.showGroups else lib.movieGroups
-    val title = when { genre != null -> genre!!; else -> "Todos ${if (type == ContentType.SERIES) "as séries" else "os filmes"}" }
+    val title = when { genre != null -> genre!!; else -> if (type == ContentType.SERIES) "Todas as séries" else "Todos os filmes" }
 
     Column(Modifier.fillMaxSize()) {
         FocusHeader(header.title ?: title, header.subtitle ?: (if (isAll) "De A a Z" else kind + "s"), image = header.image, tall = false)
@@ -173,7 +176,7 @@ fun VodGridScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
                 ) {
                     items(letters) { (c, idx) ->
                         FocusBox(
-                            onClick = { if (idx < 0) { letter = c; scope.launch { gridState.scrollToItem(0) } } else scope.launch { gridState.scrollToItem(idx) } },
+                            onClick = { if (idx < 0) { letter = c; header.title = null; header.subtitle = null; header.image = null; scope.launch { gridState.scrollToItem(0) } } else scope.launch { gridState.scrollToItem(idx) } },
                             onFocused = { if (idx >= 0) scope.launch { gridState.scrollToItem(idx) } },
                             selected = paged && c == letter,
                             modifier = Modifier.fillMaxWidth().height(30.dp), focusScale = 1f, background = Color.Transparent, shape = RoundedCornerShape(4.dp),
@@ -203,7 +206,7 @@ fun VodGridScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
             ) {
                 itemsIndexed(items, key = { i, it -> "$i:${it.title}" }) { i, it ->
                     PosterCard(
-                        it.title, it.image, key = "grid:${it.id}", onFocused = { header.show(it.title, it.subtitle, it.image) }, onClick = it.open, onLongClick = it.fav,
+                        it.title, it.image, key = "grid:${it.id}", tmdbTitle = if (type == ContentType.SERIES) it.title else null, tv = true, onFocused = { header.show(it.title, it.subtitle, it.image) }, onClick = it.open, onLongClick = it.fav,
                         requester = if (i == 0) firstPoster else null,
                     )
                 }
