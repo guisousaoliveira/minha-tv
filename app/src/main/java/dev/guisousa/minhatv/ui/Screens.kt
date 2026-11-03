@@ -501,7 +501,7 @@ fun SearchScreen(lib: Library, nav: Nav) {
             return@Column
         }
         if (results == null) { Message("Carregando resultados para \"$query\"…"); return@Column }
-        val (entries, shows) = results
+        val (entries, shows) = results!!
         if (entries.isEmpty() && shows.isEmpty()) { Message("Nada encontrado para \"$query\""); return@Column }
         val live = entries.filter { it.type == ContentType.LIVE }
         val movies = entries.filter { it.type == ContentType.MOVIE }
