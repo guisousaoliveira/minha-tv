@@ -8,6 +8,14 @@ import android.database.sqlite.SQLiteOpenHelper
 @kotlinx.serialization.Serializable
 data class GroupInfo(val name: String, val count: Int)
 
+/** Resultado do último teste de um link. */
+data class Health(val ok: Boolean, val fails: Int, val checked: Long, val ms: Long?) {
+    /** Falhou de novo e de novo (no teste em segundo plano e/ou no player): some da tela. */
+    val dead get() = !ok && fails >= DEAD_FAILS
+
+    companion object { const val DEAD_FAILS = 2 }
+}
+
 /** Série (episódios ficam no banco e são lidos ao abrir). */
 data class Show(val key: String, val name: String, val group: String, val logo: String?, val episodeCount: Int)
 
@@ -23,6 +31,15 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
 
     override fun onConfigure(db: SQLiteDatabase) {
         db.enableWriteAheadLogging()
+    }
+
+    override fun onOpen(db: SQLiteDatabase) {
+        // tabela à parte (não some quando as listas são baixadas de novo) e sem mudar a versão do banco
+        db.execSQL(
+            """CREATE TABLE IF NOT EXISTS health(
+                url TEXT PRIMARY KEY, ok INTEGER NOT NULL, fails INTEGER NOT NULL DEFAULT 0,
+                checked INTEGER NOT NULL, ms INTEGER)"""
+        )
     }
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -169,6 +186,73 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
             }
         }
         return ids to names
+    }
+
+    // ---------- Saúde das fontes ----------
+
+    /** Resultado dos testes de cada link (só dos que já foram testados). */
+    fun health(urls: Collection<String>): Map<String, Health> {
+        if (urls.isEmpty()) return emptyMap()
+        val out = HashMap<String, Health>(urls.size)
+        urls.toSet().chunked(500).forEach { chunk ->
+            val marks = chunk.joinToString(",") { "?" }
+            readableDatabase.rawQuery("SELECT url, ok, fails, checked, ms FROM health WHERE url IN ($marks)", chunk.toTypedArray()).use { c ->
+                while (c.moveToNext()) out[c.getString(0)] = Health(c.getInt(1) == 1, c.getInt(2), c.getLong(3), if (c.isNull(4)) null else c.getLong(4))
+            }
+        }
+        return out
+    }
+
+    /** Guarda o resultado de um teste. Falhas seguidas se acumulam; um sucesso zera. */
+    fun setHealth(url: String, ok: Boolean, ms: Long?, now: Long = System.currentTimeMillis()) {
+        // sem "ON CONFLICT ... DO UPDATE": o SQLite das TVs mais antigas não tem
+        val db = writableDatabase
+        val okInt = if (ok) 1 else 0
+        val st = db.compileStatement(
+            """UPDATE health SET ok = ?, checked = ?,
+                 fails = CASE WHEN ? = 1 THEN 0 ELSE fails + 1 END,
+                 ms = CASE WHEN ? = 1 THEN COALESCE(?, ms) ELSE ms END
+               WHERE url = ?"""
+        )
+        st.bindLong(1, okInt.toLong()); st.bindLong(2, now); st.bindLong(3, okInt.toLong()); st.bindLong(4, okInt.toLong())
+        if (ms != null) st.bindLong(5, ms) else st.bindNull(5)
+        st.bindString(6, url)
+        if (st.executeUpdateDelete() == 0) {
+            db.execSQL("INSERT OR IGNORE INTO health(url, ok, fails, checked, ms) VALUES(?, ?, ?, ?, ?)", arrayOf<Any?>(url, okInt, 1 - okInt, now, ms))
+        }
+    }
+
+    class Probe(val url: String, val userAgent: String?, val referrer: String?)
+
+    /**
+     * Próximos links a testar: canais ao vivo primeiro, depois filmes; os nunca testados antes
+     * dos antigos. Bons são testados de novo depois de [okAgeMs], ruins depois de [badAgeMs].
+     */
+    fun toProbe(limit: Int, okAgeMs: Long, badAgeMs: Long, now: Long = System.currentTimeMillis()): List<Probe> =
+        readableDatabase.rawQuery(
+            """SELECT e.url, MIN(e.ua), MIN(e.ref) FROM entries e LEFT JOIN health h ON h.url = e.url
+               WHERE e.type IN (0, 1) AND (h.url IS NULL OR (h.ok = 1 AND h.checked < ?) OR (h.ok = 0 AND h.checked < ?))
+               GROUP BY e.url ORDER BY MIN(e.type), h.url IS NOT NULL, MIN(h.checked), MIN(e.id) LIMIT $limit""",
+            arrayOf((now - okAgeMs).toString(), (now - badAgeMs).toString()),
+        ).use { c -> c.map { Probe(it.getString(0), it.getStringOrNull(1), it.getStringOrNull(2)) } }
+
+    /** Dos nomes dados, quais ainda têm alguma fonte que não está morta (em qualquer categoria). */
+    fun aliveNorms(type: ContentType, norms: Collection<String>): Set<String> {
+        val out = HashSet<String>()
+        norms.toSet().chunked(400).forEach { chunk ->
+            val marks = chunk.joinToString(",") { "?" }
+            readableDatabase.rawQuery(
+                """SELECT DISTINCT e.norm FROM entries e LEFT JOIN health h ON h.url = e.url
+                   WHERE e.type = ? AND e.norm IN ($marks) AND (h.url IS NULL OR h.ok = 1 OR h.fails < ${Health.DEAD_FAILS})""",
+                arrayOf(type.ordinal.toString()) + chunk,
+            ).use { c -> while (c.moveToNext()) out += c.getString(0) }
+        }
+        return out
+    }
+
+    /** Esquece testes de links que não estão mais em nenhuma lista. */
+    fun pruneHealth() {
+        writableDatabase.execSQL("DELETE FROM health WHERE url NOT IN (SELECT url FROM entries)")
     }
 
     private fun query(where: String, args: Array<String>): List<Entry> = readableDatabase.rawQuery(

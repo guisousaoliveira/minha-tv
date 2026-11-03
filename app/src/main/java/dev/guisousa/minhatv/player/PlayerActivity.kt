@@ -153,6 +153,8 @@ class PlayerActivity : ComponentActivity() {
     private var playing: Entry? = null
     private var sources: List<Entry> = emptyList()
     private var sourceIndex = 0
+    /** Última fonte que já foi marcada como boa (para marcar uma vez só). */
+    private var markedWorking: String? = null
     private var sourcesJob: Job? = null
     private var retries = 0
 
@@ -204,6 +206,7 @@ class PlayerActivity : ComponentActivity() {
                     Player.STATE_READY -> {
                         retries = 0
                         hideLoading()
+                        playing?.url?.let { if (it != markedWorking) { markedWorking = it; Repository.markWorking(it) } }
                     }
                     Player.STATE_ENDED -> {
                         hideLoading()
