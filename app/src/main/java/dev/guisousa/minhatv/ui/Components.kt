@@ -167,6 +167,15 @@ object FocusMemory {
     var last: String? = null
     /** Muda quando o app volta do player: o item que estava em foco pega o foco de novo. */
     val restore = androidx.compose.runtime.mutableIntStateOf(0)
+    private val stack = ArrayDeque<String?>()
+    /** Ao abrir uma tela por cima (detalhes, categoria): guarda onde o foco estava. */
+    fun push() { stack.addLast(last) }
+    /** Ao voltar dela: devolve o foco ao cartão que a abriu. */
+    fun pop() {
+        if (stack.isNotEmpty()) last = stack.removeLast()
+        restore.intValue++
+    }
+    fun clear() = stack.clear()
 }
 
 /** Cor do texto dentro de um FocusBox "fill". */
@@ -398,7 +407,7 @@ fun FocusHeader(
                     Text(detail, fontSize = 15.sp, color = Palette.TextDim, lineHeight = 22.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
             }
-            if (tall && !backdrop) {
+            if (tall && !backdrop && !image.isNullOrBlank()) {
                 Box(Modifier.width(420.dp).fillMaxHeight().clip(RoundedCornerShape(6.dp)).background(Color(0xFF111111))) {
                     if (!image.isNullOrBlank()) {
                         // logo de canal: inteira, sem cortar nem esticar

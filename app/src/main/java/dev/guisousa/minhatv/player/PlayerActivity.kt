@@ -919,6 +919,7 @@ class PlayerActivity : ComponentActivity() {
     /** O Voltar que fechou um painel não pode, ao soltar a tecla, fechar o player também. */
     private var backConsumed = false
     private var lastBackAt = 0L
+    private var exitOnUp = false
     private val tick = object : Runnable {
         override fun run() {
             updateTime()
@@ -1089,6 +1090,7 @@ class PlayerActivity : ComponentActivity() {
 
         // barra fechada
         if (!down) {
+            if (code == KeyEvent.KEYCODE_BACK && exitOnUp) { exitOnUp = false; saveResume(); finish(); return true }
             if (code == KeyEvent.KEYCODE_BACK && backConsumed) { backConsumed = false; return true }
             return center || super.dispatchKeyEvent(event)
         }
@@ -1112,7 +1114,8 @@ class PlayerActivity : ComponentActivity() {
                 infoPanel.visibility = View.GONE
                 // igual ao Saimo: precisa apertar VOLTAR duas vezes para sair do vídeo
                 val now = System.currentTimeMillis()
-                if (now - lastBackAt < 4000) { saveResume(); finish(); return true }
+                // sai ao SOLTAR a tecla: se saísse ao apertar, o soltar chegava na tela de trás e fechava ela também
+                if (now - lastBackAt < 4000) { exitOnUp = true; return true }
                 lastBackAt = now
                 notice("Aperte VOLTAR de novo para sair", 4000)
                 return true

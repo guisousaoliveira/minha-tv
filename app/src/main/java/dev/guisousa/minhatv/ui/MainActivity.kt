@@ -155,7 +155,7 @@ fun AppRoot(onLoaded: () -> Unit) {
         }
     }
 
-    BackHandler(enabled = stack.isNotEmpty()) { stack.removeAt(stack.lastIndex) }
+    BackHandler(enabled = stack.isNotEmpty()) { stack.removeAt(stack.lastIndex); FocusMemory.pop() }
     // nas abas: VOLTAR vai para o Início; no Início, precisa apertar de novo para sair do app
     var lastBack by remember { mutableStateOf(0L) }
     BackHandler(enabled = stack.isEmpty()) {
@@ -171,9 +171,9 @@ fun AppRoot(onLoaded: () -> Unit) {
     }
 
     val nav = Nav(
-        openShow = { stack.add(Detail.OfShow(it)) },
-        openMovie = { stack.add(Detail.OfMovie(it)) },
-        openCategory = { type, group -> stack.add(Detail.Category(type, group)) },
+        openShow = { FocusMemory.push(); stack.add(Detail.OfShow(it)) },
+        openMovie = { FocusMemory.push(); stack.add(Detail.OfMovie(it)) },
+        openCategory = { type, group -> FocusMemory.push(); stack.add(Detail.Category(type, group)) },
     )
     val nothingAdded = !loading && playlists.isEmpty() && sources.isEmpty()
 
@@ -194,7 +194,7 @@ fun AppRoot(onLoaded: () -> Unit) {
                 NavItem(
                     t.title,
                     selected = tab == i,
-                    onClick = { tab = i; stack.clear() },
+                    onClick = { tab = i; stack.clear(); FocusMemory.clear() },
                     modifier = if (i == 0) Modifier.focusRequester(firstTab) else Modifier,
                 )
             }
@@ -202,8 +202,8 @@ fun AppRoot(onLoaded: () -> Unit) {
             StatusText()
             Spacer(Modifier.width(12.dp))
             // busca (lupa) e ajustes (engrenagem) como ícones, à direita
-            IconNav(androidx.compose.material.icons.Icons.Filled.Search, "Buscar", selected = Tab.entries[tab] == Tab.SEARCH) { tab = Tab.SEARCH.ordinal; stack.clear() }
-            IconNav(androidx.compose.material.icons.Icons.Filled.Settings, "Ajustes", selected = Tab.entries[tab] == Tab.SETTINGS) { tab = Tab.SETTINGS.ordinal; stack.clear() }
+            IconNav(androidx.compose.material.icons.Icons.Filled.Search, "Buscar", selected = Tab.entries[tab] == Tab.SEARCH) { tab = Tab.SEARCH.ordinal; stack.clear(); FocusMemory.clear() }
+            IconNav(androidx.compose.material.icons.Icons.Filled.Settings, "Ajustes", selected = Tab.entries[tab] == Tab.SETTINGS) { tab = Tab.SETTINGS.ordinal; stack.clear(); FocusMemory.clear() }
         }
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
