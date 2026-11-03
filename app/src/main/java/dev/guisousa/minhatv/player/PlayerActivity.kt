@@ -109,6 +109,42 @@ class PlayerActivity : ComponentActivity() {
     private val showLoading = Runnable { loadingBox.visibility = View.VISIBLE }
     private val stallCheck = Runnable { onStall() }
 
+    /**
+     * Vigia de imagem congelada: algumas fontes dizem que estão tocando, mas a imagem para e não volta.
+     * A cada 2 s confere se o vídeo andou; se ficar 8 s parado, troca de fonte sozinho.
+     */
+    private var lastPos = -1L
+    private var lastFrames = -1
+    private var frozenFor = 0L
+    private val freezeWatch = object : Runnable {
+        override fun run() {
+            val exo = player
+            if (exo != null && exo.playWhenReady && exo.playbackState == Player.STATE_READY) {
+                val pos = exo.currentPosition
+                val frames = exo.videoDecoderCounters?.let { it.ensureUpdated(); it.renderedOutputBufferCount } ?: -1
+                val hasVideo = exo.videoFormat != null
+                val moved = pos != lastPos || (hasVideo && frames != lastFrames)
+                val videoStuck = hasVideo && frames == lastFrames
+                if (!moved || videoStuck) frozenFor += 2000 else frozenFor = 0
+                lastPos = pos; lastFrames = frames
+                if (frozenFor >= 8000) {
+                    frozenFor = 0
+                    android.util.Log.i("MinhaTV", "player: imagem congelada, trocando de fonte")
+                    playing?.let { Repository.markFailed(it.url) }
+                    if (!nextSource(frozen = true)) {
+                        loadingText.text = "O vídeo travou, reconectando…"
+                        loadingBox.visibility = View.VISIBLE
+                        if (isLive) exo.seekToDefaultPosition()
+                        exo.prepare()
+                    }
+                }
+            } else {
+                frozenFor = 0
+            }
+            handler.postDelayed(this, 2000)
+        }
+    }
+
     private var items: List<Entry> = emptyList()
     private var index = 0
     private var queueVersion = 0
@@ -179,6 +215,7 @@ class PlayerActivity : ComponentActivity() {
         })
         play(index)
         playerView.requestFocus()
+        handler.postDelayed(freezeWatch, 4000)
     }
 
     // ---------------- Interface ----------------
@@ -318,6 +355,7 @@ class PlayerActivity : ComponentActivity() {
     private fun playSource(src: Entry, resume: Boolean) {
         val exo = player ?: return
         playing = src
+        lastPos = -1L; lastFrames = -1; frozenFor = -4000 // dá uns segundos para começar
         val http = DefaultHttpDataSource.Factory()
             .setUserAgent(src.userAgent ?: Repository.DEFAULT_UA)
             .setAllowCrossProtocolRedirects(true)
@@ -379,13 +417,13 @@ class PlayerActivity : ComponentActivity() {
     }
 
     /** Pula para a próxima fonte do mesmo item. Devolve false se não houver mais. */
-    private fun nextSource(): Boolean {
+    private fun nextSource(frozen: Boolean = false): Boolean {
         if (sourceIndex >= sources.size - 1) return false
         handler.post { updateButtons() }
         sourceIndex++
         retries = 0
         val pos = player?.currentPosition ?: 0
-        loadingText.text = "Fonte fora do ar, tentando outra · ${sourceIndex + 1} de ${sources.size}"
+        loadingText.text = (if (frozen) "O vídeo travou, indo para outra fonte" else "Fonte fora do ar, tentando outra") + " · ${sourceIndex + 1} de ${sources.size}"
         loadingBox.visibility = View.VISIBLE
         playSource(sources[sourceIndex], resume = false)
         if (!isLive && pos > 0) player?.seekTo(pos)
