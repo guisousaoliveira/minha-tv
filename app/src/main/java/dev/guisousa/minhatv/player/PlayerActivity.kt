@@ -200,8 +200,10 @@ class PlayerActivity : ComponentActivity() {
 
         // mínimo = máximo: o player nunca para de puxar o sinal. Se parasse (como antes),
         // a conexão ficava ociosa uns 40 s e o servidor do canal derrubava, fazendo a imagem piscar.
+        // ao vivo: reserva pequena (10 s) e começa rápido, como os apps de IPTV; filme: reserva grande
+        val live = items[index].type == ContentType.LIVE
         val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(40_000, 40_000, 1_500, 3_000)
+            .apply { if (live) setBufferDurationsMs(10_000, 10_000, 1_000, 2_000) else setBufferDurationsMs(40_000, 40_000, 1_500, 3_000) }
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
         val exo = ExoPlayer.Builder(this).setLoadControl(loadControl).build()
