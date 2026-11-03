@@ -40,6 +40,8 @@ object Repository {
     private const val BUILTIN_EPG_FILE = "epg_builtin.json"
     /** Fontes no máximo por canal/filme (contando a primeira). */
     const val MAX_SOURCES = 5
+    /** Suba quando mudar o que aparece nas categorias (força reorganizar na próxima abertura). */
+    private const val LIBRARY_RULES = 2
     private const val CHECK_PARALLEL = 3
     private const val CHECK_BATCH = 60
     private const val CHECK_OK_AGE = 24 * 3_600_000L
@@ -136,7 +138,12 @@ object Repository {
                     }
                     db.deleteExcept(_playlists.value.map { it.id })
                 }
-                if (!hadCache || db.wasReset) rebuild() else loadEpg()
+                // regras de filtro mudaram nesta versão: as categorias salvas estão velhas, reorganiza
+                val stale = prefs.getInt("library_rules", 0) != LIBRARY_RULES
+                if (!hadCache || db.wasReset || stale) {
+                    rebuild()
+                    prefs.edit().putInt("library_rules", LIBRARY_RULES).apply()
+                } else loadEpg()
             } catch (e: Exception) {
                 android.util.Log.e("MinhaTV", "init", e)
             } finally {
@@ -563,13 +570,28 @@ object Repository {
         file("epg_$id.json").outputStream().buffered().use { json.encodeToStream(EpgData.serializer(), data, it) }
     }
 
+    /**
+     * Categorias de canais com a conta certa: sem os canais de fora escondidos e sem repetidos
+     * (o mesmo canal de várias listas conta uma vez). Categoria que fica vazia some.
+     */
+    private fun liveGroups(noForeign: Boolean): List<GroupInfo> {
+        val counts = LinkedHashMap<String, HashSet<String>>()
+        val foreignGroup = HashMap<String, Boolean>()
+        db.liveRows { group, name, tvgId, norm ->
+            if (noForeign && (foreignGroup.getOrPut(group) { Library.isForeignLiveGroup(group) } ||
+                    Library.isForeignLiveEntry(Entry(name = name, url = "", group = group, tvgId = tvgId)))) return@liveRows
+            counts.getOrPut(group) { HashSet() } += norm
+        }
+        return counts.map { (g, set) -> GroupInfo(g, set.size) }.filter { it.count > 0 }
+    }
+
     private suspend fun rebuild() = withContext(Dispatchers.IO) {
         val hide = hideAdult
         fun List<GroupInfo>.visible() = Library.sortGroups(if (hide) filterNot { Library.isAdult(it.name) } else this) { it.name }
         val noForeign = hideForeign
         val lib = Library(
             version = ++version,
-            liveGroups = db.groups(ContentType.LIVE).let { g -> if (noForeign) g.filterNot { Library.isForeignLiveGroup(it.name) } else g }.visible(),
+            liveGroups = liveGroups(noForeign).visible(),
             movieGroups = db.groups(ContentType.MOVIE).visible(),
             showGroups = db.showGroups().visible(),
         )

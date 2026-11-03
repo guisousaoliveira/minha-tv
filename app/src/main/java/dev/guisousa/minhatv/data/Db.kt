@@ -132,6 +132,13 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
         arrayOf(type.ordinal.toString()),
     ).use { c -> c.map { GroupInfo(it.getString(0), it.getInt(1)) } }
 
+    /** Percorre os canais ao vivo (categoria, nome limpo, tvg-id, chave) na ordem da lista. */
+    fun liveRows(each: (group: String, name: String, tvgId: String?, norm: String) -> Unit) {
+        readableDatabase.rawQuery("SELECT grp, COALESCE(title, name), tvg_id, COALESCE(norm, url) FROM entries WHERE type = 0 ORDER BY id", null).use { c ->
+            while (c.moveToNext()) each(c.getString(0), c.getString(1), c.getStringOrNull(2), c.getString(3))
+        }
+    }
+
     fun showGroups(): List<GroupInfo> = readableDatabase.rawQuery(
         "SELECT grp, COUNT(DISTINCT show_key) FROM entries WHERE type = 2 GROUP BY grp ORDER BY MIN(id)", null,
     ).use { c -> c.map { GroupInfo(it.getString(0), it.getInt(1)) } }
