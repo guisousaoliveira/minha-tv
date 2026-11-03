@@ -72,14 +72,14 @@ private fun Backdrop(image: String?) {
 }
 
 @Composable
-private fun BigButton(text: String, requester: FocusRequester? = null, onClick: () -> Unit) {
+private fun BigButton(text: String, requester: FocusRequester? = null, key: String? = null, onClick: () -> Unit) {
     // ao abrir a tela, o foco já começa no botão principal (Assistir/Continuar)
     if (requester != null) {
         var done by rememberSaveable { mutableStateOf(false) }
         LaunchedEffect(Unit) { if (!done) { delay(80); runCatching { requester.requestFocus() }; done = true } }
     }
     FocusBox(
-        onClick = onClick, shape = RoundedCornerShape(6.dp),
+        onClick = onClick, shape = RoundedCornerShape(6.dp), focusKey = key,
         modifier = Modifier.height(52.dp).then(if (requester != null) Modifier.focusRequester(requester) else Modifier),
     ) { focused ->
         Text(
@@ -140,7 +140,7 @@ fun MovieDetailScreen(e: Entry, nav: Nav) {
                     "Filme", e.name, e.logo,
                     listOfNotNull(e.group, e.quality, if (e.url.hashCode().toString() in watched) "Visto" else null),
                 ) {
-                    BigButton(if (resume > 0) "Continuar de ${clock(resume)}" else "Assistir", remember { FocusRequester() }) { PlaybackQueue.start(context, listOf(e), 0) }
+                    BigButton(if (resume > 0) "Continuar de ${clock(resume)}" else "Assistir", remember { FocusRequester() }, key = "main:${e.url}") { PlaybackQueue.start(context, listOf(e), 0) }
                     VersionButton(e, versions.orEmpty())
                     BigButton(if (e.url in favs) "Na Minha lista" else "+ Minha lista") { toggleFav(context, e) }
                 }
@@ -149,7 +149,7 @@ fun MovieDetailScreen(e: Entry, nav: Nav) {
                 Spacer(Modifier.height(20.dp))
                 SectionTitle("Mais como este")
                 MediaRow(similar, 136.dp) { _, m ->
-                    PosterCard(m.name, m.logo, progress = Repository.progress(m.url), onClick = { nav.openMovie(m) }, onLongClick = { toggleFav(context, m) })
+                    PosterCard(m.name, m.logo, key = "sim:${m.url}", progress = Repository.progress(m.url), onClick = { nav.openMovie(m) }, onLongClick = { toggleFav(context, m) })
                 }
             }
         }
@@ -194,7 +194,7 @@ fun SeriesDetailScreen(show: Show) {
                         show.group,
                     ),
                 ) {
-                    BigButton((if (Repository.progress(target.url) != null) "Continuar" else "Assistir") + ep, remember { FocusRequester() }) { play(target) }
+                    BigButton((if (Repository.progress(target.url) != null) "Continuar" else "Assistir") + ep, remember { FocusRequester() }, key = "main:${show.key}") { play(target) }
                     VersionButton(target, versions)
                     BigButton(if (target.url in favs) "Na Minha lista" else "+ Minha lista") { toggleFav(context, target) }
                 }

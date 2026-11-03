@@ -779,15 +779,29 @@ object Repository {
         return groups.values.map { list -> list.minBy { rank(health[it.url]) } }
     }
 
-    suspend fun search(q: String): Pair<List<Entry>, List<Show>> = withContext(Dispatchers.IO) {
+    /** [quick] = só nomes que começam com o texto (instantâneo); sem ele, também os que contêm. */
+    suspend fun search(q: String, quick: Boolean = false): Pair<List<Entry>, List<Show>> = withContext(Dispatchers.IO) {
         runCatching {
-            val (e, s) = db.search(q)
+            val t0 = System.currentTimeMillis()
+            val (e, s) = db.search(q, quick = quick)
+            android.util.Log.w("MinhaTV", "busca${if (quick) " rápida" else ""} \"$q\": ${e.size + s.size} em ${System.currentTimeMillis() - t0} ms")
             e.visible().unique() to (if (hideAdult) s.filterNot { Library.isAdult(it.group) } else s)
         }.getOrDefault(emptyList<Entry>() to emptyList())
     }
 
-    suspend fun favoriteEntries(): List<Entry> = withContext(Dispatchers.IO) {
-        runCatching { db.byUrls(_favorites.value).unique(hideDead = false) }.getOrDefault(emptyList())
+    @Volatile private var favCache: Pair<Set<String>, List<Entry>>? = null
+
+    /** Itens da Minha lista. Guardado em memória: abrir a tela de novo é instantâneo. */
+    suspend fun favoriteEntries(): List<Entry> {
+        val favs = _favorites.value
+        favCache?.let { (k, v) -> if (k == favs) return v }
+        return withContext(Dispatchers.IO) {
+            val t0 = System.currentTimeMillis()
+            val list = runCatching { db.byUrls(favs).unique(hideDead = false) }.getOrDefault(emptyList())
+            android.util.Log.w("MinhaTV", "minha lista: ${list.size} itens em ${System.currentTimeMillis() - t0} ms")
+            favCache = favs to list
+            list
+        }
     }
 
     /** Último canal assistido + a categoria dele (para trocar de canal com ▲▼). */

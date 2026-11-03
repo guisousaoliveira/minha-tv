@@ -124,8 +124,13 @@ fun FocusBox(
     // ao voltar de uma tela (série, categoria), o foco volta para o cartão em que você estava
     val requester = remember { androidx.compose.ui.focus.FocusRequester() }
     if (focusKey != null) {
-        androidx.compose.runtime.LaunchedEffect(focusKey) {
-            if (FocusMemory.last == focusKey) { kotlinx.coroutines.delay(60); runCatching { requester.requestFocus() } }
+        // roda ao aparecer e de novo a cada volta do player (FocusMemory.restore muda)
+        val tick = FocusMemory.restore.intValue
+        androidx.compose.runtime.LaunchedEffect(focusKey, tick) {
+            if (FocusMemory.last == focusKey) {
+                kotlinx.coroutines.delay(if (tick > 0) 150 else 60)
+                runCatching { requester.requestFocus() }
+            }
         }
     }
     val scale by animateFloatAsState(if (focused) focusScale else 1f, tween(150), label = "scale")
@@ -158,7 +163,11 @@ fun FocusBox(
 }
 
 /** Último cartão focado, para devolver o foco ao voltar de outra tela. */
-object FocusMemory { var last: String? = null }
+object FocusMemory {
+    var last: String? = null
+    /** Muda quando o app volta do player: o item que estava em foco pega o foco de novo. */
+    val restore = androidx.compose.runtime.mutableIntStateOf(0)
+}
 
 /** Cor do texto dentro de um FocusBox "fill". */
 fun textOn(focused: Boolean, dim: Boolean = false) = when {
@@ -284,13 +293,14 @@ fun PosterCard(
     onFocused: (() -> Unit)? = null,
     progress: Float? = null,
     requester: FocusRequester? = null,
+    key: String = title,
 ) {
     Column {
         FocusBox(
             onClick = onClick, onLongClick = onLongClick, onFocused = onFocused,
             frame = true, focusScale = 1.07f,
             modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f).then(if (requester != null) Modifier.focusRequester(requester) else Modifier),
-            focusKey = "p:$title",
+            focusKey = "p:$key",
         ) {
             Logo(image, Modifier.fillMaxSize(), fallback = "", crop = true)
             if (image.isNullOrBlank()) {
@@ -311,9 +321,9 @@ fun PosterCard(
 
 /** Cartão horizontal (canais). */
 @Composable
-fun ChannelCard(title: String, logo: String?, subtitle: String?, onFocused: (() -> Unit)? = null, onClick: () -> Unit) {
+fun ChannelCard(title: String, logo: String?, subtitle: String?, onFocused: (() -> Unit)? = null, key: String = title, onClick: () -> Unit) {
     Column {
-        FocusBox(onClick = onClick, onFocused = onFocused, frame = true, focusScale = 1.06f, modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f), focusKey = "c:$title") {
+        FocusBox(onClick = onClick, onFocused = onFocused, frame = true, focusScale = 1.06f, modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f), focusKey = "c:$key") {
             Logo(logo, Modifier.fillMaxSize().padding(12.dp), fallback = title)
         }
         Text(title, Modifier.padding(top = 8.dp), fontSize = 13.sp, color = Palette.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -460,12 +470,23 @@ fun Message(title: String, body: String? = null, modifier: Modifier = Modifier, 
 /** Indicador de carregamento: arco branco girando, fino. */
 @Composable
 fun Spinner(size: Dp, modifier: Modifier = Modifier) {
-    androidx.compose.material3.CircularProgressIndicator(
-        modifier = modifier.size(size),
-        color = Palette.Text,
-        trackColor = Color(0x33FFFFFF),
-        strokeWidth = if (size < 20.dp) 1.5.dp else 3.dp,
-    )
+    // gira pelo relógio de quadros: funciona mesmo com as animações do sistema desligadas
+    // (nessas TVs o indicador padrão do Android fica parado)
+    val angle by androidx.compose.runtime.produceState(0f) {
+        val start = androidx.compose.runtime.withFrameNanos { it }
+        while (true) {
+            androidx.compose.runtime.withFrameNanos { t -> value = ((t - start) / 1_000_000L % 900L) / 900f * 360f }
+        }
+    }
+    val stroke = if (size < 20.dp) 1.5.dp else 3.dp
+    androidx.compose.foundation.Canvas(modifier.size(size)) {
+        val w = stroke.toPx()
+        val inset = w / 2
+        val arcSize = androidx.compose.ui.geometry.Size(this.size.width - w, this.size.height - w)
+        val topLeft = androidx.compose.ui.geometry.Offset(inset, inset)
+        drawArc(Color(0x33FFFFFF), 0f, 360f, false, topLeft, arcSize, style = androidx.compose.ui.graphics.drawscope.Stroke(w))
+        drawArc(Palette.Text, angle, 100f, false, topLeft, arcSize, style = androidx.compose.ui.graphics.drawscope.Stroke(w, cap = androidx.compose.ui.graphics.StrokeCap.Round))
+    }
 }
 
 /** Retângulo cinza "pulsando" no lugar de algo que ainda está carregando. */

@@ -171,7 +171,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
      * Busca rápida: primeiro os nomes que começam com o texto (usa o índice, sai na hora),
      * depois os que contêm o texto em qualquer parte. Compara sem acento, maiúscula nem espaço.
      */
-    fun search(q: String, limit: Int = 300): Pair<List<Entry>, List<Show>> {
+    fun search(q: String, limit: Int = 300, quick: Boolean = false): Pair<List<Entry>, List<Show>> {
         val n = Normalize.name(q)
         if (n.isEmpty()) {
             val like = "%" + q.replace("%", "").replace("_", "") + "%"
@@ -182,7 +182,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
         val entries = ArrayList<Entry>()
         fun add(list: List<Entry>) = list.forEach { if (entries.size < limit && seen.add(it.url)) entries += it }
         for (t in listOf(0, 1)) add(query("norm >= ? AND norm < ? AND type = $t LIMIT $limit", arrayOf(n, end)))
-        if (entries.size < limit) add(query("type != 2 AND norm LIKE ? LIMIT $limit", arrayOf("%$n%")))
+        if (!quick && entries.size < limit) add(query("type != 2 AND norm LIKE ? LIMIT $limit", arrayOf("%$n%")))
         entries.sortBy { it.type.ordinal }
 
         fun shows(where: String, args: Array<String>) = readableDatabase.rawQuery(
@@ -190,7 +190,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
         ).use { c -> c.map { Show(it.getString(0), Normalize.displayCached(it.getString(1)).title, it.getString(2), it.getStringOrNull(3), it.getInt(4)) } }
         val showList = LinkedHashMap<String, Show>()
         shows("show_key >= ? AND show_key < ?", arrayOf(n, end)).forEach { showList[it.key] = it }
-        if (showList.size < 100) shows("show_key LIKE ?", arrayOf("%$n%")).forEach { showList.putIfAbsent(it.key, it) }
+        if (!quick && showList.size < 100) shows("show_key LIKE ?", arrayOf("%$n%")).forEach { showList.putIfAbsent(it.key, it) }
         return entries to showList.values.toList()
     }
 

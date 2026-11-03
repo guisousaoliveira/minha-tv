@@ -69,7 +69,8 @@ private fun nowTicker(): Long {
 /** Carrega dados do banco sem travar a tela. null = carregando. */
 @Composable
 internal fun <T> load(vararg keys: Any?, loader: suspend () -> T): T? {
-    val v by produceState<T?>(null, *keys) { value = null; value = loader() }
+    // mantém o conteúdo antigo na tela enquanto recarrega: a lista não some, não perde a rolagem nem o foco
+    val v by produceState<T?>(null, *keys) { value = loader() }
     return v
 }
 
@@ -148,7 +149,7 @@ fun HomeScreen(lib: Library, nav: Nav) {
                 SectionTitle("Continuar assistindo")
                 MediaRow(cont, POSTER_W) { i, e ->
                     PosterCard(
-                        e.name, e.logo, progress = Repository.progress(e.url) ?: 0f,
+                        e.name, e.logo, key = "cont:${e.url}", progress = Repository.progress(e.url) ?: 0f,
                         onFocused = { header.show(e.name, "Continuar · ${e.group}", e.logo) },
                         onClick = { PlaybackQueue.start(context, cont, i) },
                     )
@@ -157,7 +158,7 @@ fun HomeScreen(lib: Library, nav: Nav) {
             if (recentLive.isNotEmpty()) item("recent") {
                 SectionTitle("Assistidos recentemente")
                 MediaRow(recentLive, CHANNEL_W) { i, e ->
-                    ChannelCard(e.name, e.logo, e.group, onFocused = { header.channel(e, "Canal · ${e.group}") }) {
+                    ChannelCard(e.name, e.logo, e.group, onFocused = { header.channel(e, "Canal · ${e.group}") }, key = "rl:${e.url}") {
                         PlaybackQueue.start(context, recentLive, i)
                     }
                 }
@@ -165,7 +166,7 @@ fun HomeScreen(lib: Library, nav: Nav) {
             if (favLive.isNotEmpty()) item("favlive") {
                 SectionTitle("Meus canais")
                 MediaRow(favLive, CHANNEL_W) { i, e ->
-                    ChannelCard(e.name, e.logo, e.group, onFocused = { header.channel(e, "Canal · ${e.group}") }) {
+                    ChannelCard(e.name, e.logo, e.group, onFocused = { header.channel(e, "Canal · ${e.group}") }, key = "fl:${e.url}") {
                         PlaybackQueue.start(context, favLive, i)
                     }
                 }
@@ -173,7 +174,7 @@ fun HomeScreen(lib: Library, nav: Nav) {
             if (favVod.isNotEmpty()) item("favvod") {
                 SectionTitle("Minha lista")
                 MediaRow(favVod, POSTER_W) { i, e ->
-                    PosterCard(e.name, e.logo, onFocused = { header.show(e.name, "${kindOf(e.type)} · ${e.group}", e.logo) }, onClick = {
+                    PosterCard(e.name, e.logo, key = "fav:${e.url}", onFocused = { header.show(e.name, "${kindOf(e.type)} · ${e.group}", e.logo) }, onClick = {
                         PlaybackQueue.start(context, favVod, i)
                     }, onLongClick = { toggleFav(context, e) })
                 }
@@ -206,12 +207,12 @@ private fun EntryRow(lib: Library, type: ContentType, group: String, count: Int,
         seeAllAspect = if (live) 16f / 9f else 2f / 3f,
     ) { i, e ->
         if (live) {
-            ChannelCard(e.name, e.logo, null, onFocused = { header.channel(e, "Canal · $group") }) {
+            ChannelCard(e.name, e.logo, null, onFocused = { header.channel(e, "Canal · $group") }, key = "$group:${e.url}") {
                 openLiveGroup(context, type, group, e, items, i)
             }
         } else {
             PosterCard(
-                e.name, e.logo, progress = Repository.progress(e.url),
+                e.name, e.logo, key = "$group:${e.url}", progress = Repository.progress(e.url),
                 onFocused = { header.show(e.name, "Filme · $group", e.logo) },
                 onClick = { nav.openMovie(e) },
                 onLongClick = { toggleFav(context, e) },
@@ -235,7 +236,7 @@ private fun ShowRow(lib: Library, group: String, count: Int, nav: Nav, header: H
         seeAll = if (count > shows.size) ({ nav.openCategory(ContentType.SERIES, group) }) else null,
         seeAllCount = count,
     ) { _, s ->
-        PosterCard(s.name, s.logo, onFocused = { header.show(s.name, "Série · ${s.episodeCount} episódios", s.logo) }, onClick = { nav.openShow(s) })
+        PosterCard(s.name, s.logo, key = "$group:${s.key}", onFocused = { header.show(s.name, "Série · ${s.episodeCount} episódios", s.logo) }, onClick = { nav.openShow(s) })
     }
 }
 
@@ -364,6 +365,7 @@ fun ChannelList(channels: List<Entry>, modifier: Modifier = Modifier, onFocused:
                 onLongClick = { toggleFav(context, e) },
                 onFocused = onFocused?.let { cb -> { cb(e) } },
                 modifier = Modifier.fillMaxWidth(),
+                focusKey = "l:${e.url}",
                 focusScale = 1.01f,
                 background = Palette.Surface,
                 shape = RoundedCornerShape(4.dp),
@@ -439,7 +441,7 @@ fun MyListScreen(lib: Library, nav: Nav) {
                     SectionTitle("Filmes e episódios", trailing = "${vod.size}")
                     MediaRow(vod, POSTER_W) { i, e ->
                         PosterCard(
-                            e.name, e.logo, progress = Repository.progress(e.url),
+                            e.name, e.logo, key = "my:${e.url}", progress = Repository.progress(e.url),
                             onFocused = { header.show(e.name, "${kindOf(e.type)} · ${e.group}", e.logo) },
                             onClick = { if (e.type == ContentType.MOVIE) nav.openMovie(e) else PlaybackQueue.start(context, vod, i) }, onLongClick = { toggleFav(context, e) },
                         )
@@ -458,9 +460,18 @@ fun SearchScreen(lib: Library, nav: Nav) {
     val context = LocalContext.current
     val header = remember { HeaderState() }
     var query by rememberSaveable { mutableStateOf("") }
-    val results = load(lib.version, query) {
+    var searching by remember { mutableStateOf(false) }
+    // aqui o resultado antigo some na hora (mostra "Carregando resultados…" enquanto busca)
+    val results by produceState<Pair<List<Entry>, List<Show>>?>(null, lib.version, query) {
+        value = null
         val q = query.trim()
-        if (q.isEmpty()) emptyList<Entry>() to emptyList() else Repository.search(q)
+        if (q.isEmpty()) { value = emptyList<Entry>() to emptyList(); searching = false; return@produceState }
+        searching = true
+        // primeiro o que começa com o texto (sai na hora), depois completa com o que contém
+        val quick = Repository.search(q, quick = true)
+        if (quick.first.isNotEmpty() || quick.second.isNotEmpty()) value = quick
+        value = Repository.search(q)
+        searching = false
     }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.padding(start = 48.dp, end = 48.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -475,6 +486,7 @@ fun SearchScreen(lib: Library, nav: Nav) {
                     color = if (focused) Palette.OnFocus else if (query.isBlank()) Palette.TextFaint else Palette.Text,
                 )
             }
+            if (searching) { Spacer(Modifier.width(16.dp)); Spinner(22.dp); Spacer(Modifier.width(10.dp)); Text("Buscando…", fontSize = 14.sp, color = Palette.TextDim) }
         }
         if (query.isBlank()) {
             val recent = remember { Repository.recentSearches() }
@@ -505,7 +517,7 @@ fun SearchScreen(lib: Library, nav: Nav) {
                 SectionTitle("Filmes", trailing = "${movies.size}")
                 MediaRow(movies, POSTER_W) { _, e ->
                     PosterCard(
-                        e.name, e.logo, onFocused = { header.show(e.name, "Filme · ${e.group}", e.logo) },
+                        e.name, e.logo, key = "s:${e.url}", onFocused = { header.show(e.name, "Filme · ${e.group}", e.logo) },
                         onClick = { nav.openMovie(e) }, onLongClick = { toggleFav(context, e) },
                     )
                 }
@@ -513,7 +525,7 @@ fun SearchScreen(lib: Library, nav: Nav) {
             if (shows.isNotEmpty()) item("shows") {
                 SectionTitle("Séries", trailing = "${shows.size}")
                 MediaRow(shows, POSTER_W) { _, s ->
-                    PosterCard(s.name, s.logo, onFocused = { header.show(s.name, "Série · ${s.episodeCount} episódios", s.logo) }, onClick = { nav.openShow(s) })
+                    PosterCard(s.name, s.logo, key = "s:${s.key}", onFocused = { header.show(s.name, "Série · ${s.episodeCount} episódios", s.logo) }, onClick = { nav.openShow(s) })
                 }
             }
         }

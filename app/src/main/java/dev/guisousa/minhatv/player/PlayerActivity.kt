@@ -434,7 +434,7 @@ class PlayerActivity : ComponentActivity() {
             visibility = View.GONE
             background = GradientDrawable().apply { setColor(0xE6141414.toInt()); cornerRadius = dp(24).toFloat() }
             setPadding(dp(16), dp(10), dp(20), dp(10))
-            addView(ProgressBar(this@PlayerActivity).apply { isIndeterminate = true }, LinearLayout.LayoutParams(dp(22), dp(22)))
+            addView(SpinnerView(this@PlayerActivity), LinearLayout.LayoutParams(dp(22), dp(22)))
         }
         loadingText = text(15f, Color.WHITE).apply {
             maxLines = 1
@@ -914,7 +914,8 @@ class PlayerActivity : ComponentActivity() {
 
     // ---------------- Controles na tela ----------------
 
-    private val hideControlsTask = Runnable { controls.hide() }
+    // igual ao Saimo: some 5 s depois da última tecla, e nunca com o vídeo pausado
+    private val hideControlsTask = Runnable { if (isLive || player?.playWhenReady != false) controls.hide() }
     /** O Voltar que fechou um painel não pode, ao soltar a tecla, fechar o player também. */
     private var backConsumed = false
     private var lastBackAt = 0L
@@ -992,7 +993,7 @@ class PlayerActivity : ComponentActivity() {
         return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%02d:%02d".format(m, sec)
     }
 
-    private fun showControls(ms: Long = 8000) {
+    private fun showControls(ms: Long = 5000) {
         // com um painel aberto (ex.: "Continuar de..."), a barra não pode roubar o foco dele
         if (controls.panelVisible) return
         infoPanel.visibility = View.GONE
@@ -1008,6 +1009,7 @@ class PlayerActivity : ComponentActivity() {
         val exo = player ?: return
         exo.playWhenReady = !exo.playWhenReady
         updateButtons()
+        if (exo.playWhenReady && controls.visible) { handler.removeCallbacks(hideControlsTask); handler.postDelayed(hideControlsTask, 5000) }
     }
 
     private fun seekBy(delta: Long) {
@@ -1080,7 +1082,7 @@ class PlayerActivity : ComponentActivity() {
                 }
                 return true
             }
-            if (down) { handler.removeCallbacks(hideControlsTask); handler.postDelayed(hideControlsTask, 8000) }
+            if (down) { handler.removeCallbacks(hideControlsTask); handler.postDelayed(hideControlsTask, 5000) }
             if (code == KeyEvent.KEYCODE_DPAD_UP || code == KeyEvent.KEYCODE_DPAD_DOWN) return true
             return super.dispatchKeyEvent(event)
         }
@@ -1093,7 +1095,16 @@ class PlayerActivity : ComponentActivity() {
         when (code) {
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> { showControls(); return true }
             // ▲ ▼ nunca trocam de canal: só mostram o que está passando (ou a barra, no filme)
-            KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> { if (isLive) showInfo(8000) else showControls(); return true }
+            KeyEvent.KEYCODE_DPAD_UP -> { if (isLive) showInfo(8000) else showControls(); return true }
+            // ▼ na série abre a lista de episódios (como no Saimo); nunca troca de canal
+            KeyEvent.KEYCODE_DPAD_DOWN -> {
+                when {
+                    isLive -> showInfo(8000)
+                    current.type == ContentType.SERIES && items.size > 1 -> episodesPanel()
+                    else -> showControls()
+                }
+                return true
+            }
             // setas nunca avançam nem voltam sozinhas: só abrem a barra (no filme) ou o "agora passando" (ao vivo)
             KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> { if (isLive) showInfo() else showControls(); return true }
             KeyEvent.KEYCODE_BACK -> {
@@ -1281,4 +1292,25 @@ class PlayerActivity : ComponentActivity() {
 
     @Suppress("unused")
     private fun unusedToast() = Toast.LENGTH_SHORT
+}
+
+
+/** Bolinha de carregando que gira mesmo com as animações do sistema desligadas (o ProgressBar padrão fica parado). */
+class SpinnerView(context: Context) : View(context) {
+    private val track = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { style = android.graphics.Paint.Style.STROKE; color = 0x33FFFFFF }
+    private val arc = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { style = android.graphics.Paint.Style.STROKE; color = Color.WHITE; strokeCap = android.graphics.Paint.Cap.ROUND }
+    private val rect = android.graphics.RectF()
+    override fun onDraw(canvas: android.graphics.Canvas) {
+        val w = width * 0.12f
+        track.strokeWidth = w; arc.strokeWidth = w
+        rect.set(w / 2, w / 2, width - w / 2, height - w / 2)
+        canvas.drawArc(rect, 0f, 360f, false, track)
+        val angle = (android.os.SystemClock.uptimeMillis() % 900L) / 900f * 360f
+        canvas.drawArc(rect, angle, 100f, false, arc)
+        if (isShown) postInvalidateOnAnimation()
+    }
+    override fun onVisibilityChanged(changedView: View, visibility: Int) {
+        super.onVisibilityChanged(changedView, visibility)
+        if (visibility == VISIBLE) invalidate()
+    }
 }

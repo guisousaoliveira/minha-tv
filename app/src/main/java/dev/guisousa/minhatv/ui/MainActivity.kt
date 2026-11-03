@@ -62,8 +62,13 @@ class MainActivity : ComponentActivity() {
         setContent { MinhaTvTheme { AppRoot(::maybeAutoplay) } }
     }
 
+    private var resumedOnce = false
+
     override fun onResume() {
         super.onResume()
+        // voltou do player: devolve o foco ao item que estava selecionado
+        if (resumedOnce) FocusMemory.restore.intValue++
+        resumedOnce = true
         Repository.refreshIfStale()
         checkUpdate(force = false)
     }

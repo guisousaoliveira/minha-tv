@@ -61,7 +61,7 @@ private fun initialOf(s: String): Char {
 }
 
 /** Um item da grade: filme ou série. */
-private class GridItem(val title: String, val image: String?, val subtitle: String, val year: Int, val order: Int, val open: () -> Unit, val fav: (() -> Unit)?)
+private class GridItem(val id: String, val title: String, val image: String?, val subtitle: String, val year: Int, val order: Int, val open: () -> Unit, val fav: (() -> Unit)?)
 
 /** Fileira "Lançamentos" no topo das páginas de Filmes e Séries. */
 @Composable
@@ -73,7 +73,7 @@ internal fun ReleasesRow(lib: Library, type: ContentType, nav: Nav, header: Head
         SectionTitle("Lançamentos", trailing = "${items.size}")
         MediaRow(items, POSTER_SAIMO_W) { _, e ->
             PosterCard(
-                e.name, e.logo, progress = Repository.progress(e.url),
+                e.name, e.logo, key = "rel:${e.url}", progress = Repository.progress(e.url),
                 onFocused = { header.show(e.name, "Filme · ${e.group}", e.logo) },
                 onClick = { nav.openMovie(e) }, onLongClick = { toggleFav(context, e) },
             )
@@ -83,7 +83,7 @@ internal fun ReleasesRow(lib: Library, type: ContentType, nav: Nav, header: Head
         if (shows.isEmpty()) return
         SectionTitle("Lançamentos", trailing = "${shows.size}")
         MediaRow(shows, POSTER_SAIMO_W) { _, s ->
-            PosterCard(s.name, s.logo, onFocused = { header.show(s.name, "Série · ${s.group}", s.logo) }, onClick = { nav.openShow(s) })
+            PosterCard(s.name, s.logo, key = "rel:${s.key}", onFocused = { header.show(s.name, "Série · ${s.group}", s.logo) }, onClick = { nav.openShow(s) })
         }
     }
 }
@@ -117,9 +117,9 @@ fun VodGridScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
     val kind = if (type == ContentType.SERIES) "Série" else "Filme"
     val raw = load(lib.version, type, genre) {
         if (type == ContentType.SERIES) Repository.shows(genre).take(20_000).mapIndexed { i, s ->
-            GridItem(s.name, s.logo, "Série · ${s.group}", yearRe.find(s.name)?.value?.toInt() ?: 0, i, { nav.openShow(s) }, null)
+            GridItem(s.key, s.name, s.logo, "Série · ${s.group}", yearRe.find(s.name)?.value?.toInt() ?: 0, i, { nav.openShow(s) }, null)
         } else Repository.entries(ContentType.MOVIE, genre, 20_000).mapIndexed { i, e ->
-            GridItem(e.name, e.logo, "Filme · ${e.group}", yearRe.find(e.name)?.value?.toInt() ?: 0, i, { nav.openMovie(e) }, { toggleFav(context, e) })
+            GridItem(e.url, e.name, e.logo, "Filme · ${e.group}", yearRe.find(e.name)?.value?.toInt() ?: 0, i, { nav.openMovie(e) }, { toggleFav(context, e) })
         }
     }
     val items = remember(raw, newest) {
@@ -186,7 +186,7 @@ fun VodGridScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
             ) {
                 itemsIndexed(items, key = { i, it -> "$i:${it.title}" }) { i, it ->
                     PosterCard(
-                        it.title, it.image, onFocused = { header.show(it.title, it.subtitle, it.image) }, onClick = it.open, onLongClick = it.fav,
+                        it.title, it.image, key = "grid:${it.id}", onFocused = { header.show(it.title, it.subtitle, it.image) }, onClick = it.open, onLongClick = it.fav,
                         requester = if (i == 0) firstPoster else null,
                     )
                 }
