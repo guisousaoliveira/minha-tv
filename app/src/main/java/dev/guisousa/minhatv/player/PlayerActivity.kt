@@ -97,6 +97,7 @@ class PlayerActivity : ComponentActivity() {
     private lateinit var loadingBox: LinearLayout
     private lateinit var loadingText: TextView
     private lateinit var toast: TextView
+    private lateinit var vodTitle: TextView
 
     private val handler = Handler(Looper.getMainLooper())
     private val hideInfo = Runnable { infoPanel.visibility = View.GONE }
@@ -195,16 +196,40 @@ class PlayerActivity : ComponentActivity() {
         listOf(infoNumber, infoTitle, infoNow, infoNext).forEach { infoPanel.addView(it) }
         root.addView(infoPanel, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
 
-        // "Carregando…" bem visível no meio
+        // "Carregando…" numa pílula no canto de cima: não fica por cima dos controles do vídeo
         loadingBox = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
             visibility = View.GONE
-            addView(ProgressBar(this@PlayerActivity).apply { isIndeterminate = true }, LinearLayout.LayoutParams(dp(56), dp(56)))
+            background = GradientDrawable().apply { setColor(0xE6141414.toInt()); cornerRadius = dp(24).toFloat() }
+            setPadding(dp(16), dp(10), dp(20), dp(10))
+            addView(ProgressBar(this@PlayerActivity).apply { isIndeterminate = true }, LinearLayout.LayoutParams(dp(22), dp(22)))
         }
-        loadingText = text(16f, Color.WHITE).apply { gravity = Gravity.CENTER; setPadding(0, dp(12), 0, 0); text = "Carregando…" }
-        loadingBox.addView(loadingText)
-        root.addView(loadingBox, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+        loadingText = text(15f, Color.WHITE).apply {
+            maxLines = 1
+            setSingleLine(true)
+            setPadding(dp(12), 0, 0, 0)
+            text = "Carregando…"
+        }
+        loadingBox.addView(loadingText, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        root.addView(loadingBox, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.END).apply {
+            setMargins(0, dp(32), dp(40), 0)
+        })
+
+        // título do filme/episódio no canto de cima, só junto com os controles
+        vodTitle = text(22f, Color.WHITE, bold = true).apply {
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            setShadowLayer(8f, 0f, 0f, Color.BLACK)
+            visibility = View.GONE
+        }
+        root.addView(vodTitle, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.START).apply {
+            setMargins(dp(48), dp(36), dp(360), 0)
+        })
+        playerView.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { v ->
+            vodTitle.visibility = if (v == View.VISIBLE && !isLive) View.VISIBLE else View.GONE
+            if (v == View.VISIBLE) infoPanel.visibility = View.GONE
+        })
 
         // avisos curtos (canto superior)
         toast = text(15f, Color.WHITE).apply {
@@ -212,8 +237,9 @@ class PlayerActivity : ComponentActivity() {
             setPadding(dp(18), dp(10), dp(18), dp(10))
             visibility = View.GONE
         }
+        toast.maxLines = 3
         root.addView(toast, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.END).apply {
-            setMargins(0, dp(32), dp(40), 0)
+            setMargins(dp(320), dp(88), dp(40), 0)
         })
         setContentView(root)
     }
@@ -260,6 +286,7 @@ class PlayerActivity : ComponentActivity() {
         handler.removeCallbacks(stallCheck)
         loadingBox.visibility = View.GONE
         loadingText.text = "Carregando…"
+        if (playerView.isControllerFullyVisible && !isLive) vodTitle.visibility = View.VISIBLE
     }
 
     // ---------------- Reprodução ----------------
@@ -277,7 +304,8 @@ class PlayerActivity : ComponentActivity() {
         sources = listOf(e)
         sourceIndex = 0
         playSource(e, resume = true)
-        showInfo()
+        vodTitle.text = e.name
+        if (isLive) showInfo() else infoPanel.visibility = View.GONE
         // procura outras fontes do mesmo canal/filme em segundo plano
         sourcesJob?.cancel()
         val wanted = index
@@ -341,7 +369,7 @@ class PlayerActivity : ComponentActivity() {
         sourceIndex++
         retries = 0
         val pos = player?.currentPosition ?: 0
-        loadingText.text = "Tentando outra fonte (${sourceIndex + 1} de ${sources.size})…"
+        loadingText.text = "Tentando outra fonte · ${sourceIndex + 1} de ${sources.size}"
         loadingBox.visibility = View.VISIBLE
         playSource(sources[sourceIndex], resume = false)
         if (!isLive && pos > 0) player?.seekTo(pos)

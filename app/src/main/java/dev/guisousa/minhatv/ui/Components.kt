@@ -266,10 +266,11 @@ fun PosterCard(
         }
         Text(
             title,
-            modifier = Modifier.padding(top = 8.dp, start = 2.dp, end = 2.dp),
-            maxLines = 1,
+            modifier = Modifier.padding(top = 8.dp, start = 2.dp, end = 2.dp).height(36.dp),
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis,
             fontSize = 13.sp,
+            lineHeight = 17.sp,
             color = Palette.TextDim,
         )
     }
@@ -350,7 +351,7 @@ fun GroupColumn(groups: List<GroupInfo>, total: Int, selected: String?, onSelect
                     Text(
                         g ?: "Todos",
                         modifier = Modifier.weight(1f),
-                        maxLines = 1,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                         fontSize = 15.sp,
                         color = if (focused) Palette.OnFocus else if (isSel) Palette.Text else Palette.TextDim,
