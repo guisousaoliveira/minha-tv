@@ -119,30 +119,53 @@ class PlayerActivity : ComponentActivity() {
     private val freezeWatch = object : Runnable {
         override fun run() {
             val exo = player
-            if (exo != null && exo.playWhenReady && exo.playbackState == Player.STATE_READY) {
-                val pos = exo.currentPosition
-                val frames = exo.videoDecoderCounters?.let { it.ensureUpdated(); it.renderedOutputBufferCount } ?: -1
-                val hasVideo = exo.videoFormat != null
-                val moved = pos != lastPos || (hasVideo && frames != lastFrames)
-                val videoStuck = hasVideo && frames == lastFrames
-                if (!moved || videoStuck) frozenFor += 2000 else frozenFor = 0
-                lastPos = pos; lastFrames = frames
+            val state = exo?.playbackState
+            if (exo != null && exo.playWhenReady && !reconnecting) {
+                if (state == Player.STATE_READY) {
+                    // só a posição decide: o contador de quadros não é confiável em todas as TVs
+                    val pos = exo.currentPosition
+                    if (lastPos >= 0 && pos == lastPos) frozenFor += 2000 else if (frozenFor > 0 || lastPos >= 0) frozenFor = 0
+                    lastPos = pos
+                } else if (isLive && (state == Player.STATE_ENDED || state == Player.STATE_IDLE) && exo.playerError == null) {
+                    // ao vivo parado no "fim" ou sem nada carregando: também é travamento
+                    frozenFor += 2000
+                } else {
+                    frozenFor = 0
+                }
                 if (frozenFor >= 8000) {
                     frozenFor = 0
-                    android.util.Log.i("MinhaTV", "player: imagem congelada, trocando de fonte")
-                    playing?.let { Repository.markFailed(it.url) }
-                    if (!nextSource(frozen = true)) {
-                        loadingText.text = "O vídeo travou, reconectando…"
-                        loadingBox.visibility = View.VISIBLE
-                        if (isLive) exo.seekToDefaultPosition()
-                        exo.prepare()
-                    }
+                    android.util.Log.w("MinhaTV", "player: imagem parada (estado $state), reconectando")
+                    reconnect("O vídeo travou, reconectando…")
                 }
             } else {
                 frozenFor = 0
             }
             handler.postDelayed(this, 2000)
         }
+    }
+
+    /** Evita que o vigia e o fim da transmissão reconectem duas vezes ao mesmo tempo. */
+    private var reconnecting = false
+    private val liveEnds = ArrayDeque<Long>()
+
+    /**
+     * Abre a fonte de novo do zero (conexão nova). Se a mesma fonte cair 3 vezes em 1 minuto,
+     * passa para a próxima; se não houver outra, volta para a primeira.
+     */
+    private fun reconnect(message: String) {
+        val now = System.currentTimeMillis()
+        liveEnds.addLast(now)
+        while (liveEnds.isNotEmpty() && now - liveEnds.first() > 60_000) liveEnds.removeFirst()
+        if (liveEnds.size >= 3) {
+            liveEnds.clear()
+            if (nextSource(frozen = true)) return
+            if (sources.size > 1) { sourceIndex = -1; if (nextSource(frozen = true)) return }
+        }
+        reconnecting = true
+        loadingText.text = message
+        loadingBox.visibility = View.VISIBLE
+        val src = playing ?: current
+        handler.postDelayed({ reconnecting = false; playSource(src, resume = !isLive) }, 500)
     }
 
     private var items: List<Entry> = emptyList()
@@ -182,13 +205,14 @@ class PlayerActivity : ComponentActivity() {
         exo.videoChangeFrameRateStrategy = C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_ONLY_IF_SEAMLESS
         exo.addAnalyticsListener(object : androidx.media3.exoplayer.analytics.AnalyticsListener {
             override fun onDroppedVideoFrames(t: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime, dropped: Int, elapsedMs: Long) {
-                android.util.Log.i("MinhaTV", "player: $dropped quadros perdidos em ${elapsedMs}ms")
+                android.util.Log.w("MinhaTV", "player: $dropped quadros perdidos em ${elapsedMs}ms")
             }
             override fun onVideoInputFormatChanged(t: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime, f: androidx.media3.common.Format, d: androidx.media3.exoplayer.DecoderReuseEvaluation?) {
-                android.util.Log.i("MinhaTV", "player: vídeo ${f.width}x${f.height} ${f.frameRate} fps ${f.sampleMimeType}")
+                matchFrameRate(f.frameRate)
+                android.util.Log.w("MinhaTV", "player: vídeo ${f.width}x${f.height} ${f.frameRate} fps ${f.sampleMimeType}")
             }
             override fun onPlaybackStateChanged(t: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime, state: Int) {
-                if (state == Player.STATE_BUFFERING) android.util.Log.i("MinhaTV", "player: carregando (buffer)")
+                if (state == Player.STATE_BUFFERING) android.util.Log.w("MinhaTV", "player: carregando (buffer)")
             }
         })
         player = exo
@@ -209,8 +233,14 @@ class PlayerActivity : ComponentActivity() {
                         playing?.url?.let { if (it != markedWorking) { markedWorking = it; Repository.markWorking(it) } }
                     }
                     Player.STATE_ENDED -> {
-                        hideLoading()
-                        if (!isLive && index < items.size - 1) play(index + 1)
+                        if (isLive) {
+                            // o servidor encerrou a transmissão: ao vivo não tem fim, então reconecta na hora
+                            android.util.Log.w("MinhaTV", "player: transmissão ao vivo encerrada pelo servidor, reconectando")
+                            reconnect("Reconectando…")
+                        } else {
+                            hideLoading()
+                            if (index < items.size - 1) play(index + 1)
+                        }
                     }
                     Player.STATE_IDLE -> hideLoading()
                 }
@@ -399,7 +429,7 @@ class PlayerActivity : ComponentActivity() {
             error.errorCode == PlaybackException.ERROR_CODE_IO_INVALID_HTTP_CONTENT_TYPE ||
             error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS && (http == null || http in 400..499) ||
             error.errorCode in PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED..PlaybackException.ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED
-        android.util.Log.i("MinhaTV", "player: erro ${error.errorCodeName} http=$http morto=$dead")
+        android.util.Log.w("MinhaTV", "player: erro ${error.errorCodeName} http=$http morto=$dead")
         if (dead) {
             playing?.let { Repository.markFailed(it.url) }
             if (nextSource()) return
@@ -438,9 +468,7 @@ class PlayerActivity : ComponentActivity() {
         val exo = player ?: return
         if (exo.playbackState != Player.STATE_BUFFERING) return
         if (!nextSource()) {
-            loadingText.text = "Reconectando…"
-            if (isLive) { exo.seekToDefaultPosition() }
-            exo.prepare()
+            reconnect("Reconectando…")
             handler.postDelayed(stallCheck, 20_000)
         }
     }
@@ -719,6 +747,27 @@ class PlayerActivity : ComponentActivity() {
             KeyEvent.KEYCODE_BACK -> if (infoPanel.visibility == View.VISIBLE) { infoPanel.visibility = View.GONE; backConsumed = true; return true }
         }
         return super.dispatchKeyEvent(event)
+    }
+
+    /**
+     * Filme em 24 quadros numa tela em 60 Hz dá aquela "tremidinha". Se a TV tiver um modo
+     * de tela compatível (24, 48, 25, 50...), troca para ele enquanto o vídeo toca, como Netflix e Kodi.
+     */
+    private fun matchFrameRate(fps: Float) {
+        if (fps <= 0f || android.os.Build.VERSION.SDK_INT < 23) return
+        val display = window.decorView.display ?: return
+        val current = display.mode
+        fun fits(rate: Float): Boolean {
+            val ratio = rate / fps
+            val n = Math.round(ratio)
+            return n >= 1 && kotlin.math.abs(ratio - n) < 0.01f
+        }
+        val modes = display.supportedModes.filter { it.physicalWidth == current.physicalWidth && it.physicalHeight == current.physicalHeight }
+        android.util.Log.w("MinhaTV", "player: vídeo a $fps fps, modos da tela: " + modes.joinToString { "%.2f".format(it.refreshRate) })
+        if (fits(current.refreshRate) && Math.round(current.refreshRate / fps) <= 2) return
+        val best = modes.filter { fits(it.refreshRate) }.minByOrNull { Math.round(it.refreshRate / fps) } ?: return
+        window.attributes = window.attributes.also { it.preferredDisplayModeId = best.modeId }
+        android.util.Log.w("MinhaTV", "player: tela trocada para %.2f Hz".format(best.refreshRate))
     }
 
     private fun saveResume() {
