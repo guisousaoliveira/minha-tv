@@ -44,6 +44,7 @@ import dev.guisousa.minhatv.data.ContentType
 import dev.guisousa.minhatv.data.PhoneSetupServer
 import dev.guisousa.minhatv.data.Repository
 import dev.guisousa.minhatv.data.Show
+import dev.guisousa.minhatv.data.Updater
 import dev.guisousa.minhatv.player.PlaybackQueue
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -62,6 +63,20 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         Repository.refreshIfStale()
+        checkUpdate(force = false)
+    }
+
+    /** Confere atualização do app (no máximo a cada 3 horas, ou na hora se [force]). */
+    fun checkUpdate(force: Boolean) {
+        val prefs = getSharedPreferences("minhatv", MODE_PRIVATE)
+        val last = prefs.getLong("last_update_check", 0)
+        if (!force && System.currentTimeMillis() - last < 3 * 3_600_000L) return
+        prefs.edit().putLong("last_update_check", System.currentTimeMillis()).apply()
+        lifecycleScope.launch {
+            val r = Updater.check()
+            if (r != null && !isFinishing) Updater.offer(this@MainActivity, r) { block -> lifecycleScope.launch { block() } }
+            else if (force) Toast.makeText(this@MainActivity, "Você já está na versão mais nova (${Updater.currentName}).", Toast.LENGTH_SHORT).show()
+        }
     }
 
     /** Se ligado nos ajustes, abre direto no último canal assistido. */

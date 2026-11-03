@@ -568,6 +568,11 @@ fun SettingsScreen() {
             }
         }
 
+        item {
+            ListRow(title = "Versão ${dev.guisousa.minhatv.data.Updater.currentName}", subtitle = "O app confere sozinho se há versão nova ao abrir", error = false) {
+                TvButton("Procurar atualização", onClick = { (context as? MainActivity)?.checkUpdate(force = true) })
+            }
+        }
         if (sources.isNotEmpty()) {
             item { SettingsHeader("Páginas e repositórios") }
             items(sources) { s ->
