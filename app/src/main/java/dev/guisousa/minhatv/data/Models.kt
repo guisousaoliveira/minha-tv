@@ -144,6 +144,19 @@ object Normalize {
         return spaces.replace(sb.toString(), " ").trim().ifBlank { raw.trim() }
     }
 
+    private val yearRx = Regex("""(?<!\d)(19[2-9]\d|20[0-4]\d)(?!\d)""")
+
+    /**
+     * Chave para juntar fontes do mesmo título. Filme sem ano no nome só junta com outro do mesmo
+     * pôster: "Homem-Aranha" de 2002 e o de agora têm o mesmo nome e não podem virar um item só.
+     * (Com ano, o ano já faz parte da chave: "homemaranha2002".)
+     */
+    fun mergeKey(e: Entry): String {
+        val norm = e.norm ?: name(e.name).ifEmpty { e.url }
+        if (e.type != ContentType.MOVIE || yearRx.containsMatchIn(e.name)) return norm
+        return norm + "|" + (e.logo?.trim()?.lowercase()?.ifEmpty { null } ?: e.url)
+    }
+
     /** Chave de agrupamento a partir do nome já limpo. */
     fun key(title: String): String = name(title).ifEmpty { title.lowercase() }
 

@@ -1,6 +1,7 @@
 package dev.guisousa.minhatv.data
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -49,5 +50,28 @@ class DisplayNameTest {
 
     @Test fun sameChannelGetsSameKey() {
         assertEquals(Normalize.key(d("BR: GLOBO SP FHD").title), Normalize.key(d("Globo SP HD").title))
+    }
+}
+
+class MergeKeyTest {
+    private fun movie(name: String, logo: String?, url: String) = Entry(name = name, url = url, logo = logo, type = ContentType.MOVIE)
+
+    @Test fun differentYearsNeverMerge() {
+        assertNotEquals(Normalize.mergeKey(movie("Homem-Aranha (2002)", null, "a")), Normalize.mergeKey(movie("Homem-Aranha (2026)", null, "b")))
+        assertNotEquals(Normalize.mergeKey(movie("Homem-Aranha", null, "a")), Normalize.mergeKey(movie("Homem-Aranha (2026)", null, "b")))
+    }
+
+    @Test fun noYearMergesOnlyWithSamePoster() {
+        assertNotEquals(Normalize.mergeKey(movie("Homem-Aranha", "http://img/1.jpg", "a")), Normalize.mergeKey(movie("Homem-Aranha", "http://img/2.jpg", "b")))
+        assertNotEquals(Normalize.mergeKey(movie("Homem-Aranha", null, "a")), Normalize.mergeKey(movie("Homem-Aranha", null, "b")))
+        assertEquals(Normalize.mergeKey(movie("Homem-Aranha", "http://img/1.jpg", "a")), Normalize.mergeKey(movie("Homem-Aranha HD", "http://img/1.jpg", "b")))
+    }
+
+    @Test fun sameYearMerges() {
+        assertEquals(Normalize.mergeKey(movie("Duna (2021)", null, "a")), Normalize.mergeKey(movie("DUNA 2021 FHD", null, "b")))
+    }
+
+    @Test fun channelsStillMergeByName() {
+        assertEquals(Normalize.mergeKey(Entry(name = "Globo SP", url = "a")), Normalize.mergeKey(Entry(name = "GLOBO SP FHD", url = "b")))
     }
 }
