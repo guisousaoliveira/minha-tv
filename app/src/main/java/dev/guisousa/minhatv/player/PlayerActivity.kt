@@ -600,7 +600,7 @@ class PlayerActivity : ComponentActivity() {
 
     private fun sourceDialog() {
         if (sources.size <= 1) { notice("Não achei outra fonte para este item."); return }
-        val labels = sources.mapIndexed { i, s -> PlayerControls.Choice("Fonte ${i + 1}", s.name, selected = i == sourceIndex) }
+        val labels = sources.mapIndexed { i, s -> PlayerControls.Choice("Fonte ${i + 1}", s.quality ?: s.name, selected = i == sourceIndex) }
         controls.showPanel("Trocar fonte", labels) { i ->
             sourceIndex = i
             retries = 0

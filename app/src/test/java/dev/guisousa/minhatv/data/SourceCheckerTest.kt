@@ -1,6 +1,7 @@
 package dev.guisousa.minhatv.data
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -25,5 +26,52 @@ class SourceCheckerTest {
         assertEquals(false, Health(ok = false, fails = 1, checked = 0, ms = null).dead)
         assertEquals(true, Health(ok = false, fails = 2, checked = 0, ms = null).dead)
         assertEquals(false, Health(ok = true, fails = 0, checked = 0, ms = 120).dead)
+    }
+}
+
+class DisplayNameTest {
+    private fun d(s: String) = Normalize.display(s)
+
+    @Test fun channelNamesLoseCountryPrefixAndQuality() {
+        assertEquals(Normalize.Display("Globo SP", "FHD"), d("BR: GLOBO SP FHD"))
+        assertEquals(Normalize.Display("Globo RJ", "FHD"), d("GLOBO RJ (FHD) H.265 [ALT]"))
+        assertEquals(Normalize.Display("SBT", "HD"), d("|BR| SBT HD"))
+        assertEquals(Normalize.Display("Premiere 2", "FHD"), d("Premiere 2 | FHD"))
+        assertEquals(Normalize.Display("Megapix", "FHD"), d("Megapix FullHD [Opção 2]"))
+        assertEquals(Normalize.Display("Cartoon Network", null), d("Cartoon Network (Alternativo)"))
+    }
+
+    @Test fun moviesKeepYearAndGetAudioTag() {
+        assertEquals(Normalize.Display("Duna (2021)", "4K · Dublado"), d("Duna (2021) [Dublado] 4K"))
+        assertEquals(Normalize.Display("Duna 2021", "FHD · Legendado"), d("Duna 2021 1080p Leg"))
+        assertEquals(Normalize.Display("Novo Mundo", null), d("Novo Mundo"))
+        assertEquals(Normalize.Display("The New Mutants (2020)", null), d("The New Mutants (2020)"))
+    }
+
+    @Test fun sameChannelGetsSameKey() {
+        assertEquals(Normalize.key(d("BR: GLOBO SP FHD").title), Normalize.key(d("Globo SP HD").title))
+    }
+}
+
+class MergeKeyTest {
+    private fun movie(name: String, logo: String?, url: String) = Entry(name = name, url = url, logo = logo, type = ContentType.MOVIE)
+
+    @Test fun differentYearsNeverMerge() {
+        assertNotEquals(Normalize.mergeKey(movie("Homem-Aranha (2002)", null, "a")), Normalize.mergeKey(movie("Homem-Aranha (2026)", null, "b")))
+        assertNotEquals(Normalize.mergeKey(movie("Homem-Aranha", null, "a")), Normalize.mergeKey(movie("Homem-Aranha (2026)", null, "b")))
+    }
+
+    @Test fun noYearMergesOnlyWithSamePoster() {
+        assertNotEquals(Normalize.mergeKey(movie("Homem-Aranha", "http://img/1.jpg", "a")), Normalize.mergeKey(movie("Homem-Aranha", "http://img/2.jpg", "b")))
+        assertNotEquals(Normalize.mergeKey(movie("Homem-Aranha", null, "a")), Normalize.mergeKey(movie("Homem-Aranha", null, "b")))
+        assertEquals(Normalize.mergeKey(movie("Homem-Aranha", "http://img/1.jpg", "a")), Normalize.mergeKey(movie("Homem-Aranha HD", "http://img/1.jpg", "b")))
+    }
+
+    @Test fun sameYearMerges() {
+        assertEquals(Normalize.mergeKey(movie("Duna (2021)", null, "a")), Normalize.mergeKey(movie("DUNA 2021 FHD", null, "b")))
+    }
+
+    @Test fun channelsStillMergeByName() {
+        assertEquals(Normalize.mergeKey(Entry(name = "Globo SP", url = "a")), Normalize.mergeKey(Entry(name = "GLOBO SP FHD", url = "b")))
     }
 }

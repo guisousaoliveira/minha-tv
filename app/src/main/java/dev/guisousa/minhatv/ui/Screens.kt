@@ -332,6 +332,7 @@ private fun ChannelPreview(e: Entry?) {
         if (e == null) return@Column
         Logo(e.logo, Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(6.dp)), fallback = e.name)
         Text(e.name, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Palette.Text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        e.quality?.let { Text(it, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Palette.TextDim) }
         val cur = epg.current(e, now)
         val next = epg.next(e, now)
         if (cur != null) Text("Agora · ${cur.title}", fontSize = 14.sp, color = Palette.TextDim, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -373,6 +374,10 @@ fun ChannelList(channels: List<Entry>, modifier: Modifier = Modifier, onFocused:
                                 e.name, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = textOn(focused),
                                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false),
                             )
+                            e.quality?.let { q ->
+                                Spacer(Modifier.width(8.dp))
+                                Text(q, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = if (focused) Palette.OnFocus else Palette.TextFaint)
+                            }
                             if (e.url in favorites) {
                                 Spacer(Modifier.width(8.dp))
                                 Text("Minha lista", fontSize = 11.sp, color = if (focused) Palette.OnFocus else Palette.TextFaint)

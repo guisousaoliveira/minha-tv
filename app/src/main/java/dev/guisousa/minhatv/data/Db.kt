@@ -34,6 +34,10 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
     }
 
     override fun onOpen(db: SQLiteDatabase) {
+        // nome limpo e etiqueta (FHD, Dublado...) guardados na importação; bancos antigos ganham as colunas aqui
+        val cols = db.rawQuery("PRAGMA table_info(entries)", null).use { c -> c.map { it.getString(1) } }
+        if ("title" !in cols) db.execSQL("ALTER TABLE entries ADD COLUMN title TEXT")
+        if ("tag" !in cols) db.execSQL("ALTER TABLE entries ADD COLUMN tag TEXT")
         // tabela à parte (não some quando as listas são baixadas de novo) e sem mudar a versão do banco
         db.execSQL(
             """CREATE TABLE IF NOT EXISTS health(
@@ -48,7 +52,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 playlist TEXT NOT NULL, name TEXT NOT NULL, url TEXT NOT NULL, grp TEXT NOT NULL,
                 logo TEXT, tvg_id TEXT, type INTEGER NOT NULL, ua TEXT, ref TEXT,
-                show_key TEXT, series TEXT, season INTEGER, episode INTEGER, norm TEXT)"""
+                show_key TEXT, series TEXT, season INTEGER, episode INTEGER, norm TEXT, title TEXT, tag TEXT)"""
         )
         db.execSQL("CREATE INDEX idx_norm ON entries(norm, type)")
         db.execSQL("CREATE INDEX idx_type_grp ON entries(type, grp)")
@@ -73,7 +77,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
         try {
             db.delete("entries", "playlist = ?", arrayOf(playlistId))
             val st = db.compileStatement(
-                "INSERT INTO entries(playlist,name,url,grp,logo,tvg_id,type,ua,ref,show_key,series,season,episode,norm) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                "INSERT INTO entries(playlist,name,url,grp,logo,tvg_id,type,ua,ref,show_key,series,season,episode,norm,title,tag) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
             )
             fill { e ->
                 st.clearBindings()
@@ -94,7 +98,10 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
                 }
                 e.season?.let { st.bindLong(12, it.toLong()) }
                 e.episode?.let { st.bindLong(13, it.toLong()) }
-                st.bindString(14, Normalize.name(cleanName).ifEmpty { cleanName.lowercase() })
+                val d = Normalize.display(e.name)
+                st.bindString(14, Normalize.key(d.title))
+                st.bindString(15, d.title)
+                d.tag?.let { st.bindString(16, it) }
                 st.executeInsert()
                 when (e.type) {
                     ContentType.LIVE -> counts.live++
@@ -139,7 +146,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
         return readableDatabase.rawQuery(
             "SELECT show_key, MIN(series), MIN(grp), MAX(logo), COUNT(*) FROM entries WHERE $where GROUP BY show_key ORDER BY MIN(id) LIMIT $limit",
             args,
-        ).use { c -> c.map { Show(it.getString(0), it.getString(1), it.getString(2), it.getStringOrNull(3), it.getInt(4)) } }
+        ).use { c -> c.map { Show(it.getString(0), Normalize.displayCached(it.getString(1)).title, it.getString(2), it.getStringOrNull(3), it.getInt(4)) } }
     }
 
     fun episodes(showKey: String): List<Entry> =
@@ -165,7 +172,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
 
         fun shows(where: String, args: Array<String>) = readableDatabase.rawQuery(
             "SELECT show_key, MIN(series), MIN(grp), MAX(logo), COUNT(*) FROM entries WHERE type = 2 AND $where GROUP BY show_key LIMIT 100", args,
-        ).use { c -> c.map { Show(it.getString(0), it.getString(1), it.getString(2), it.getStringOrNull(3), it.getInt(4)) } }
+        ).use { c -> c.map { Show(it.getString(0), Normalize.displayCached(it.getString(1)).title, it.getString(2), it.getStringOrNull(3), it.getInt(4)) } }
         val showList = LinkedHashMap<String, Show>()
         shows("show_key >= ? AND show_key < ?", arrayOf(n, end)).forEach { showList[it.key] = it }
         if (showList.size < 100) shows("show_key LIKE ?", arrayOf("%$n%")).forEach { showList.putIfAbsent(it.key, it) }
@@ -203,6 +210,34 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
             }
         }
         return ids to names
+    }
+
+    /**
+     * Preenche nome limpo, etiqueta e chave de quem foi importado antes desta versão, aos poucos.
+     * Devolve quantos itens arrumou (0 = acabou).
+     */
+    fun backfillTitles(batch: Int = 2000): Int {
+        val rows = readableDatabase.rawQuery("SELECT id, name FROM entries WHERE title IS NULL LIMIT $batch", null)
+            .use { c -> c.map { it.getLong(0) to it.getString(1) } }
+        if (rows.isEmpty()) return 0
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val st = db.compileStatement("UPDATE entries SET title = ?, tag = ?, norm = ? WHERE id = ?")
+            for ((id, name) in rows) {
+                val d = Normalize.display(name)
+                st.clearBindings()
+                st.bindString(1, d.title)
+                d.tag?.let { st.bindString(2, it) }
+                st.bindString(3, Normalize.key(d.title))
+                st.bindLong(4, id)
+                st.executeUpdateDelete()
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+        return rows.size
     }
 
     // ---------- Saúde das fontes ----------
@@ -273,12 +308,17 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
     }
 
     private fun query(where: String, args: Array<String>): List<Entry> = readableDatabase.rawQuery(
-        "SELECT playlist,name,url,grp,logo,tvg_id,type,ua,ref,series,season,episode FROM entries WHERE $where", args,
+        "SELECT playlist,name,url,grp,logo,tvg_id,type,ua,ref,series,season,episode,title,tag,norm FROM entries WHERE $where", args,
     ).use { c ->
         c.map {
+            val title = it.getStringOrNull(12)
+            // itens importados antes desta versão: limpa agora (e o preenchimento em segundo plano guarda)
+            val d = if (title == null) Normalize.displayCached(it.getString(1)) else null
             Entry(
                 playlistId = it.getString(0),
-                name = it.getString(1),
+                name = title ?: d!!.title,
+                quality = if (title != null) it.getStringOrNull(13) else d!!.tag,
+                norm = it.getStringOrNull(14),
                 url = it.getString(2),
                 group = it.getString(3),
                 logo = it.getStringOrNull(4),
