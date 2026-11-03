@@ -144,7 +144,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
     fun shows(group: String?, limit: Int = 20_000): List<Show> {
         val (where, args) = if (group == null) "type = 2" to emptyArray<String>() else "type = 2 AND grp = ?" to arrayOf(group)
         return readableDatabase.rawQuery(
-            "SELECT show_key, MIN(series), MIN(grp), MAX(logo), COUNT(*) FROM entries WHERE $where GROUP BY show_key ORDER BY MIN(id) LIMIT $limit",
+            "SELECT show_key, MIN(series), MIN(grp), MAX(logo), COUNT(DISTINCT CASE WHEN episode IS NULL THEN 'u' || id ELSE COALESCE(season, 0) || 'x' || episode END) FROM entries WHERE $where GROUP BY show_key ORDER BY MIN(id) LIMIT $limit",
             args,
         ).use { c -> c.map { Show(it.getString(0), Normalize.displayCached(it.getString(1)).title, it.getString(2), it.getStringOrNull(3), it.getInt(4)) } }
     }
@@ -171,7 +171,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
         entries.sortBy { it.type.ordinal }
 
         fun shows(where: String, args: Array<String>) = readableDatabase.rawQuery(
-            "SELECT show_key, MIN(series), MIN(grp), MAX(logo), COUNT(*) FROM entries WHERE type = 2 AND $where GROUP BY show_key LIMIT 100", args,
+            "SELECT show_key, MIN(series), MIN(grp), MAX(logo), COUNT(DISTINCT CASE WHEN episode IS NULL THEN 'u' || id ELSE COALESCE(season, 0) || 'x' || episode END) FROM entries WHERE type = 2 AND $where GROUP BY show_key LIMIT 100", args,
         ).use { c -> c.map { Show(it.getString(0), Normalize.displayCached(it.getString(1)).title, it.getString(2), it.getStringOrNull(3), it.getInt(4)) } }
         val showList = LinkedHashMap<String, Show>()
         shows("show_key >= ? AND show_key < ?", arrayOf(n, end)).forEach { showList[it.key] = it }
@@ -191,6 +191,13 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
     }
 
     /** Outras fontes do mesmo canal/filme (mesmo nome normalizado), em qualquer playlist. */
+    /** Outras cópias do mesmo episódio (mesma série, temporada e número), em qualquer playlist. */
+    fun episodeAlternates(showKey: String, season: Int?, episode: Int, exceptUrl: String): List<Entry> =
+        query(
+            "type = 2 AND show_key = ? AND COALESCE(season, 0) = ? AND episode = ? AND url != ? ORDER BY id LIMIT 30",
+            arrayOf(showKey, (season ?: 0).toString(), episode.toString(), exceptUrl),
+        )
+
     fun alternates(type: ContentType, norm: String, exceptUrl: String): List<Entry> =
         query("type = ? AND norm = ? AND url != ? ORDER BY id LIMIT 30", arrayOf(type.ordinal.toString(), norm, exceptUrl))
 

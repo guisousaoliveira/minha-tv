@@ -584,9 +584,18 @@ object Repository {
 
     /** Outras fontes do mesmo título, as melhores primeiro, no máximo [MAX_SOURCES] contando a atual. */
     suspend fun alternates(e: Entry): List<Entry> = withContext(Dispatchers.IO) {
-        val key = Normalize.mergeKey(e)
-        val list = runCatching { db.alternates(e.type, e.norm ?: Normalize.key(e.name), e.url) }
-            .getOrDefault(emptyList()).distinctBy { it.url }.filter { Normalize.mergeKey(it) == key }
+        val ep = e.episode
+        val series = e.seriesName
+        val list = if (e.type == ContentType.SERIES) {
+            // episódio: as outras cópias do mesmo número na mesma série (sem número, não há como saber)
+            if (ep == null || series == null) emptyList()
+            else runCatching { db.episodeAlternates(Normalize.name(series).ifEmpty { series }, e.season, ep, e.url) }
+                .getOrDefault(emptyList()).distinctBy { it.url }
+        } else {
+            val key = Normalize.mergeKey(e)
+            runCatching { db.alternates(e.type, e.norm ?: Normalize.key(e.name), e.url) }
+                .getOrDefault(emptyList()).distinctBy { it.url }.filter { Normalize.mergeKey(it) == key }
+        }
         val health = runCatching { db.health(list.map { it.url }) }.getOrDefault(emptyMap())
         val (dead, alive) = list.partition { health[it.url]?.dead == true }
         val best = alive.sortedBy { rank(health[it.url]) }.take(MAX_SOURCES - 1)
@@ -690,7 +699,23 @@ object Repository {
     }
 
     suspend fun episodes(show: Show): List<Entry> = withContext(Dispatchers.IO) {
-        runCatching { db.episodes(show.key) }.getOrDefault(emptyList())
+        runCatching { db.episodes(show.key).uniqueEpisodes() }.getOrDefault(emptyList())
+    }
+
+    /**
+     * Um item por episódio: várias listas trazem o mesmo "T1 E1"; fica a cópia que respondeu
+     * melhor no teste, e as outras viram fontes alternativas no player.
+     */
+    private fun List<Entry>.uniqueEpisodes(): List<Entry> {
+        if (size < 2) return this
+        val health = runCatching { db.health(map { it.url }) }.getOrDefault(emptyMap())
+        val groups = LinkedHashMap<Any, MutableList<Entry>>()
+        for (e in this) {
+            val ep = e.episode
+            val key: Any = if (ep == null) e.url else (e.season ?: 0) to ep
+            groups.getOrPut(key) { mutableListOf() } += e
+        }
+        return groups.values.map { list -> list.minBy { rank(health[it.url]) } }
     }
 
     suspend fun search(q: String): Pair<List<Entry>, List<Show>> = withContext(Dispatchers.IO) {
