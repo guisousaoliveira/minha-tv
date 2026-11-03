@@ -146,6 +146,9 @@ class PlayerActivity : ComponentActivity() {
 
     /** Evita que o vigia e o fim da transmissão reconectem duas vezes ao mesmo tempo. */
     private var reconnecting = false
+    @Volatile private var lastReopenAt = 0L
+    private var lastReconnectAt = 0L
+    private var limitRetried = false
     private val liveEnds = ArrayDeque<Long>()
 
     /**
@@ -162,6 +165,7 @@ class PlayerActivity : ComponentActivity() {
             if (sources.size > 1) { sourceIndex = -1; if (nextSource(frozen = true)) return }
         }
         reconnecting = true
+        lastReconnectAt = now
         loadingText.text = message
         loadingBox.visibility = View.VISIBLE
         val src = playing ?: current
@@ -194,8 +198,11 @@ class PlayerActivity : ComponentActivity() {
         if (items.isEmpty()) { finish(); return }
         buildViews()
 
+        // mínimo = máximo: o player nunca para de puxar o sinal. Se parasse (como antes),
+        // a conexão ficava ociosa uns 40 s e o servidor do canal derrubava, fazendo a imagem piscar.
         val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(15_000, 50_000, 1_500, 3_000)
+            .setBufferDurationsMs(40_000, 40_000, 1_500, 3_000)
+            .setPrioritizeTimeOverSizeThresholds(true)
             .build()
         val exo = ExoPlayer.Builder(this).setLoadControl(loadControl).build()
         exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
@@ -229,6 +236,7 @@ class PlayerActivity : ComponentActivity() {
                     }
                     Player.STATE_READY -> {
                         retries = 0
+                        limitRetried = false
                         hideLoading()
                         playing?.url?.let { if (it != markedWorking) { markedWorking = it; Repository.markWorking(it) } }
                     }
@@ -395,8 +403,16 @@ class PlayerActivity : ComponentActivity() {
             .setConnectTimeoutMs(12_000)
             .setReadTimeoutMs(20_000)
         src.referrer?.let { http.setDefaultRequestProperties(mapOf("Referer" to it)) }
-        val factory = DefaultMediaSourceFactory(DefaultDataSource.Factory(this, http))
         val path = src.url.lowercase().substringBefore('?')
+        val base = DefaultDataSource.Factory(this, http)
+        // ao vivo em .ts direto (não HLS): emenda a conexão quando o servidor fecha
+        val progressiveLive = isLive && !path.endsWith(".m3u8") && !path.endsWith(".mpd") && !path.contains("/hls/")
+        val factory = DefaultMediaSourceFactory(
+            if (progressiveLive) LiveDataSource.Factory(base) {
+                lastReopenAt = System.currentTimeMillis()
+                android.util.Log.w("MinhaTV", "player: servidor fechou a conexão, emendando")
+            } else base,
+        )
         val item = MediaItem.Builder()
             .setUri(src.url)
             .setMediaMetadata(MediaMetadata.Builder().setTitle(src.name).build())
@@ -430,6 +446,16 @@ class PlayerActivity : ComponentActivity() {
             error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS && (http == null || http in 400..499) ||
             error.errorCode in PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED..PlaybackException.ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED
         android.util.Log.w("MinhaTV", "player: erro ${error.errorCodeName} http=$http morto=$dead")
+        // recusa (401/403) logo depois de reconectar: é o limite de telas do servidor contando a conexão velha.
+        // Espera e tenta de novo, sem marcar a fonte como quebrada.
+        val justReconnected = System.currentTimeMillis() - maxOf(lastReopenAt, lastReconnectAt) < 15_000
+        if (http in setOf(401, 403) && justReconnected && !limitRetried) {
+            limitRetried = true
+            loadingText.text = "Reconectando…"
+            loadingBox.visibility = View.VISIBLE
+            handler.postDelayed({ playing?.let { playSource(it, resume = false) } }, 2500)
+            return
+        }
         if (dead) {
             playing?.let { Repository.markFailed(it.url) }
             if (nextSource()) return
