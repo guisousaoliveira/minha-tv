@@ -527,7 +527,15 @@ class PlayerActivity : ComponentActivity() {
         val wanted = index
         sourcesJob = lifecycleScope.launch {
             val alts = Repository.alternates(e)
-            if (index == wanted && alts.isNotEmpty()) { sources = listOf(e) + alts; updateButtons() }
+            if (index == wanted && alts.isNotEmpty()) {
+                sources = if (isLive) listOf(e) + alts else byVersion(listOf(e) + alts, Repository.versionFor(e))
+                sourceIndex = sources.indexOfFirst { it.url == playing?.url }.coerceAtLeast(0)
+                // filme/série: se a versão preferida (ex.: Dublado) está em outra fonte, já abre nela
+                if (!isLive && !readyOnce && sources[0].url != playing?.url) switchSource(0)
+                val barOpen = controls.visible && !controls.panelVisible
+                setupControls()
+                if (barOpen) controls.show(firstButton)
+            }
         }
     }
 
@@ -740,6 +748,40 @@ class PlayerActivity : ComponentActivity() {
         }, wait)
     }
 
+    /** Fontes da versão escolhida primeiro, depois as que não dizem, por último a outra versão. */
+    private fun byVersion(list: List<Entry>, v: String): List<Entry> =
+        list.sortedBy { when (Repository.versionOf(it)) { v -> 0; null -> 1; else -> 2 } }
+
+    /** Troca de fonte mantendo a posição (e a pausa, se a pergunta de continuar estiver aberta). */
+    private fun switchSource(i: Int) {
+        val exo = player ?: return
+        val wasPaused = !exo.playWhenReady
+        val pos = if (readyOnce) exo.currentPosition else Repository.getResume(current.url)
+        sourceIndex = i
+        retries = 0
+        vodReprepares = 0
+        playSource(sources[i], resume = false)
+        if (!isLive && pos > 0) exo.seekTo(pos)
+        if (wasPaused && controls.panelVisible) exo.playWhenReady = false
+    }
+
+    private fun versionPanel() {
+        val have = sources.mapNotNull { Repository.versionOf(it) }.toSet()
+        val now = Repository.versionOf(playing ?: current) ?: Repository.versionFor(current)
+        val options = listOf(Repository.DUB, Repository.LEG)
+        controls.showPanel("Versão", options.map { v ->
+            PlayerControls.Choice(Repository.versionName(v), if (v in have) null else "Não achei nesta lista", selected = v == now)
+        }) { i ->
+            val v = options[i]
+            Repository.setVersionFor(current, v)
+            val target = sources.indexOfFirst { Repository.versionOf(it) == v }
+            if (target < 0) { notice("Não achei a versão ${Repository.versionName(v)} deste título."); return@showPanel }
+            sources = byVersion(sources, v)
+            switchSource(0)
+            updateButtons()
+        }
+    }
+
     /** Pula para a próxima fonte do mesmo item. Devolve false se não houver mais. */
     private fun nextSource(frozen: Boolean = false): Boolean {
         if (sourceIndex >= sources.size - 1) return false
@@ -866,12 +908,7 @@ class PlayerActivity : ComponentActivity() {
         if (sources.size <= 1) { notice("Não achei outra fonte para este item."); return }
         val labels = sources.mapIndexed { i, s -> PlayerControls.Choice("Fonte ${i + 1}", s.quality ?: s.name, selected = i == sourceIndex) }
         controls.showPanel("Trocar fonte", labels) { i ->
-            sourceIndex = i
-            retries = 0
-            vodReprepares = 0
-            val pos = player?.currentPosition ?: 0
-            playSource(sources[i], resume = false)
-            if (!isLive && pos > 0) player?.seekTo(pos)
+            switchSource(i)
             updateButtons()
         }
     }
@@ -905,6 +942,7 @@ class PlayerActivity : ComponentActivity() {
         val right = mutableListOf<View>()
         right += c.textButton("Legendas") { pickTrack(C.TRACK_TYPE_TEXT) }
         right += c.textButton("Áudio") { pickTrack(C.TRACK_TYPE_AUDIO) }
+        if (!isLive && sources.mapNotNull { Repository.versionOf(it) }.toSet().size > 1) right += c.textButton("Versão") { versionPanel() }
         btnSource = c.textButton("Fonte") { sourceDialog() }.also { right += it }
         right += c.textButton("Tela") { resizePanel() }
         if (!isLive) right += c.textButton("Velocidade") { speedDialog() }
@@ -1052,7 +1090,7 @@ class PlayerActivity : ComponentActivity() {
             KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> { if (isLive) showInfo() else showControls(); return true }
             KeyEvent.KEYCODE_BACK -> {
                 backConsumed = true
-                if (infoPanel.visibility == View.VISIBLE) { infoPanel.visibility = View.GONE; return true }
+                infoPanel.visibility = View.GONE
                 // igual ao Saimo: precisa apertar VOLTAR duas vezes para sair do vídeo
                 val now = System.currentTimeMillis()
                 if (now - lastBackAt < 3000) { saveResume(); finish(); return true }

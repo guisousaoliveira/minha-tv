@@ -640,6 +640,15 @@ fun SettingsScreen() {
 
         item { SettingsHeader("Preferências") }
         item {
+            var version by remember { mutableStateOf(Repository.preferredVersion) }
+            Text("Filmes e séries: versão preferida", fontSize = 15.sp, color = Palette.TextDim, modifier = Modifier.padding(start = 16.dp, bottom = 6.dp))
+            Row(Modifier.padding(start = 12.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(Repository.DUB, Repository.LEG).forEach { v ->
+                    TvButton(Repository.versionName(v), selected = v == version, onClick = { version = v; Repository.preferredVersion = v })
+                }
+            }
+        }
+        item {
             Text("Atualizar as listas a cada", fontSize = 15.sp, color = Palette.TextDim, modifier = Modifier.padding(start = 16.dp, bottom = 6.dp))
             Row(Modifier.padding(start = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Repository.INTERVAL_OPTIONS.forEach { h ->

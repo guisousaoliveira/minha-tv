@@ -248,6 +248,33 @@ object Repository {
         set(v) { prefs.edit().putBoolean("autoplay_last", v).apply() }
 
     /** Esconde categorias adultas (ligado por padrão). */
+    // ---- Versão (dublado/legendado), igual ao Saimo: separada da fonte ----
+    const val DUB = "dub"
+    const val LEG = "leg"
+
+    /** Versão preferida em todo o app (padrão: Dublado). */
+    var preferredVersion: String
+        get() = prefs.getString("pref_version", DUB) ?: DUB
+        set(v) { prefs.edit().putString("pref_version", v).apply() }
+
+    private fun titleKey(e: Entry) = "ver_" + (if (e.type == ContentType.SERIES) e.seriesName ?: e.name else e.norm ?: e.name).hashCode()
+
+    /** Versão escolhida para este título (botão "Versão"), ou a preferida do app. */
+    fun versionFor(e: Entry): String = prefs.getString(titleKey(e), null) ?: preferredVersion
+    fun setVersionFor(e: Entry, v: String) { prefs.edit().putString(titleKey(e), v).apply() }
+
+    /** Dublado ou legendado, pelo nome, etiqueta ou categoria. null = não diz. */
+    fun versionOf(e: Entry): String? {
+        val t = listOfNotNull(e.quality, e.name, e.group).joinToString(" ").lowercase()
+        return when {
+            Regex("""legend|\bleg\b|\bsub(bed|titled)?\b""").containsMatchIn(t) -> LEG
+            Regex("""dublad|\bdub\b|dual|nacional""").containsMatchIn(t) -> DUB
+            else -> null
+        }
+    }
+
+    fun versionName(v: String) = if (v == LEG) "Legendado" else "Dublado"
+
     var hideAdult: Boolean
         get() = prefs.getBoolean("hide_adult", true)
         set(v) { prefs.edit().putBoolean("hide_adult", v).apply(); scope.launch { rebuild() } }
