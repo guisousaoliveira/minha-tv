@@ -543,6 +543,7 @@ fun SettingsScreen() {
     var hours by remember { mutableStateOf(Repository.refreshHours) }
     var autoplay by remember { mutableStateOf(Repository.autoplayLast) }
     var hideAdult by remember { mutableStateOf(Repository.hideAdult) }
+    var hideForeign by remember { mutableStateOf(Repository.hideForeign) }
     var checkSources by remember { mutableStateOf(Repository.checkSourcesEnabled) }
     val address = rememberPhoneSetupServer()
     val dateFmt = remember { DateFormat.getDateFormat(context) }
@@ -611,6 +612,11 @@ fun SettingsScreen() {
         item {
             ToggleRow("Esconder conteúdo adulto", "Oculta categorias adultas em todas as telas", hideAdult) {
                 hideAdult = !hideAdult; Repository.hideAdult = hideAdult
+            }
+        }
+        item {
+            ToggleRow("Esconder canais de outros países", "Deixa só os do Brasil; esporte e luta (UFC, ESPN...) de fora continuam", hideForeign) {
+                hideForeign = !hideForeign; Repository.hideForeign = hideForeign
             }
         }
         item {
