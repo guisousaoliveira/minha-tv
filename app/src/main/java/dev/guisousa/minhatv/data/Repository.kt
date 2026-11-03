@@ -250,6 +250,11 @@ object Repository {
         get() = prefs.getBoolean("autoplay_last", false)
         set(v) { prefs.edit().putBoolean("autoplay_last", v).apply() }
 
+    /** Esconde canais ao vivo de outros países, menos os de esporte (ligado por padrão). */
+    var hideForeign: Boolean
+        get() = prefs.getBoolean("hide_foreign", true)
+        set(v) { prefs.edit().putBoolean("hide_foreign", v).apply(); scope.launch { rebuild() } }
+
     /** Esconde categorias adultas (ligado por padrão). */
     // ---- Versão (dublado/legendado), igual ao Saimo: separada da fonte ----
     const val DUB = "dub"
@@ -561,9 +566,10 @@ object Repository {
     private suspend fun rebuild() = withContext(Dispatchers.IO) {
         val hide = hideAdult
         fun List<GroupInfo>.visible() = Library.sortGroups(if (hide) filterNot { Library.isAdult(it.name) } else this) { it.name }
+        val noForeign = hideForeign
         val lib = Library(
             version = ++version,
-            liveGroups = db.groups(ContentType.LIVE).visible(),
+            liveGroups = db.groups(ContentType.LIVE).let { g -> if (noForeign) g.filterNot { Library.isForeignLiveGroup(it.name) } else g }.visible(),
             movieGroups = db.groups(ContentType.MOVIE).visible(),
             showGroups = db.showGroups().visible(),
         )
@@ -574,7 +580,15 @@ object Repository {
 
     // ---------- Consultas para as telas (rodam fora da thread principal) ----------
 
-    private fun List<Entry>.visible() = if (hideAdult) filterNot { Library.isAdult(it.group) } else this
+    private fun List<Entry>.visible(): List<Entry> {
+        val adult = hideAdult
+        val foreign = hideForeign
+        if (!adult && !foreign) return this
+        return filterNot { e ->
+            (adult && Library.isAdult(e.group)) ||
+                (foreign && e.type == ContentType.LIVE && (Library.isForeignLiveGroup(e.group) || Library.isForeignLiveEntry(e)))
+        }
+    }
 
     /**
      * Um item por título: várias fontes com o mesmo nome viram uma só na tela (o player tenta as
