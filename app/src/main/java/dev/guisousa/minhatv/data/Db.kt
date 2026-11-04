@@ -174,7 +174,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
                 val id = st.executeInsert()
                 if (episode) {
                     val a = shows[lastSeriesKey] ?: ShowAgg(lastSeriesClean, group, id, id).also { shows[lastSeriesKey] = it }
-                    a.add(id, lastSeriesClean, group, e.logo, e.season?.toLong(), e.episode?.toLong())
+                    a.add(id, lastSeriesClean, group, e.logo, e.season?.toLong(), e.episode?.toLong(), counted = !Xtream.isStub(e.url))
                 }
                 when (e.type) {
                     ContentType.LIVE -> counts.live++
@@ -210,6 +210,38 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
             }
         }
         db.execSQL("INSERT OR REPLACE INTO part_done(playlist) VALUES (?)", arrayOf(playlistId))
+    }
+
+    /**
+     * Guarda os episódios de uma série Xtream pedidos ao abrir a série (a próxima abertura é instantânea).
+     * Somem junto com a lista na próxima atualização dela e são pedidos de novo.
+     */
+    fun addEpisodes(playlistId: String, showKey: String, series: String, group: String, list: List<Entry>) {
+        if (list.isEmpty()) return
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val st = db.compileStatement(
+                "INSERT INTO entries(playlist,name,url,grp,logo,type,show_key,series,season,episode) VALUES(?,?,?,?,?,2,?,?,?,?)"
+            )
+            for (e in list) {
+                st.clearBindings()
+                st.bindString(1, playlistId)
+                st.bindString(2, Normalize.clean(e.name))
+                st.bindString(3, e.url)
+                st.bindString(4, group)
+                e.logo?.let { st.bindString(5, it) }
+                st.bindString(6, showKey)
+                st.bindString(7, series)
+                e.season?.let { st.bindLong(8, it.toLong()) }
+                e.episode?.let { st.bindLong(9, it.toLong()) }
+                st.executeInsert()
+            }
+            val n = list.size.toString()
+            db.execSQL("UPDATE show_part SET eps = ? WHERE playlist = ? AND show_key = ? AND eps < ?", arrayOf(n, playlistId, showKey, n))
+            db.execSQL("UPDATE show_info SET eps = ? WHERE show_key = ? AND eps < ?", arrayOf(n, showKey, n))
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
     }
 
     fun deletePlaylist(playlistId: String) {
@@ -354,12 +386,13 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
         /** contagem vinda de um resumo de lista (quando o resumo geral é montado pelos resumos) */
         var partEps = 0
 
-        fun add(id: Long, series: String?, grp: String, logo: String?, season: Long?, episode: Long?) {
+        /** [counted] = false: linha da capa de uma série Xtream (os episódios só vêm quando ela é aberta). */
+        fun add(id: Long, series: String?, grp: String, logo: String?, season: Long?, episode: Long?, counted: Boolean = true) {
             if (series != null && (this.series == null || series < this.series!!)) this.series = series
             if (grp < this.grp) this.grp = grp
             if (id < minId) minId = id
             if (id > maxId) maxId = id
-            if (episode == null) unnumbered++ else eps += ((season ?: 0L) shl 20) or episode
+            if (counted) { if (episode == null) unnumbered++ else eps += ((season ?: 0L) shl 20) or episode }
             if (logo != null) {
                 val n = logos[logo]
                 if (n != null) logos[logo] = n + 1 else if (logos.size < MAX_LOGOS) logos[logo] = 1

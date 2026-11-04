@@ -3,7 +3,12 @@ package dev.guisousa.minhatv.ui
 import android.app.AlertDialog
 import android.content.Context
 import android.text.InputType
+import android.view.KeyEvent
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import android.widget.LinearLayout
 
 private fun Context.dp(v: Int) = (v * resources.displayMetrics.density).toInt()
@@ -16,6 +21,26 @@ private fun Context.field(parent: LinearLayout, hint: String, type: Int): EditTe
         parent.addView(this)
     }
 
+/** Texto digitado no diálogo de link (volta se o diálogo fechar sem querer). */
+private var draft = arrayOf("", "", "")
+
+private fun isEnter(action: Int, ev: KeyEvent?, vararg ok: Int) =
+    action in ok || (ev?.keyCode == KeyEvent.KEYCODE_ENTER && ev.action == KeyEvent.ACTION_UP)
+
+/** VOLTAR com o teclado aberto só fecha o teclado (não fecha o diálogo nem perde o texto). */
+private fun AlertDialog.backClosesKeyboardFirst() {
+    setOnKeyListener { _, code, ev ->
+        if (code != KeyEvent.KEYCODE_BACK) return@setOnKeyListener false
+        val view = currentFocus ?: return@setOnKeyListener false
+        val imeOpen = ViewCompat.getRootWindowInsets(view)?.isVisible(WindowInsetsCompat.Type.ime()) == true
+        if (!imeOpen) return@setOnKeyListener false
+        if (ev.action == KeyEvent.ACTION_UP) {
+            (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(view.windowToken, 0)
+        }
+        true
+    }
+}
+
 /** Diálogo para digitar o link com o controle remoto (ou teclado). */
 fun showAddLinkDialog(context: Context, onSave: (url: String, name: String?, epg: String?) -> Unit) {
     val layout = LinearLayout(context).apply {
@@ -27,15 +52,72 @@ fun showAddLinkDialog(context: Context, onSave: (url: String, name: String?, epg
     val url = context.field(layout, "Link da playlist ou da página (https://...)", uri)
     val name = context.field(layout, "Nome (opcional)", InputType.TYPE_CLASS_TEXT)
     val epg = context.field(layout, "Guia XMLTV (opcional)", uri)
-    AlertDialog.Builder(context, dev.guisousa.minhatv.R.style.Theme_MinhaTV_Dialog)
+    val fields = listOf(url, name, epg)
+    fields.forEachIndexed { i, f -> f.setText(draft[i]); f.setSelection(f.text.length) }
+    val save = {
+        onSave(url.text.toString(), name.text.toString(), epg.text.toString())
+        draft = arrayOf("", "", "")
+    }
+    val dialog = AlertDialog.Builder(context, dev.guisousa.minhatv.R.style.Theme_MinhaTV_Dialog)
         .setTitle("Adicionar link")
         .setView(layout)
-        .setPositiveButton("Adicionar") { _, _ ->
-            onSave(url.text.toString(), name.text.toString(), epg.text.toString())
+        .setPositiveButton("Adicionar") { _, _ -> save() }
+        .setNegativeButton("Cancelar") { _, _ -> draft = arrayOf("", "", "") }
+        .create()
+    // fechou com VOLTAR: guarda o que foi digitado para a próxima vez
+    dialog.setOnCancelListener { draft = fields.map { it.text.toString() }.toTypedArray() }
+    dialog.backClosesKeyboardFirst()
+    // com o teclado aberto o controle não alcança o botão: o OK do teclado adiciona direto
+    // (nome e guia são opcionais; quem quiser preenche e o OK deles também adiciona)
+    fields.forEach { f ->
+        f.imeOptions = EditorInfo.IME_ACTION_DONE
+        f.setSingleLine(true)
+        f.setOnEditorActionListener { _, action, ev ->
+            val enter = isEnter(action, ev, EditorInfo.IME_ACTION_DONE, EditorInfo.IME_ACTION_GO, EditorInfo.IME_ACTION_NEXT)
+            if (enter && url.text.isNotBlank()) { save(); dialog.dismiss() }
+            enter
         }
-        .setNegativeButton("Cancelar", null)
-        .show()
+    }
+    dialog.show()
     url.requestFocus()
+}
+
+/** Servidor Xtream (o mesmo acesso de TiviMate / Smarters): endereço, usuário e senha. */
+fun showServerDialog(context: Context, onSave: (server: String, user: String, pass: String) -> Unit) {
+    val layout = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        val p = context.dp(20)
+        setPadding(p, p / 2, p, 0)
+    }
+    val server = context.field(layout, "Servidor (http://endereco:porta)", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI)
+    val user = context.field(layout, "Usuário", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD)
+    val pass = context.field(layout, "Senha", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD)
+    val fields = listOf(server, user, pass)
+    val ok = { server.text.isNotBlank() && user.text.isNotBlank() }
+    val save = { onSave(server.text.toString(), user.text.toString(), pass.text.toString()) }
+    val dialog = AlertDialog.Builder(context, dev.guisousa.minhatv.R.style.Theme_MinhaTV_Dialog)
+        .setTitle("Servidor com usuário e senha")
+        .setView(layout)
+        .setPositiveButton("Adicionar") { _, _ -> if (ok()) save() }
+        .setNegativeButton("Cancelar", null)
+        .create()
+    dialog.backClosesKeyboardFirst()
+    // OK do teclado: vai para o próximo campo; no último, adiciona
+    fields.forEachIndexed { i, f ->
+        val last = i == fields.lastIndex
+        f.imeOptions = if (last) EditorInfo.IME_ACTION_DONE else EditorInfo.IME_ACTION_NEXT
+        f.setSingleLine(true)
+        f.setOnEditorActionListener { _, action, ev ->
+            val enter = isEnter(action, ev, EditorInfo.IME_ACTION_DONE, EditorInfo.IME_ACTION_GO, EditorInfo.IME_ACTION_NEXT)
+            if (enter) {
+                if (!last) fields[i + 1].requestFocus()
+                else if (ok()) { save(); dialog.dismiss() }
+            }
+            enter
+        }
+    }
+    dialog.show()
+    server.requestFocus()
 }
 
 fun showSearchDialog(context: Context, initial: String, onSearch: (String) -> Unit) {
@@ -53,6 +135,7 @@ fun showSearchDialog(context: Context, initial: String, onSearch: (String) -> Un
         .setPositiveButton("Buscar") { _, _ -> onSearch(q.text.toString()) }
         .setNegativeButton("Cancelar", null)
         .show()
+    dialog.backClosesKeyboardFirst()
     // o Enter / "Buscar" do teclado da tela já faz a busca (com o teclado aberto o controle não alcança o botão)
     q.imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
     q.setSingleLine(true)

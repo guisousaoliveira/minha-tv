@@ -405,6 +405,13 @@ object Repository {
 
     private suspend fun addFromUrlInternal(input: String, name: String?, epgUrl: String?): String {
         require(input.startsWith("http://") || input.startsWith("https://")) { "o link precisa começar com http:// ou https://" }
+        // acesso Xtream (get.php / player_api.php com usuário e senha): séries carregam episódios só ao abrir
+        Xtream.parseLogin(input)?.let { (base, user, pass) ->
+            val viaApi = input.substringBefore('?').lowercase().endsWith("player_api.php")
+            val msg = runCatching { addXtream(base, user, pass, name, epgUrl) }
+            // link get.php de painel sem a API: segue como playlist M3U comum
+            if (msg.isSuccess || viaApi) return msg.getOrThrow()
+        }
         val url = LinkExtractor.toRaw(input)
         _status.value = "Lendo link…"
         val head = fetchHead(url)
@@ -434,6 +441,21 @@ object Repository {
         return "Encontrei ${added.size} playlists na página ($ok carregaram). Vou verificar essa página de novo a cada atualização."
     }
 
+    private fun xtream(p: Playlist) = Xtream(p.url, p.xtreamUser!!, p.xtreamPass ?: "") { url, block -> open(url) { block(it) } }
+
+    private suspend fun addXtream(base: String, user: String, pass: String, name: String?, epgUrl: String?): String {
+        if (_playlists.value.any { it.isXtream && it.url.equals(base, true) && it.xtreamUser == user }) return "Esse servidor já estava adicionado."
+        val host = runCatching { java.net.URI(base).host }.getOrNull() ?: base
+        val p = Playlist(UUID.randomUUID().toString(), name ?: host, base, epgUrl, xtreamUser = user, xtreamPass = pass)
+        _status.value = "Conectando ao servidor…"
+        withContext(background) { xtream(p).login() }
+        mutex.withLock { _playlists.value = _playlists.value + p; savePlaylists() }
+        refreshPlaylists(listOf(p.id))
+        val updated = _playlists.value.firstOrNull { it.id == p.id }
+        return updated?.lastError?.let { "Servidor adicionado, mas deu erro: $it" }
+            ?: "Servidor \"${p.name}\" adicionado: ${updated?.liveCount ?: 0} canais, ${updated?.movieCount ?: 0} filmes, ${updated?.seriesCount ?: 0} séries."
+    }
+
     /** Lê a página e cria playlists para os links novos. Devolve os ids criados. */
     private suspend fun scanSource(src: Source): List<String> {
         return try {
@@ -452,13 +474,23 @@ object Repository {
             val fresh = unique.filter { LinkExtractor.sameFileKey(it) !in known }.map {
                 Playlist(UUID.randomUUID().toString(), LinkExtractor.nameFromUrl(it), it, sourceId = src.id)
             }
+            // a página não lista mais algum arquivo (o servidor juntou ou tirou partes): sai do app também.
+            // Só quando a página respondeu e trouxe links, para uma falha de rede não apagar nada.
+            val listed = unique.map { LinkExtractor.sameFileKey(it) }.toSet()
+            val gone = if (pageError == null && unique.isNotEmpty())
+                _playlists.value.filter { it.sourceId == src.id && LinkExtractor.sameFileKey(it.url) !in listed } else emptyList()
             mutex.withLock {
-                _playlists.value = _playlists.value + fresh
+                if (gone.isNotEmpty()) {
+                    android.util.Log.i("MinhaTV", "página ${src.url}: ${gone.size} listas saíram dela, removendo")
+                    gone.forEach { db.deletePlaylist(it.id); file("epg_${it.id}.json").delete() }
+                }
+                _playlists.value = _playlists.value.filterNot { p -> gone.any { it.id == p.id } } + fresh
                 _sources.value = _sources.value.map {
                     if (it.id == src.id) it.copy(lastChecked = System.currentTimeMillis(), lastError = null, found = unique.size) else it
                 }
                 savePlaylists(); saveSources()
             }
+            if (gone.isNotEmpty()) runCatching { rebuild() }
             fresh.map { it.id }
         } catch (e: Exception) {
             mutex.withLock {
@@ -595,13 +627,25 @@ object Repository {
     private suspend fun refreshOne(p: Playlist): Playlist = withContext(background) {
         try {
             // lista igual à da última vez: não baixa nem reorganiza nada
-            if (p.lastError == null && p.liveCount + p.movieCount + p.seriesCount > 0 && unchanged(p)) {
+            if (!p.isXtream && p.lastError == null && p.liveCount + p.movieCount + p.seriesCount > 0 && unchanged(p)) {
                 return@withContext p.copy(lastUpdated = System.currentTimeMillis())
             }
             var detectedEpg: String? = null
-            val head = fetchHead(p.url)
+            var head = ""
             val counts: Db.Counts
-            if (M3uParser.isHlsStream(head)) {
+            if (p.isXtream) {
+                val x = xtream(p)
+                x.login()
+                val label = _status.value ?: "Atualizando ${p.name}"
+                var n = 0
+                counts = db.replacePlaylist(p.id) { add ->
+                    val each: (Entry) -> Unit = { e -> add(e); if (++n % 2000 == 0) importStatus("$label · $n itens") }
+                    x.live(each)
+                    x.movies(each)
+                    x.seriesCovers(p.id, each)
+                }
+                detectedEpg = "${p.url}/xmltv.php?username=${java.net.URLEncoder.encode(x.user, "UTF-8")}&password=${java.net.URLEncoder.encode(x.pass, "UTF-8")}"
+            } else if (M3uParser.isHlsStream(fetchHead(p.url).also { head = it })) {
                 // o link é um único canal (stream HLS), não uma lista
                 counts = db.replacePlaylist(p.id) { add -> add(Entry(name = p.name, url = p.url, group = p.name, playlistId = p.id)) }
             } else {
@@ -917,7 +961,26 @@ object Repository {
     }
 
     suspend fun episodes(show: Show): List<Entry> = withContext(Dispatchers.IO) {
-        runCatching { db.episodes(show.key).uniqueEpisodes() }.getOrDefault(emptyList())
+        runCatching {
+            val rows = db.episodes(show.key)
+            val covers = rows.filter { Xtream.isStub(it.url) }
+            var list = rows.filterNot { Xtream.isStub(it.url) }
+            // série de servidor Xtream: os episódios são pedidos agora, na primeira vez que ela é aberta
+            var fetched = false
+            for (c in covers) {
+                if (list.any { it.playlistId == c.playlistId }) continue
+                val p = _playlists.value.firstOrNull { it.id == c.playlistId && it.isXtream } ?: continue
+                val series = c.seriesName ?: show.name
+                val t0 = System.currentTimeMillis()
+                val eps = runCatching { xtream(p).episodes(Xtream.stubSeriesId(c.url), series, c.group, c.logo) }
+                    .onFailure { android.util.Log.w("MinhaTV", "episódios de \"$series\" não vieram", it) }
+                    .getOrDefault(emptyList())
+                android.util.Log.i("MinhaTV", "tempo: ${eps.size} episódios de \"$series\" em ${System.currentTimeMillis() - t0} ms")
+                if (eps.isNotEmpty()) { db.addEpisodes(p.id, show.key, series, c.group, eps); fetched = true }
+            }
+            if (fetched) list = db.episodes(show.key).filterNot { Xtream.isStub(it.url) }
+            list.uniqueEpisodes()
+        }.getOrDefault(emptyList())
     }
 
     /**

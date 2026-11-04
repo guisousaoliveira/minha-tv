@@ -332,6 +332,13 @@ fun addLink(context: android.content.Context, url: String, name: String?, epg: S
     Repository.addFromUrl(url, name, epg) { msg -> Toast.makeText(context, msg, Toast.LENGTH_LONG).show() }
 }
 
+fun addServer(context: android.content.Context, server: String, user: String, pass: String) {
+    if (server.isBlank() || user.isBlank()) return
+    Toast.makeText(context, "Conectando ao servidor…", Toast.LENGTH_SHORT).show()
+    val url = dev.guisousa.minhatv.data.Xtream.loginUrl(server, user, pass)
+    Repository.addFromUrl(url) { msg -> Toast.makeText(context, msg, Toast.LENGTH_LONG).show() }
+}
+
 /** Primeira abertura: QR Code para configurar pelo celular. */
 @Composable
 fun Welcome(onTyped: (String, String?, String?) -> Unit) {
@@ -348,7 +355,10 @@ fun Welcome(onTyped: (String, String?, String?) -> Unit) {
                 fontSize = 18.sp, color = Palette.TextDim, lineHeight = 30.sp,
             )
             Spacer(Modifier.height(28.dp))
-            TvButton("Digitar o link com o controle", onClick = { showAddLinkDialog(context, onTyped) })
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                TvButton("Digitar o link com o controle", onClick = { showAddLinkDialog(context, onTyped) })
+                TvButton("Servidor com usuário e senha", onClick = { showServerDialog(context) { s, u, p -> addServer(context, s, u, p) } })
+            }
         }
         Spacer(Modifier.width(48.dp))
         Column(horizontalAlignment = Alignment.CenterHorizontally) {

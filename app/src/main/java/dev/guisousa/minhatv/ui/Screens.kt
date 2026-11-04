@@ -242,7 +242,7 @@ private fun ShowRow(lib: Library, group: String, count: Int, nav: Nav, header: H
         seeAll = if (count > shows.size) ({ nav.openCategory(ContentType.SERIES, group) }) else null,
         seeAllCount = count,
     ) { _, s ->
-        PosterCard(s.name, s.logo, key = "$group:${s.key}", tmdbTitle = s.name, tv = true, onFocused = { header.show(s.name, "Série · ${episodesLabel(s.episodeCount)}", s.logo) }, onClick = { nav.openShow(s) })
+        PosterCard(s.name, s.logo, key = "$group:${s.key}", tmdbTitle = s.name, tv = true, onFocused = { header.show(s.name, seriesLabel(s.episodeCount), s.logo) }, onClick = { nav.openShow(s) })
     }
 }
 
@@ -302,7 +302,7 @@ fun CategoryScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
                 val shows = load(lib.version, group) { Repository.shows(group) }
                 if (shows == null) Loading() else PosterGrid(
                     shows.size, { i -> shows[i].name }, { i -> shows[i].logo },
-                    onFocused = { i -> header.show(shows[i].name, "Série · ${episodesLabel(shows[i].episodeCount)}", shows[i].logo) },
+                    onFocused = { i -> header.show(shows[i].name, seriesLabel(shows[i].episodeCount), shows[i].logo) },
                 ) { i -> nav.openShow(shows[i]) }
             }
         }
@@ -539,7 +539,7 @@ fun SearchScreen(lib: Library, nav: Nav) {
                 val uniqueShows = shows.distinctBy { dupKey(it.name).ifEmpty { it.key } }
                 SectionTitle("Séries", trailing = "${uniqueShows.size}")
                 MediaRow(uniqueShows, POSTER_W) { _, s ->
-                    PosterCard(s.name, s.logo, key = "s:${s.key}", tmdbTitle = s.name, tv = true, onFocused = { header.show(s.name, "Série · ${episodesLabel(s.episodeCount)}", s.logo) }, onClick = { nav.openShow(s) })
+                    PosterCard(s.name, s.logo, key = "s:${s.key}", tmdbTitle = s.name, tv = true, onFocused = { header.show(s.name, seriesLabel(s.episodeCount), s.logo) }, onClick = { nav.openShow(s) })
                 }
             }
         }
@@ -586,6 +586,7 @@ fun SettingsScreen() {
                         // ▼ daqui vai para a primeira preferência (sem isso o foco pulava para os botões da direita lá embaixo)
                         val toPrefs = Modifier.focusProperties { down = prefsFocus }
                         TvButton("Digitar link", modifier = toPrefs, onClick = { showAddLinkDialog(context) { u, n, e -> addLink(context, u, n, e) } })
+                        TvButton("Servidor (usuário e senha)", modifier = toPrefs, onClick = { showServerDialog(context) { sv, u, pw -> addServer(context, sv, u, pw) } })
                         TvButton("Atualizar agora", modifier = toPrefs, onClick = {
                             Toast.makeText(context, "Atualizando…", Toast.LENGTH_SHORT).show()
                             Repository.refreshAllAsync()
@@ -651,7 +652,7 @@ fun SettingsScreen() {
         items(playlists, key = { it.id }) { p ->
             ListRow(
                 title = p.name,
-                subtitle = "${p.liveCount} canais · ${p.movieCount} filmes · ${p.seriesCount} episódios · atualizada ${fmt(p.lastUpdated)}" +
+                subtitle = "${p.liveCount} canais · ${p.movieCount} filmes · ${p.seriesCount} ${if (p.isXtream) "séries" else "episódios"} · atualizada ${fmt(p.lastUpdated)}" +
                     (p.lastError?.let { " · erro: $it" } ?: ""),
                 error = p.lastError != null,
             ) {

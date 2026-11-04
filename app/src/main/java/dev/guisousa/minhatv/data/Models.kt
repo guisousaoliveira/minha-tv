@@ -20,7 +20,12 @@ data class Playlist(
     val liveCount: Int = 0,
     val movieCount: Int = 0,
     val seriesCount: Int = 0,
-)
+    /** Servidor Xtream (url = endereço do servidor): usuário e senha. */
+    val xtreamUser: String? = null,
+    val xtreamPass: String? = null,
+) {
+    val isXtream get() = xtreamUser != null
+}
 
 /** Uma página (ex.: README do GitHub) que lista várias playlists. É verificada de novo a cada atualização. */
 @Serializable
