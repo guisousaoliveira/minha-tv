@@ -117,11 +117,20 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
             )
             val rules = CleanRules.current
             val clean = cleanOnImport
+            // listas grandes repetem a mesma categoria e a mesma série em milhares de linhas seguidas: calcula uma vez
+            val groupCache = HashMap<String, String>()
+            var lastSeries: String? = null
+            var lastSeriesClean = ""
+            var lastSeriesKey = ""
             fill { e ->
-                val label = Normalize.label(e.group).ifBlank { "Outros" }
-                val group = if (clean) rules.group(label) else label
-                val d = Normalize.display(e.name)
-                val hide = if (clean) rules.classify(e.name + " " + d.title, group, e.tvgId, e.type) else 0
+                val group = groupCache.getOrPut(e.group) {
+                    val label = Normalize.label(e.group).ifBlank { "Outros" }
+                    if (clean) rules.group(label) else label
+                }
+                // episódio: o nome limpo fica para quando a série for aberta (são centenas de milhares e a tela só mostra os da série)
+                val episode = e.type == ContentType.SERIES
+                val d = if (episode) null else Normalize.display(e.name)
+                val hide = if (clean) rules.classify(e.name + " " + (d?.title ?: ""), group, e.tvgId, e.type) else 0
                 if (hide and CleanRules.JUNK != 0) { counts.dropped++; return@fill }
                 if (hide != 0) counts.hidden++
                 st.clearBindings()
@@ -135,19 +144,26 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
                 st.bindLong(7, e.type.ordinal.toLong())
                 e.userAgent?.let { st.bindString(8, it) }
                 e.referrer?.let { st.bindString(9, it) }
-                if (e.type == ContentType.SERIES) {
-                    val name = Normalize.clean(e.seriesName ?: e.name)
-                    st.bindString(10, Normalize.name(name).ifEmpty { name })
-                    st.bindString(11, name)
+                if (episode) {
+                    val raw = e.seriesName ?: e.name
+                    if (raw != lastSeries) {
+                        lastSeries = raw
+                        lastSeriesClean = Normalize.clean(raw)
+                        lastSeriesKey = Normalize.name(lastSeriesClean).ifEmpty { lastSeriesClean }
+                    }
+                    st.bindString(10, lastSeriesKey)
+                    st.bindString(11, lastSeriesClean)
                 }
                 e.season?.let { st.bindLong(12, it.toLong()) }
                 e.episode?.let { st.bindLong(13, it.toLong()) }
-                val norm = Normalize.key(d.title)
-                st.bindString(14, norm)
-                st.bindString(15, d.title)
-                d.tag?.let { st.bindString(16, it) }
+                if (d != null) {
+                    val norm = Normalize.key(d.title)
+                    st.bindString(14, norm)
+                    st.bindString(15, d.title)
+                    d.tag?.let { st.bindString(16, it) }
+                    mergeKey(e.type, d.title, norm, e.logo, e.url)?.let { st.bindString(18, it) }
+                }
                 st.bindLong(17, hide.toLong())
-                mergeKey(e.type, d.title, norm, e.logo, e.url)?.let { st.bindString(18, it) }
                 st.executeInsert()
                 when (e.type) {
                     ContentType.LIVE -> counts.live++
@@ -472,7 +488,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
      * Devolve quantos itens arrumou (0 = acabou).
      */
     fun backfillTitles(batch: Int = 2000): Int {
-        val rows = readableDatabase.rawQuery("SELECT id, name FROM entries WHERE title IS NULL LIMIT $batch", null)
+        val rows = readableDatabase.rawQuery("SELECT id, name FROM entries WHERE title IS NULL AND type != 2 LIMIT $batch", null)
             .use { c -> c.map { it.getLong(0) to it.getString(1) } }
         if (rows.isEmpty()) return 0
         val db = writableDatabase

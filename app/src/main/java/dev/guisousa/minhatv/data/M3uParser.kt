@@ -15,6 +15,8 @@ object M3uParser {
     private val seriesWords = listOf("série", "series", "serie", "temporada", "season", "novela", "anime", "dorama")
     private val movieWords = listOf("filme", "movie", "vod", "cine ", "lançamento", "lancamento", "coletânea", "coletanea")
     private val liveWords = listOf("canais", "canal ", "24h", "24/7", "ao vivo", "aovivo", "live")
+    /** Categoria escrita como "null", "none"... é o mesmo que sem categoria. */
+    private val emptyGroups = setOf("null", "none", "undefined", "nil", "n/a")
     private val vodExtensions = listOf(".mp4", ".mkv", ".avi", ".mov", ".wmv", ".m4v", ".webm")
 
     /** true se o texto parece uma playlist de canais (e não um stream HLS). */
@@ -90,7 +92,7 @@ object M3uParser {
             val name = info?.title?.takeIf { it.isNotBlank() }
                 ?: a["tvg-name"]?.takeIf { it.isNotBlank() }
                 ?: url.substringBefore('?').substringAfterLast('/')
-            val group = a["group-title"]?.takeIf { it.isNotBlank() } ?: extGroup ?: ""
+            val group = a["group-title"]?.takeIf { it.isNotBlank() && it.lowercase() !in emptyGroups } ?: extGroup?.takeIf { it.lowercase() !in emptyGroups } ?: ""
             val type = classify(name, group, url, a["tvg-type"] ?: a["type"])
             var seriesName: String? = null
             var season: Int? = null

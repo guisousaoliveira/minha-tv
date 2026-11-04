@@ -115,6 +115,9 @@ object Repository {
             try {
                 mutex.withLock {
                     _playlists.value = readList(file("playlists.json"), Playlist.serializer())
+                    // versões até a 1.0.74 adicionavam o mesmo arquivo duas vezes (README + repositório): fica só um
+                    val dedup = _playlists.value.distinctBy { LinkExtractor.sameFileKey(it.url) }
+                    if (dedup.size != _playlists.value.size) { _playlists.value = dedup; savePlaylists() }
                     _sources.value = readList(file("sources.json"), Source.serializer())
                 }
                 readLibraryCache()?.let { _library.value = it }
@@ -403,7 +406,7 @@ object Repository {
         _status.value = "Lendo link…"
         val head = fetchHead(url)
         if (M3uParser.isChannelPlaylist(head) || M3uParser.isHlsStream(head)) {
-            if (_playlists.value.any { it.url == url }) return "Essa playlist já estava adicionada."
+            if (_playlists.value.any { LinkExtractor.sameFileKey(it.url) == LinkExtractor.sameFileKey(url) }) return "Essa playlist já estava adicionada."
             val p = Playlist(UUID.randomUUID().toString(), name ?: LinkExtractor.nameFromUrl(url), url, epgUrl)
             mutex.withLock { _playlists.value = _playlists.value + p; savePlaylists() }
             refreshPlaylists(listOf(p.id))
@@ -440,14 +443,16 @@ object Repository {
                 links += LinkExtractor.extract(src.url, fetchText(src.url, maxChars = 2_000_000))
             }.exceptionOrNull()
             if (links.isEmpty() && pageError != null) throw pageError
-            val known = _playlists.value.map { it.url }.toSet()
-            val fresh = links.filter { it !in known }.map {
+            // o mesmo arquivo pode aparecer no README e na lista do repositório com endereços diferentes
+            val unique = links.distinctBy { LinkExtractor.sameFileKey(it) }
+            val known = _playlists.value.map { LinkExtractor.sameFileKey(it.url) }.toSet()
+            val fresh = unique.filter { LinkExtractor.sameFileKey(it) !in known }.map {
                 Playlist(UUID.randomUUID().toString(), LinkExtractor.nameFromUrl(it), it, sourceId = src.id)
             }
             mutex.withLock {
                 _playlists.value = _playlists.value + fresh
                 _sources.value = _sources.value.map {
-                    if (it.id == src.id) it.copy(lastChecked = System.currentTimeMillis(), lastError = null, found = links.size) else it
+                    if (it.id == src.id) it.copy(lastChecked = System.currentTimeMillis(), lastError = null, found = unique.size) else it
                 }
                 savePlaylists(); saveSources()
             }

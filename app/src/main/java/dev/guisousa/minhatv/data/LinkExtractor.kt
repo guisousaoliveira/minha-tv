@@ -50,6 +50,20 @@ object LinkExtractor {
         "https://raw.githubusercontent.com/$owner/$repo/HEAD/" +
             path.split('/').joinToString("/") { java.net.URLEncoder.encode(it, "UTF-8").replace("+", "%20") }
 
+    /**
+     * Chave para saber se dois links são o mesmo arquivo: no GitHub, ".../HEAD/x.m3u", ".../main/x.m3u",
+     * ".../refs/heads/main/x.m3u" e "github.com/.../blob/main/x.m3u" são a mesma lista.
+     */
+    fun sameFileKey(url: String): String {
+        val raw = toRaw(url).substringBefore('#')
+        val decoded = runCatching { java.net.URLDecoder.decode(raw.replace("+", "%2B"), "UTF-8") }.getOrDefault(raw)
+        Regex("""^https?://raw\.githubusercontent\.com/([^/]+)/([^/]+)/(?:refs/heads/)?[^/]+/(.+)$""").find(decoded)?.let {
+            val (o, r, path) = it.destructured
+            return "gh:${o.lowercase()}/${r.lowercase()}/$path"
+        }
+        return decoded.replaceFirst(Regex("^https?://"), "")
+    }
+
     fun looksLikePlaylist(url: String): Boolean {
         val l = url.lowercase()
         val path = l.substringBefore('?').substringBefore('#')

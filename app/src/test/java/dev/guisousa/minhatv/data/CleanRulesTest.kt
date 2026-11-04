@@ -37,3 +37,18 @@ class CleanRulesTest {
         assertEquals(0, r.classify("bom", "X", null, ContentType.MOVIE))
     }
 }
+
+class SameFileTest {
+    @Test fun githubRefsPointToSameFile() {
+        val a = LinkExtractor.sameFileKey("https://raw.githubusercontent.com/o/r/HEAD/listas/canais.m3u")
+        assertEquals(a, LinkExtractor.sameFileKey("https://raw.githubusercontent.com/o/r/main/listas/canais.m3u"))
+        assertEquals(a, LinkExtractor.sameFileKey("https://raw.githubusercontent.com/o/r/refs/heads/main/listas/canais.m3u"))
+        assertEquals(a, LinkExtractor.sameFileKey("https://github.com/o/r/blob/main/listas/canais.m3u"))
+        assertTrue(a != LinkExtractor.sameFileKey("https://raw.githubusercontent.com/o/r/main/listas/filmes.m3u"))
+    }
+
+    @Test fun nullGroupIsNoGroup() {
+        val r = M3uParser.parse(sequenceOf("#EXTM3U", "#EXTINF:-1 group-title=\"null\",Canal X", "http://x/live/1.ts"))
+        assertEquals("", r.entries.single().group)
+    }
+}
