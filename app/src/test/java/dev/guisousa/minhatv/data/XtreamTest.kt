@@ -43,6 +43,14 @@ class XtreamTest {
         assertNull(Xtream.versionTag("en"))
     }
 
+    @Test fun versionMarkersInText() {
+        assertEquals("Legendado", Xtream.markerTag("Ted Lasso S01E01 [LEG]"))
+        assertEquals("Legendado", Xtream.markerTag("Versão Legendada [LEG]"))
+        assertEquals("Dublado", Xtream.markerTag("Ted Lasso S01E01 [Dublado]"))
+        assertNull(Xtream.markerTag("Ted Lasso S01E01 - Pilot"))
+        assertNull(Xtream.markerTag("The Legend of Korra S01E01"))
+    }
+
     @Test fun seriesCoverUrlKeepsTheId() {
         val url = Xtream.stubUrl("pl-1", "540106410")
         assertTrue(Xtream.isStub(url))

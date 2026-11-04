@@ -1061,10 +1061,11 @@ object Repository {
     }
 
     /** Resultado de abrir uma série: episódios, ou o motivo de não terem vindo. */
-    class Episodes(val list: List<Entry>, val error: String? = null)
+    class Episodes(val list: List<Entry>, val error: String? = null, val versions: Set<String> = emptySet())
 
     suspend fun episodes(show: Show): Episodes = withContext(Dispatchers.IO) {
         var error: String? = null
+        var versions = emptySet<String>()
         val list = runCatching {
             val rows = db.episodes(show.key)
             val covers = rows.filter { Xtream.isStub(it.url) }
@@ -1087,9 +1088,11 @@ object Repository {
                 android.util.Log.i("MinhaTV", "tempo: ${eps.size} episódios de \"$series\": rede+leitura ${t1 - t0} ms, gravação ${System.currentTimeMillis() - t1} ms")
             }
             if (fetched) list = db.episodes(show.key).filterNot { Xtream.isStub(it.url) }
+            // versões de todas as cópias (a lista abaixo mostra só uma por episódio)
+            versions = list.mapNotNull { versionOf(it) }.toSet()
             list.uniqueEpisodes()
         }.getOrDefault(emptyList())
-        Episodes(list, if (list.isEmpty()) error else null)
+        Episodes(list, if (list.isEmpty()) error else null, versions)
     }
 
     /**

@@ -146,6 +146,11 @@ class Xtream(
                 }
             }
         }
+        // série com cópias legendadas marcadas e outras sem marca: as sem marca são as dubladas
+        // (assim a escolha Dublado/Legendado acha as duas, e o aviso de versão não se engana)
+        if (out.any { markerTag(it.name) == "Legendado" }) {
+            for (i in out.indices) if (markerTag(out[i].name) == null) out[i] = out[i].copy(name = out[i].name + " [Dublado]")
+        }
         return out
     }
 
@@ -160,12 +165,20 @@ class Xtream(
         if (r.peek() != JsonToken.BEGIN_OBJECT) { r.skipValue(); return null }
         val o = HashMap<String, String?>()
         var image: String? = null
+        // textos do "info" onde alguns servidores escrevem a versão ("Versão Legendada [LEG]")
+        val infoText = StringBuilder()
         r.beginObject()
         while (r.hasNext()) {
             val name = r.nextName()
             if (name == "info" && r.peek() == JsonToken.BEGIN_OBJECT) {
                 r.beginObject()
-                while (r.hasNext()) { if (r.nextName() == "movie_image") image = r.value() else r.skipValue() }
+                while (r.hasNext()) {
+                    when (r.nextName()) {
+                        "movie_image" -> image = r.value()
+                        "plot", "name", "title" -> r.value()?.let { infoText.append(' ').append(it) }
+                        else -> r.skipValue()
+                    }
+                }
                 r.endObject()
             } else o[name] = r.value()
         }
@@ -178,8 +191,9 @@ class Xtream(
         val title = o["title"].orNullIfBlank() ?: "$series$marker"
         var name = if (marker.isNotEmpty() && !Regex("""[Ss]\d+\s*[Ee]\d+""").containsMatchIn(title)) "$series$marker - $title" else title
         // alguns servidores dizem a versão num campo à parte ("version": "dub" / "leg"): vai para o nome, onde o app procura
-        versionTag(o["version"] ?: o["audio"] ?: o["language"])?.let { tag ->
-            if (!Regex("""legend|dublad|\b(leg|dub)\b""", RegexOption.IGNORE_CASE).containsMatchIn(name)) name = "$name [$tag]"
+        // a versão também pode vir num campo à parte ("version": "dub" / "leg") ou escrita no "info": vai para o nome, onde o app procura
+        (versionTag(o["version"] ?: o["audio"] ?: o["language"]) ?: markerTag("$title $infoText"))?.let { tag ->
+            if (markerTag(name) == null) name = "$name [$tag]"
         }
         return Entry(
             name = name,
@@ -244,6 +258,16 @@ class Xtream(
             JsonToken.BOOLEAN -> nextBoolean().toString()
             JsonToken.NULL -> { nextNull(); null }
             else -> { skipValue(); null }
+        }
+
+        private val legMark = Regex("""\[\s*(leg|legendado|l)\s*]|vers[aã]o\s+legendada|\blegendad[oa]\b|\(leg\)|\bleg\s*$""", RegexOption.IGNORE_CASE)
+        private val dubMark = Regex("""\[\s*(dub|dublado|d)\s*]|vers[aã]o\s+dublada|\bdublad[oa]\b|\(dub\)|\bdub\s*$""", RegexOption.IGNORE_CASE)
+
+        /** Versão escrita num texto: "[LEG]", "Versão Legendada", "Dublado"... */
+        fun markerTag(text: String): String? = when {
+            legMark.containsMatchIn(text) -> "Legendado"
+            dubMark.containsMatchIn(text) -> "Dublado"
+            else -> null
         }
 
         /** "dub", "dublado", "pt" -> Dublado; "leg", "sub", "legendado" -> Legendado. */
