@@ -1,7 +1,11 @@
+@file:OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+
 package dev.guisousa.minhatv.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -23,6 +27,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.foundation.focusGroup
 import kotlinx.coroutines.delay
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -55,6 +62,9 @@ private val yearRe = Regex("""\b(19|20)\d{2}\b""")
 private fun sortKey(s: String): String =
     java.text.Normalizer.normalize(s.lowercase(), java.text.Normalizer.Form.NFD).replace(Regex("\\p{M}+"), "").trimStart { !it.isLetterOrDigit() }
 
+/** Chave para juntar o mesmo filme repetido: sem etiquetas (FHD, [L], Dublado), sem ano, sem acento. */
+internal fun dupKey(s: String): String = dev.guisousa.minhatv.data.Normalize.name(yearRe.replace(dev.guisousa.minhatv.data.Normalize.displayCached(s).title, " "))
+
 private fun initialOf(s: String): Char {
     val c = sortKey(s).firstOrNull() ?: '#'
     return if (c in 'a'..'z') c.uppercaseChar() else '#'
@@ -84,7 +94,7 @@ internal fun ReleasesRow(lib: Library, type: ContentType, nav: Nav, header: Head
         if (shows.isEmpty()) return
         SectionTitle("Lançamentos", trailing = "${shows.size}")
         MediaRow(shows, POSTER_SAIMO_W) { _, s ->
-            PosterCard(s.name, s.logo, key = "rel:${s.key}", onFocused = { header.show(s.name, "Série · ${s.group}", s.logo) }, onClick = { nav.openShow(s) })
+            PosterCard(s.name, s.logo, key = "rel:${s.key}", tmdbTitle = s.name, tv = true, onFocused = { header.show(s.name, "Série · ${s.group}", s.logo) }, onClick = { nav.openShow(s) })
         }
     }
 }
@@ -125,14 +135,26 @@ fun VodGridScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
             val list = if (type == ContentType.SERIES) {
                 val shows = if (paged) Repository.showsPage(genre, if (newest) null else letter) else Repository.shows(genre)
-                shows.mapIndexed { i, s -> GridItem(s.key, s.name, s.logo, "Série · ${s.group}", yearRe.find(s.name)?.value?.toInt() ?: 0, i, { nav.openShow(s) }, null) }
+                shows.mapIndexed { i, s -> GridItem(s.key, s.name, s.logo?.ifBlank { null }, "Série · ${s.group}", yearRe.find(s.name)?.value?.toInt() ?: 0, i, { nav.openShow(s) }, null) }
             } else {
                 val movies = if (paged) Repository.moviesPage(genre, if (newest) null else letter) else Repository.entries(ContentType.MOVIE, genre, 3000)
-                movies.mapIndexed { i, e -> GridItem(e.url, e.name, e.logo, "Filme · ${e.group}", yearRe.find(e.name)?.value?.toInt() ?: 0, i, { nav.openMovie(e) }, { toggleFav(context, e) }) }
+                movies.mapIndexed { i, e -> GridItem(e.url, e.name, e.logo?.ifBlank { null }, "Filme · ${e.group}", yearRe.find(e.name)?.value?.toInt() ?: 0, i, { nav.openMovie(e) }, { toggleFav(context, e) }) }
             }
             // ordena fora da tela principal, calculando a chave uma vez só por item
             if (newest) list.sortedWith(compareByDescending<GridItem> { it.year }.thenBy { if (paged) it.order else -it.order })
             else list.map { sortKey(it.title) to it }.sortedBy { it.first }.map { it.second }
+        }.let { l ->
+            // o mesmo título repetido (dublado e legendado, outra qualidade): um cartão só, as versões ficam nos detalhes
+            // sem ano junta com o que tem ano; anos diferentes (refilmagem) ficam separados
+            val seen = HashMap<String, MutableSet<Int>>()
+            l.filter { it.title.isNotBlank() }.filter { item ->
+                val k = dupKey(item.title).ifEmpty { sortKey(item.title) }
+                val ys = seen[k]
+                // séries: o ano no nome costuma ser só da temporada, então junta sempre
+                val keep = ys == null || (type != ContentType.SERIES && item.year != 0 && item.year !in ys && ys.any { it != 0 })
+                seen.getOrPut(k) { HashSet() } += item.year
+                keep
+            }
         }
     }
     val letters = remember(items, newest, paged) {
@@ -149,16 +171,29 @@ fun VodGridScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
         }
     }
     val gridState = rememberLazyGridState()
+    // ◀ da grade cai na letra em que você está (e não na letra mais próxima na tela)
+    val letterRequesters = remember { HashMap<Char, FocusRequester>() }
+    val shownLetters = remember { HashSet<Char>() }
+    var gridLetter by remember { mutableStateOf('A') }
+    val currentLetter = if (paged && !newest) letter else gridLetter
     val firstPoster = remember { FocusRequester() }
-    var focusedOnce by rememberSaveable(type, group) { mutableStateOf(false) }
+    var focusedOnce by remember(type, group) { mutableStateOf(false) }
+    // enquanto carrega, o foco fica num cartão de espera dentro da grade (e não pula para o menu de cima)
+    val waitBox = remember { FocusRequester() }
+    var waiting by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val groups = if (type == ContentType.SERIES) lib.showGroups else lib.movieGroups
-    val title = when { genre != null -> genre!!; else -> "Todos ${if (type == ContentType.SERIES) "as séries" else "os filmes"}" }
+    val title = when { genre != null -> genre!!; else -> if (type == ContentType.SERIES) "Todas as séries" else "Todos os filmes" }
 
     Column(Modifier.fillMaxSize()) {
         FocusHeader(header.title ?: title, header.subtitle ?: (if (isAll) "De A a Z" else kind + "s"), image = header.image, tall = false)
         Row(Modifier.padding(start = 48.dp, end = 48.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(if (paged) "$size títulos" else items?.let { "${it.size} títulos" } ?: "Carregando…", fontSize = 15.sp, color = Palette.TextDim, modifier = Modifier.width(130.dp))
+            Text(
+                when {
+                    items == null -> "Carregando…"
+                    paged && !newest -> "${items.size} com $letter"
+                    else -> "${items.size} títulos"
+                }, fontSize = 15.sp, color = Palette.TextDim, modifier = Modifier.width(130.dp))
             TvButton("Gênero: ${genre ?: "Todos"}", selected = picking, onClick = { picking = !picking })
             TvButton("A–Z", selected = !newest, onClick = { newest = false; scope.launch { gridState.scrollToItem(0) } })
             TvButton("Mais novos", selected = newest, onClick = { newest = true; scope.launch { gridState.scrollToItem(0) } })
@@ -167,16 +202,19 @@ fun VodGridScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
             when {
                 picking -> GroupColumn(groups, groups.sumOf { it.count }, genre, alwaysAll = true) { g -> genre = g; picking = false }
                 letters.isNotEmpty() -> LazyColumn(
-                    Modifier.width(56.dp).fillMaxHeight().padding(start = 12.dp),
+                    Modifier.width(56.dp).fillMaxHeight().padding(start = 12.dp)
+                        .focusProperties { enter = { if (currentLetter in shownLetters) letterRequesters[currentLetter] ?: FocusRequester.Default else FocusRequester.Default } }
+                        .focusGroup(),
                     contentPadding = PaddingValues(top = 8.dp, bottom = 32.dp),
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
                     items(letters) { (c, idx) ->
+                        androidx.compose.runtime.DisposableEffect(c) { shownLetters += c; onDispose { shownLetters -= c } }
                         FocusBox(
-                            onClick = { if (idx < 0) { letter = c; scope.launch { gridState.scrollToItem(0) } } else scope.launch { gridState.scrollToItem(idx) } },
+                            onClick = { if (idx < 0) { letter = c; header.title = null; header.subtitle = null; header.image = null; scope.launch { gridState.scrollToItem(0) } } else scope.launch { gridState.scrollToItem(idx) } },
                             onFocused = { if (idx >= 0) scope.launch { gridState.scrollToItem(idx) } },
                             selected = paged && c == letter,
-                            modifier = Modifier.fillMaxWidth().height(30.dp), focusScale = 1f, background = Color.Transparent, shape = RoundedCornerShape(4.dp),
+                            modifier = Modifier.fillMaxWidth().height(30.dp).focusRequester(letterRequesters.getOrPut(c) { FocusRequester() }), focusScale = 1f, background = Color.Transparent, shape = RoundedCornerShape(4.dp),
                         ) { focused ->
                             Text(
                                 c.toString(), Modifier.align(Alignment.Center), textAlign = TextAlign.Center,
@@ -187,11 +225,19 @@ fun VodGridScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
                 }
                 else -> Spacer(Modifier.width(56.dp))
             }
-            if (items == null) { Loading(); return@Row }
+            if (items == null) {
+                Box(Modifier.weight(1f).fillMaxHeight().padding(start = 20.dp, top = 8.dp)) {
+                    FocusBox(onClick = {}, frame = true, focusScale = 1f, modifier = Modifier.width(POSTER_SAIMO_W).aspectRatio(2f / 3f).focusRequester(waitBox).onFocusChanged { if (it.isFocused) waiting = true }) {
+                        Spinner(26.dp, Modifier.align(Alignment.Center))
+                    }
+                }
+                LaunchedEffect(Unit) { if (!focusedOnce || waiting) { delay(60); runCatching { waitBox.requestFocus() } } }
+                return@Row
+            }
             if (items.isEmpty()) { Message("Nada nesta categoria"); return@Row }
             // ao abrir a grade, o foco começa na primeira capa (e não fica perdido no menu)
             LaunchedEffect(items.isNotEmpty()) {
-                if (!focusedOnce) { delay(80); runCatching { firstPoster.requestFocus() }; focusedOnce = true }
+                if (!focusedOnce || waiting) { delay(80); runCatching { firstPoster.requestFocus() }; focusedOnce = true; waiting = false }
             }
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(POSTER_SAIMO_W),
@@ -203,7 +249,7 @@ fun VodGridScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
             ) {
                 itemsIndexed(items, key = { i, it -> "$i:${it.title}" }) { i, it ->
                     PosterCard(
-                        it.title, it.image, key = "grid:${it.id}", onFocused = { header.show(it.title, it.subtitle, it.image) }, onClick = it.open, onLongClick = it.fav,
+                        it.title, it.image, key = "grid:${it.id}", tmdbTitle = if (type == ContentType.SERIES) it.title else null, tv = true, onFocused = { header.show(it.title, it.subtitle, it.image); gridLetter = initialOf(it.title) }, onClick = it.open, onLongClick = it.fav,
                         requester = if (i == 0) firstPoster else null,
                     )
                 }

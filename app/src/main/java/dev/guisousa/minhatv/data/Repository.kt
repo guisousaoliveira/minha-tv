@@ -40,8 +40,9 @@ object Repository {
     private const val BUILTIN_EPG_FILE = "epg_builtin.json"
     /** Fontes no máximo por canal/filme (contando a primeira). */
     const val MAX_SOURCES = 5
-    /** Suba quando mudar o que aparece nas categorias (força reorganizar na próxima abertura). */
-    private const val LIBRARY_RULES = 3
+    /** Suba quando mudar o jeito de aplicar a limpeza no código (força aplicar as regras de novo). */
+    private const val CLEAN_CODE = 3
+    private const val RULES_FILE = "limpeza.json"
     private const val CHECK_PARALLEL = 3
     private const val CHECK_BATCH = 60
     private const val CHECK_OK_AGE = 24 * 3_600_000L
@@ -70,7 +71,7 @@ object Repository {
     }
     private val mutex = Mutex()
     private val loaded = CompletableDeferred<Unit>()
-    private lateinit var db: Db
+    internal lateinit var db: Db
     private var version = 0L
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = false }
 
@@ -105,6 +106,9 @@ object Repository {
         app = context.applicationContext
         prefs = app.getSharedPreferences("minhatv", Context.MODE_PRIVATE)
         db = Db(app)
+        loadSavedRules()
+        db.hideMask = currentMask()
+        db.cleanOnImport = !listReady
         _favorites.value = prefs.getStringSet("favorites", emptySet())!!.toSet()
         scope.launch {
             // 1) rápido: listas salvas + resumo das categorias da última vez -> a tela abre na hora
@@ -138,14 +142,16 @@ object Repository {
                     }
                     db.deleteExcept(_playlists.value.map { it.id })
                 }
-                // regras de filtro mudaram nesta versão: as categorias salvas estão velhas, reorganiza
-                val stale = prefs.getInt("library_rules", 0) != LIBRARY_RULES
+                // regras de limpeza novas (ou app novo): aplica no que já está no banco, uma vez
+                val stale = !listReady && prefs.getString("rules_applied", null) != rulesStamp()
+                if (stale) withContext(background) { applyRulesToDb() }
                 if (!hadCache || db.wasReset || stale) {
-                    // nomes com número sobrescrito ("SPORTV²") estavam juntando com o canal 1
-                    if (stale) runCatching { db.redoTitles("name GLOB '*[⁰¹²³⁴⁵⁶⁷⁸⁹]*'") }
                     rebuild()
-                    prefs.edit().putInt("library_rules", LIBRARY_RULES).apply()
-                } else loadEpg()
+                } else {
+                    loadEpg()
+                    // sem reorganizar na abertura: só confere se o resumo das séries está em dia (refaz se não)
+                    scope.launch { refreshSummary() }
+                }
             } catch (e: Exception) {
                 android.util.Log.e("MinhaTV", "init", e)
             } finally {
@@ -165,6 +171,7 @@ object Repository {
                     if (n == 0) break
                 }
             }
+            runCatching { refreshRules() }
             kotlinx.coroutines.delay(30_000)
             while (true) {
                 runCatching { checkSources() }
@@ -187,6 +194,59 @@ object Repository {
         val tmp = file("library_cache.json.tmp")
         tmp.outputStream().buffered().use { json.encodeToStream(LibraryCache.serializer(), LibraryCache(l.liveGroups, l.movieGroups, l.showGroups), it) }
         tmp.renameTo(file("library_cache.json"))
+    }
+
+    // ---------- Regras de limpeza (regras/limpeza.json no GitHub: só regras, sem links) ----------
+
+    private fun rulesStamp() = "$CLEAN_CODE:${CleanRules.current.version}"
+
+    private fun currentMask(): Int = if (listReady) 0 else CleanRules.JUNK or
+        (if (hideForeign) CleanRules.FOREIGN else 0) or (if (hideAdult) CleanRules.ADULT else 0)
+
+    /** Regras baixadas antes (se forem mais novas que a cópia do app). */
+    private fun loadSavedRules() {
+        runCatching {
+            val f = file(RULES_FILE)
+            if (!f.exists()) return
+            val r = CleanRules.parse(f.readText())
+            if (r.version >= CleanRules.builtin.version) CleanRules.use(r)
+        }.onFailure { android.util.Log.w("MinhaTV", "regras salvas inválidas", it) }
+    }
+
+    /** Aplica as regras atuais em tudo que está no banco (marcas, categorias, lixo) e guarda que aplicou. */
+    private fun applyRulesToDb() {
+        val t0 = System.currentTimeMillis()
+        val n = runCatching { db.reclassify(CleanRules.current) }.getOrElse {
+            android.util.Log.w("MinhaTV", "limpeza: falhou ao aplicar regras", it); return
+        }
+        prefs.edit().putString("rules_applied", rulesStamp()).apply()
+        android.util.Log.i("MinhaTV", "tempo: limpeza aplicou regras v${CleanRules.current.version} em ${System.currentTimeMillis() - t0} ms ($n itens mudaram)")
+    }
+
+    /**
+     * Confere no GitHub se as regras mudaram (no máximo a cada 6 horas). Se mudaram, aplica no
+     * banco em segundo plano e reorganiza. Itens que regras velhas tiraram voltam na próxima
+     * atualização da lista (o app baixa a lista inteira de novo).
+     */
+    private suspend fun refreshRules(force: Boolean = false) = withContext(background) {
+        if (listReady) return@withContext
+        val now = System.currentTimeMillis()
+        if (!force && now - prefs.getLong("rules_checked", 0) < 6 * 3_600_000L) return@withContext
+        val text = runCatching { fetchText(CleanRules.URL, 256 * 1024) }.getOrElse {
+            android.util.Log.w("MinhaTV", "regras: não baixou (${it.message})"); return@withContext
+        }
+        prefs.edit().putLong("rules_checked", now).apply()
+        val r = runCatching { CleanRules.parse(text) }.getOrElse {
+            android.util.Log.w("MinhaTV", "regras: arquivo inválido", it); return@withContext
+        }
+        if (r.version <= CleanRules.current.version) return@withContext
+        file(RULES_FILE).writeText(text)
+        CleanRules.use(r)
+        android.util.Log.i("MinhaTV", "regras: versão ${r.version} baixada")
+        // as listas são baixadas inteiras na próxima atualização (para voltar o que regras velhas tiraram)
+        _playlists.value.forEach { p -> prefs.edit().remove("etag_${p.id}").remove("lastmod_${p.id}").apply() }
+        applyRulesToDb()
+        rebuild()
     }
 
     private fun loadEpg() {
@@ -262,7 +322,7 @@ object Repository {
     /** Esconde canais ao vivo de outros países, menos os de esporte (ligado por padrão). */
     var hideForeign: Boolean
         get() = prefs.getBoolean("hide_foreign", true)
-        set(v) { prefs.edit().putBoolean("hide_foreign", v).apply(); scope.launch { rebuild() } }
+        set(v) { prefs.edit().putBoolean("hide_foreign", v).apply(); db.hideMask = currentMask(); scope.launch { rebuild() } }
 
     /** Esconde categorias adultas (ligado por padrão). */
     // ---- Versão (dublado/legendado), igual ao Saimo: separada da fonte ----
@@ -294,7 +354,13 @@ object Repository {
 
     var hideAdult: Boolean
         get() = prefs.getBoolean("hide_adult", true)
-        set(v) { prefs.edit().putBoolean("hide_adult", v).apply(); scope.launch { rebuild() } }
+        set(v) { prefs.edit().putBoolean("hide_adult", v).apply(); db.hideMask = currentMask(); scope.launch { rebuild() } }
+
+    /**
+     * A lista já vem limpa de onde ela é baixada: a TV não aplica regras de limpeza, não esconde
+     * nada e não testa as fontes em segundo plano. Só guarda a lista e mostra.
+     */
+    const val listReady = true
 
     /** Testa as fontes em segundo plano (ligado por padrão). */
     var checkSourcesEnabled: Boolean
@@ -462,6 +528,7 @@ object Repository {
         refreshLock.withLock {
             try {
                 val limit = System.currentTimeMillis() - (refreshHours * 3_600_000L - 3_600_000L).coerceAtLeast(3_600_000L)
+                runCatching { refreshRules() }
                 _sources.value.filter { !onlyStale || it.lastChecked < limit }.forEach { scanSource(it) }
                 val ids = _playlists.value.filter { !onlyStale || it.lastUpdated < limit }.map { it.id }
                 if (ids.isNotEmpty()) refreshPlaylists(ids, locked = true)
@@ -545,6 +612,7 @@ object Repository {
                 }
             }
             if (counts.live + counts.movie + counts.series == 0) throw IOException("lista vazia")
+            android.util.Log.i("MinhaTV", "limpeza na importação de ${p.name}: ${counts.live + counts.movie + counts.series} itens guardados, ${counts.hidden} marcados para esconder, ${counts.dropped} jogados fora")
 
             val epgUrl = p.epgUrl ?: detectedEpg
             if (epgUrl != null && counts.live > 0) {
@@ -572,46 +640,44 @@ object Repository {
         file("epg_$id.json").outputStream().buffered().use { json.encodeToStream(EpgData.serializer(), data, it) }
     }
 
-    /**
-     * Categorias de canais com a conta certa: sem os canais de fora escondidos e sem repetidos
-     * (o mesmo canal de várias listas conta uma vez). Categoria que fica vazia some.
-     */
-    private fun liveGroups(noForeign: Boolean): List<GroupInfo> {
-        val counts = LinkedHashMap<String, HashSet<String>>()
-        val foreignGroup = HashMap<String, Boolean>()
-        db.liveRows { group, name, tvgId, norm ->
-            if (noForeign && (foreignGroup.getOrPut(group) { Library.isForeignLiveGroup(group) } ||
-                    Library.isForeignLiveEntry(Entry(name = name, url = "", group = group, tvgId = tvgId)))) return@liveRows
-            counts.getOrPut(group) { HashSet() } += norm
-        }
-        return counts.map { (g, set) -> GroupInfo(g, set.size) }.filter { it.count > 0 }
+    /** Resumo das séries e índice de busca em dia com o banco (refeitos só quando as listas mudam). */
+    private fun refreshSummary() {
+        runCatching {
+            val t0 = System.currentTimeMillis()
+            val redone = db.refreshShowSummary()
+            android.util.Log.w("MinhaTV", "resumo de séries ${if (redone) "refeito" else "em dia"} em ${System.currentTimeMillis() - t0} ms")
+            if (redone) rowCache.clear()
+        }.onFailure { android.util.Log.w("MinhaTV", "resumo de séries falhou", it) }
     }
 
     private suspend fun rebuild() = withContext(Dispatchers.IO) {
-        val hide = hideAdult
+        val hide = hideAdult && !listReady
         fun List<GroupInfo>.visible() = Library.sortGroups(if (hide) filterNot { Library.isAdult(it.name) } else this) { it.name }
-        val noForeign = hideForeign
+        db.hideMask = currentMask()
+        val t0 = System.currentTimeMillis()
+        refreshSummary()
         val lib = Library(
             version = ++version,
-            liveGroups = liveGroups(noForeign).visible(),
+            liveGroups = db.liveGroups().visible(),
             movieGroups = db.groups(ContentType.MOVIE).visible(),
             showGroups = db.showGroups().visible(),
         )
+        rowCache.clear()
         _library.value = lib
         writeLibraryCache(lib)
+        runCatching {
+            val (total, shown) = db.cleanStats()
+            android.util.Log.i("MinhaTV", "tempo: organizar em ${System.currentTimeMillis() - t0} ms ($total no banco, $shown canais/filmes únicos visíveis)")
+        }
         loadEpg()
     }
 
     // ---------- Consultas para as telas (rodam fora da thread principal) ----------
 
+    /** Tira os escondidos pelas marcas já guardadas na importação (sem testar nome por nome). */
     private fun List<Entry>.visible(): List<Entry> {
-        val adult = hideAdult
-        val foreign = hideForeign
-        if (!adult && !foreign) return this
-        return filterNot { e ->
-            (adult && Library.isAdult(e.group)) ||
-                (foreign && e.type == ContentType.LIVE && (Library.isForeignLiveGroup(e.group) || Library.isForeignLiveEntry(e)))
-        }
+        val mask = currentMask()
+        return filter { it.hidden and mask == 0 }
     }
 
     /**
@@ -660,11 +726,21 @@ object Repository {
         else -> 200_000L
     }
 
-    suspend fun entries(type: ContentType, group: String?, limit: Int = 60_000): List<Entry> = withContext(Dispatchers.IO) {
+    /** Fileiras já carregadas (voltar a elas ou rolar de volta não consulta o banco de novo). */
+    private val rowCache = java.util.concurrent.ConcurrentHashMap<String, List<Any>>()
+
+    suspend fun entries(type: ContentType, group: String?, limit: Int = 60_000): List<Entry> {
+        val ck = "e|$type|$group|$limit"
+        @Suppress("UNCHECKED_CAST")
+        if (limit <= 50) (rowCache[ck] as? List<Entry>)?.let { return it }
+        return withContext(kotlinx.coroutines.NonCancellable) { entriesUncached(type, group, limit) }.also { if (limit <= 50 && it.isNotEmpty()) rowCache[ck] = it }
+    }
+
+    private suspend fun entriesUncached(type: ContentType, group: String?, limit: Int): List<Entry> = withContext(Dispatchers.IO) {
         val t0 = System.currentTimeMillis()
         val r = runCatching { db.entries(type, group, limit * 2).visible().unique().take(limit) }.getOrDefault(emptyList())
         val ms = System.currentTimeMillis() - t0
-        if (ms > 300) android.util.Log.w("MinhaTV", "lento: categoria $type \"$group\" ${r.size} itens em $ms ms")
+        android.util.Log.i("MinhaTV", "tempo: categoria $type \"$group\" ${r.size} itens em $ms ms")
         r
     }
 
@@ -719,7 +795,7 @@ object Repository {
      * para não roubar internet do vídeo. O que faltar continua na próxima rodada.
      */
     suspend fun checkSources(budget: Int = 3000) = withContext(Dispatchers.IO) {
-        if (checkLock.isLocked || !checkSourcesEnabled) return@withContext
+        if (checkLock.isLocked || !checkSourcesEnabled || listReady) return@withContext
         checkLock.withLock {
             awaitLoaded()
             var done = 0
@@ -787,7 +863,7 @@ object Repository {
     }
 
     suspend fun showsPage(group: String?, letter: Char?, limit: Int = 1500): List<Show> = withContext(Dispatchers.IO) {
-        runCatching { db.showsPage(group, letter, limit).let { l -> if (hideAdult) l.filterNot { Library.isAdult(it.group) } else l } }
+        runCatching { db.showsPage(group, letter, limit).let { l -> if (hideAdult && !listReady) l.filterNot { Library.isAdult(it.group) } else l } }
             .getOrDefault(emptyList())
     }
 
@@ -795,8 +871,17 @@ object Repository {
         runCatching { db.recent(limit * 3).visible().unique().take(limit) }.getOrDefault(emptyList())
     }
 
+    /** "Mais como este": os parecidos do TMDB que existem na lista; completa com os mais novos da mesma categoria. */
+    suspend fun similarMovies(e: Entry, related: List<String>): List<Entry> = withContext(Dispatchers.IO) {
+        runCatching {
+            val found = related.mapNotNull { t -> db.movieByNorm(Normalize.name(t)) }
+            val fill = if (found.size < 12) db.moviesNewest(e.group, 40) else emptyList()
+            (found + fill).filter { it.url != e.url }.visible().unique().filter { Normalize.name(Normalize.displayCached(it.name).title) != Normalize.name(Normalize.displayCached(e.name).title) }.take(24)
+        }.getOrDefault(emptyList())
+    }
+
     suspend fun recentShows(limit: Int = 30): List<Show> = withContext(Dispatchers.IO) {
-        runCatching { db.recentShows(limit).let { l -> if (hideAdult) l.filterNot { Library.isAdult(it.group) } else l } }.getOrDefault(emptyList())
+        runCatching { db.recentShows(limit).let { l -> if (hideAdult && !listReady) l.filterNot { Library.isAdult(it.group) } else l } }.getOrDefault(emptyList())
     }
 
     // ---- Buscas recentes ----
@@ -808,9 +893,16 @@ object Repository {
         prefs.edit().putString("recent_searches", list.joinToString("\n")).apply()
     }
 
-    suspend fun shows(group: String?, limit: Int = 20_000): List<Show> = withContext(Dispatchers.IO) {
+    suspend fun shows(group: String?, limit: Int = 20_000): List<Show> {
+        val ck = "s|$group|$limit"
+        @Suppress("UNCHECKED_CAST")
+        if (limit <= 50) (rowCache[ck] as? List<Show>)?.let { return it }
+        return withContext(kotlinx.coroutines.NonCancellable) { showsUncached(group, limit) }.also { if (limit <= 50 && it.isNotEmpty()) rowCache[ck] = it }
+    }
+
+    private suspend fun showsUncached(group: String?, limit: Int): List<Show> = withContext(Dispatchers.IO) {
         val t0 = System.currentTimeMillis()
-        val r = runCatching { db.shows(group, limit).let { l -> if (hideAdult) l.filterNot { Library.isAdult(it.group) } else l } }
+        val r = runCatching { db.shows(group, limit).let { l -> if (hideAdult && !listReady) l.filterNot { Library.isAdult(it.group) } else l } }
             .getOrDefault(emptyList())
         val ms = System.currentTimeMillis() - t0
         if (ms > 300) android.util.Log.w("MinhaTV", "lento: séries \"$group\" ${r.size} em $ms ms")
@@ -843,7 +935,7 @@ object Repository {
             val t0 = System.currentTimeMillis()
             val (e, s) = db.search(q, quick = quick)
             android.util.Log.w("MinhaTV", "busca${if (quick) " rápida" else ""} \"$q\": ${e.size + s.size} em ${System.currentTimeMillis() - t0} ms")
-            e.visible().unique() to (if (hideAdult) s.filterNot { Library.isAdult(it.group) } else s)
+            e.visible().unique() to (if (hideAdult && !listReady) s.filterNot { Library.isAdult(it.group) } else s)
         }.getOrDefault(emptyList<Entry>() to emptyList())
     }
 

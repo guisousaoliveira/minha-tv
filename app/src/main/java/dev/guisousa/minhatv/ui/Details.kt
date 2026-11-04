@@ -103,7 +103,7 @@ private fun BigButton(
 
 /** Cabeçalho comum: capa, tipo, título, linha de informações e botões. */
 @Composable
-private fun DetailTop(kind: String, title: String, poster: String?, info: List<String>, buttons: @Composable () -> Unit) {
+private fun DetailTop(kind: String, title: String, poster: String?, info: List<String>, overview: String? = null, buttons: @Composable () -> Unit) {
     Row(Modifier.padding(start = 48.dp, end = 48.dp, top = 20.dp)) {
         Logo(poster, Modifier.width(152.dp).height(228.dp).clip(RoundedCornerShape(6.dp)), fallback = title, crop = true)
         Spacer(Modifier.width(32.dp))
@@ -113,6 +113,10 @@ private fun DetailTop(kind: String, title: String, poster: String?, info: List<S
             Text(title, fontSize = 32.sp, fontWeight = FontWeight.Bold, color = Palette.Text, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 36.sp)
             Spacer(Modifier.height(8.dp))
             Text(info.filter { it.isNotBlank() }.joinToString("  ·  "), fontSize = 15.sp, color = Palette.TextDim, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (!overview.isNullOrBlank()) {
+                Spacer(Modifier.height(10.dp))
+                Text(overview, fontSize = 14.sp, color = Palette.TextDim, lineHeight = 20.sp, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth(0.8f))
+            }
             Spacer(Modifier.height(22.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { buttons() }
         }
@@ -142,15 +146,22 @@ fun MovieDetailScreen(e: Entry, nav: Nav) {
     val favs by Repository.favorites.collectAsState()
     val watched by Repository.watched.collectAsState()
     val versions = load(e.url) { (listOf(e) + Repository.alternates(e)).mapNotNull { Repository.versionOf(it) }.toSet() }
-    val similar = load(e.group, e.url) { Repository.entries(ContentType.MOVIE, e.group, 30).filter { it.url != e.url }.take(24) }
     val resume = Repository.getResume(e.url)
+    // capa, fundo e sinopse oficiais (TMDB), quando houver
+    // procura pelo nome limpo (sem FHD, [L], Dublado...), senão o TMDB não acha e só sobra a capa esticada
+    val tmdb = load("tmdb-m", e.name) { dev.guisousa.minhatv.data.Tmdb.lookup(dev.guisousa.minhatv.data.Normalize.displayCached(e.name).title, tv = false) }
+    val extra = load("tmdb-x", e.name) { dev.guisousa.minhatv.data.Tmdb.extra(dev.guisousa.minhatv.data.Normalize.displayCached(e.name).title, tv = false) }
+    // parecidos de verdade (recomendações do TMDB que existem na lista), e não a categoria em ordem alfabética
+    val similar = load(e.url, extra?.related?.size ?: -1) { Repository.similarMovies(e, extra?.related.orEmpty()) }
     Box(Modifier.fillMaxSize()) {
-        Backdrop(e.logo)
+        // só imagem horizontal de verdade (de preferência sem letreiro); a capa em pé esticada fica feia
+        Backdrop(extra?.backdrop ?: tmdb?.backdrop)
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 48.dp)) {
             item("top") {
                 DetailTop(
-                    "Filme", e.name, e.logo,
+                    "Filme", e.name, e.logo ?: tmdb?.poster,
                     listOfNotNull(e.group, e.quality, if (e.url.hashCode().toString() in watched) "Visto" else null),
+                    overview = tmdb?.overview,
                 ) {
                     BigButton(if (resume > 0) "Continuar de ${clock(resume)}" else "Assistir", remember { FocusRequester() }, key = "main:${e.url}", icon = androidx.compose.material.icons.Icons.Filled.PlayArrow) { PlaybackQueue.start(context, listOf(e), 0) }
                     VersionButton(e, versions.orEmpty())
@@ -194,17 +205,19 @@ fun SeriesDetailScreen(show: Show) {
     fun play(e: Entry) = PlaybackQueue.start(context, queue, queue.indexOfFirst { it.url == e.url }.coerceAtLeast(0))
     val ep = if (target.season != null && target.episode != null) " T${target.season} E${target.episode}" else ""
 
+    val tmdb = load("tmdb-t", show.name) { dev.guisousa.minhatv.data.Tmdb.lookup(show.name, tv = true) }
     Box(Modifier.fillMaxSize()) {
-        Backdrop(show.logo)
+        Backdrop(tmdb?.backdrop ?: show.logo)
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 48.dp)) {
             item("top") {
                 DetailTop(
-                    "Série", show.name, show.logo,
+                    "Série", show.name, tmdb?.poster ?: show.logo,
                     listOfNotNull(
                         if (seasonCount > 0) "$seasonCount temporada${if (seasonCount > 1) "s" else ""}" else null,
                         "${all.size} episódios",
                         show.group,
                     ),
+                    overview = tmdb?.overview,
                 ) {
                     BigButton((if (Repository.progress(target.url) != null) "Continuar" else "Assistir") + ep, remember { FocusRequester() }, key = "main:${show.key}", icon = androidx.compose.material.icons.Icons.Filled.PlayArrow) { play(target) }
                     VersionButton(target, versions)

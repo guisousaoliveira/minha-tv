@@ -150,6 +150,7 @@ fun HomeScreen(lib: Library, nav: Nav) {
                 MediaRow(cont, POSTER_W) { i, e ->
                     PosterCard(
                         e.name, e.logo, key = "cont:${e.url}", progress = Repository.progress(e.url) ?: 0f,
+                        tmdbTitle = e.seriesName ?: e.name, tv = e.type == ContentType.SERIES,
                         onFocused = { header.show(e.name, "Continuar · ${e.group}", e.logo) },
                         onClick = { PlaybackQueue.start(context, cont, i) },
                     )
@@ -198,7 +199,8 @@ private fun EntryRow(lib: Library, type: ContentType, group: String, count: Int,
     val context = LocalContext.current
     val items = load(lib.version, type, group) { Repository.entries(type, group, ROW_ITEMS) }
     SectionTitle(group, trailing = "$count")
-    if (items == null) { Box(Modifier.height(if (type == ContentType.LIVE) 150.dp else 250.dp)); return }
+    if (items == null) { LoadingRow(if (type == ContentType.LIVE) 150.dp else 250.dp, key = group); return }
+    FocusMemory.handoff(group, items.firstOrNull()?.let { "$group:${it.url}" })
     val live = type == ContentType.LIVE
     MediaRow(
         items, if (live) CHANNEL_W else POSTER_W,
@@ -230,13 +232,14 @@ private fun openLiveGroup(context: android.content.Context, type: ContentType, g
 private fun ShowRow(lib: Library, group: String, count: Int, nav: Nav, header: HeaderState) {
     val shows = load(lib.version, group) { Repository.shows(group, ROW_ITEMS) }
     SectionTitle(group, trailing = "$count")
-    if (shows == null) { Box(Modifier.height(250.dp)); return }
+    if (shows == null) { LoadingRow(250.dp, key = group); return }
+    FocusMemory.handoff(group, shows.firstOrNull()?.let { "$group:${it.key}" })
     MediaRow(
         shows, POSTER_W,
         seeAll = if (count > shows.size) ({ nav.openCategory(ContentType.SERIES, group) }) else null,
         seeAllCount = count,
     ) { _, s ->
-        PosterCard(s.name, s.logo, key = "$group:${s.key}", onFocused = { header.show(s.name, "Série · ${s.episodeCount} episódios", s.logo) }, onClick = { nav.openShow(s) })
+        PosterCard(s.name, s.logo, key = "$group:${s.key}", tmdbTitle = s.name, tv = true, onFocused = { header.show(s.name, "Série · ${s.episodeCount} episódios", s.logo) }, onClick = { nav.openShow(s) })
     }
 }
 
@@ -257,7 +260,7 @@ fun RowsScreen(lib: Library, type: ContentType, nav: Nav) {
             // atalho logo no topo para a grade com tudo de A a Z
             item("all-top") {
                 Row(Modifier.padding(start = 48.dp, top = 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    TvButton("Todos de A a Z  ·  ${groups.sumOf { it.count }}", onClick = { nav.openCategory(type, ALL_GROUP) })
+                    TvButton("Todos de A a Z  ·  ${groups.sumOf { it.count }}", onClick = { nav.openCategory(type, ALL_GROUP) }, focusKey = "all:$type")
                 }
             }
             item("releases") { ReleasesRow(lib, type, nav, header) }
@@ -510,7 +513,8 @@ fun SearchScreen(lib: Library, nav: Nav) {
         val (entries, shows) = results!!
         if (entries.isEmpty() && shows.isEmpty()) { Message("Nada encontrado para \"$query\""); return@Column }
         val live = entries.filter { it.type == ContentType.LIVE }
-        val movies = entries.filter { it.type == ContentType.MOVIE }
+        // o mesmo filme/série de várias listas aparece uma vez só
+        val movies = entries.filter { it.type == ContentType.MOVIE }.distinctBy { dupKey(it.name).ifEmpty { it.url } }
         FocusHeader(header.title ?: "Resultados", header.subtitle ?: "\"$query\"", image = header.image, detail = header.detail, logo = header.isLogo)
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(top = 8.dp, bottom = 48.dp)) {
             if (live.isNotEmpty()) item("live") {
@@ -529,9 +533,10 @@ fun SearchScreen(lib: Library, nav: Nav) {
                 }
             }
             if (shows.isNotEmpty()) item("shows") {
-                SectionTitle("Séries", trailing = "${shows.size}")
-                MediaRow(shows, POSTER_W) { _, s ->
-                    PosterCard(s.name, s.logo, key = "s:${s.key}", onFocused = { header.show(s.name, "Série · ${s.episodeCount} episódios", s.logo) }, onClick = { nav.openShow(s) })
+                val uniqueShows = shows.distinctBy { dupKey(it.name).ifEmpty { it.key } }
+                SectionTitle("Séries", trailing = "${uniqueShows.size}")
+                MediaRow(uniqueShows, POSTER_W) { _, s ->
+                    PosterCard(s.name, s.logo, key = "s:${s.key}", tmdbTitle = s.name, tv = true, onFocused = { header.show(s.name, "Série · ${s.episodeCount} episódios", s.logo) }, onClick = { nav.openShow(s) })
                 }
             }
         }
@@ -548,9 +553,6 @@ fun SettingsScreen() {
     val status by Repository.status.collectAsState()
     var hours by remember { mutableStateOf(Repository.refreshHours) }
     var autoplay by remember { mutableStateOf(Repository.autoplayLast) }
-    var hideAdult by remember { mutableStateOf(Repository.hideAdult) }
-    var hideForeign by remember { mutableStateOf(Repository.hideForeign) }
-    var checkSources by remember { mutableStateOf(Repository.checkSourcesEnabled) }
     val address = rememberPhoneSetupServer()
     val dateFmt = remember { DateFormat.getDateFormat(context) }
     val clockFmt = remember { DateFormat.getTimeFormat(context) }
@@ -613,21 +615,6 @@ fun SettingsScreen() {
         item {
             ToggleRow("Abrir no último canal", "Ao abrir o app, já começa a tocar o último canal assistido", autoplay) {
                 autoplay = !autoplay; Repository.autoplayLast = autoplay
-            }
-        }
-        item {
-            ToggleRow("Esconder conteúdo adulto", "Oculta categorias adultas em todas as telas", hideAdult) {
-                hideAdult = !hideAdult; Repository.hideAdult = hideAdult
-            }
-        }
-        item {
-            ToggleRow("Esconder canais de outros países", "Deixa só os do Brasil; esporte e luta (UFC, ESPN...) de fora continuam", hideForeign) {
-                hideForeign = !hideForeign; Repository.hideForeign = hideForeign
-            }
-        }
-        item {
-            ToggleRow("Testar fontes sozinho", "Quando a TV não está tocando nada, confere os links e esconde os que estão fora do ar", checkSources) {
-                checkSources = !checkSources; Repository.checkSourcesEnabled = checkSources
             }
         }
 

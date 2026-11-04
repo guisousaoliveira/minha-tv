@@ -243,11 +243,20 @@ fun AppRoot(onLoaded: () -> Unit) {
                 }
                 }
                 }
-                if (top != null) Box(Modifier.fillMaxSize().background(Palette.Background)) {
-                    when (top) {
-                        is Detail.OfShow -> holder.SaveableStateProvider("show:${top.show.key}") { SeriesDetailScreen(top.show) }
-                        is Detail.OfMovie -> holder.SaveableStateProvider("movie:${top.entry.url}") { MovieDetailScreen(top.entry, nav) }
-                        is Detail.Category -> holder.SaveableStateProvider("cat:${top.type}:${top.group}") { CategoryScreen(library, top.type, top.group, nav) }
+                // as telas de baixo da pilha (ex.: a grade "Todos de A a Z" sob os detalhes) também continuam
+                // montadas: ao voltar, a grade está na mesma rolagem e o foco volta para a capa que você abriu
+                stack.forEachIndexed { i, d ->
+                    androidx.compose.runtime.key(i, d) {
+                        val isTop = i == stack.lastIndex
+                        androidx.compose.runtime.CompositionLocalProvider(LocalFocusEnabled provides isTop) {
+                            Box(Modifier.fillMaxSize().graphicsLayer { alpha = if (isTop) 1f else 0f }.background(Palette.Background)) {
+                                when (d) {
+                                    is Detail.OfShow -> holder.SaveableStateProvider("show:${d.show.key}") { SeriesDetailScreen(d.show) }
+                                    is Detail.OfMovie -> holder.SaveableStateProvider("movie:${d.entry.url}") { MovieDetailScreen(d.entry, nav) }
+                                    is Detail.Category -> holder.SaveableStateProvider("cat:${d.type}:${d.group}") { CategoryScreen(library, d.type, d.group, nav) }
+                                }
+                            }
+                        }
                     }
                 }
                 }

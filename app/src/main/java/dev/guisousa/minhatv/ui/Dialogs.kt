@@ -46,12 +46,22 @@ fun showSearchDialog(context: Context, initial: String, onSearch: (String) -> Un
     }
     val q = context.field(layout, "Nome do canal, filme ou série", InputType.TYPE_CLASS_TEXT)
     q.setText(initial)
-    AlertDialog.Builder(context, dev.guisousa.minhatv.R.style.Theme_MinhaTV_Dialog)
+    q.setSelection(q.text.length)
+    val dialog = AlertDialog.Builder(context, dev.guisousa.minhatv.R.style.Theme_MinhaTV_Dialog)
         .setTitle("Buscar")
         .setView(layout)
         .setPositiveButton("Buscar") { _, _ -> onSearch(q.text.toString()) }
         .setNegativeButton("Cancelar", null)
         .show()
+    // o Enter / "Buscar" do teclado da tela já faz a busca (com o teclado aberto o controle não alcança o botão)
+    q.imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
+    q.setSingleLine(true)
+    q.setOnEditorActionListener { _, action, ev ->
+        val enter = action == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH || action == android.view.inputmethod.EditorInfo.IME_ACTION_DONE ||
+            action == android.view.inputmethod.EditorInfo.IME_ACTION_GO || (ev?.keyCode == android.view.KeyEvent.KEYCODE_ENTER && ev.action == android.view.KeyEvent.ACTION_UP)
+        if (enter) { onSearch(q.text.toString()); dialog.dismiss() }
+        enter
+    }
     q.requestFocus()
 }
 

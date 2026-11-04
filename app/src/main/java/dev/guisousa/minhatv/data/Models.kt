@@ -50,6 +50,8 @@ data class Entry(
     val quality: String? = null,
     /** Chave para achar as outras fontes do mesmo título (vem do banco). */
     val norm: String? = null,
+    /** Marcas da limpeza (CleanRules.FOREIGN/ADULT), vindas do banco. */
+    val hidden: Int = 0,
 )
 
 @Serializable

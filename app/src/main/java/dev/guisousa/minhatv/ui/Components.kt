@@ -128,7 +128,7 @@ fun FocusBox(
         val tick = FocusMemory.restore.intValue
         androidx.compose.runtime.LaunchedEffect(focusKey, tick) {
             if (FocusMemory.last == focusKey) {
-                kotlinx.coroutines.delay(if (tick > 0) 150 else 60)
+                kotlinx.coroutines.delay(if (tick > 0) 40 else 60)
                 runCatching { requester.requestFocus() }
             }
         }
@@ -181,6 +181,8 @@ object FocusMemory {
         restore.intValue++
     }
     fun clear() = stack.clear()
+    /** Se o foco estava no esqueleto da fileira [row] enquanto carregava, passa para o primeiro cartão. */
+    fun handoff(row: String, firstKey: String?) { if (last == "load:$row" && firstKey != null) last = firstKey }
 }
 
 /** Cor do texto dentro de um FocusBox "fill". */
@@ -191,8 +193,8 @@ fun textOn(focused: Boolean, dim: Boolean = false) = when {
 }
 
 @Composable
-fun TvButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, selected: Boolean = false) {
-    FocusBox(onClick = onClick, modifier = modifier, selected = selected, shape = RoundedCornerShape(4.dp)) { focused ->
+fun TvButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, selected: Boolean = false, focusKey: String? = null) {
+    FocusBox(onClick = onClick, modifier = modifier, selected = selected, shape = RoundedCornerShape(4.dp), focusKey = focusKey) { focused ->
         Text(
             text,
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
@@ -236,7 +238,7 @@ private fun Switch(checked: Boolean, focused: Boolean) {
 }
 
 @Composable
-fun Logo(url: String?, modifier: Modifier = Modifier, fallback: String = "", crop: Boolean = false) {
+fun Logo(url: String?, modifier: Modifier = Modifier, fallback: String = "", crop: Boolean = false, onError: (() -> Unit)? = null) {
     Box(modifier.background(Color(0xFF1B1B1B)), contentAlignment = Alignment.Center) {
         Text(
             initials(fallback),
@@ -252,6 +254,7 @@ fun Logo(url: String?, modifier: Modifier = Modifier, fallback: String = "", cro
                 contentDescription = null,
                 contentScale = if (crop) ContentScale.Crop else ContentScale.Fit,
                 modifier = Modifier.fillMaxSize().padding(if (crop) 0.dp else 6.dp),
+                onError = { onError?.invoke() },
             )
         }
     }
@@ -308,7 +311,14 @@ fun PosterCard(
     progress: Float? = null,
     requester: FocusRequester? = null,
     key: String = title,
+    tmdbTitle: String? = null,
+    tv: Boolean = false,
 ) {
+    // série: a lista costuma trazer um quadro do episódio; usa o pôster oficial do TMDB quando achar
+    val official = if (tmdbTitle != null && dev.guisousa.minhatv.data.Tmdb.enabled) {
+        androidx.compose.runtime.produceState<String?>(null, tmdbTitle) { value = dev.guisousa.minhatv.data.Tmdb.lookup(tmdbTitle, tv)?.poster }.value
+    } else null
+    @Suppress("NAME_SHADOWING") val image = if (tv) official ?: image else image ?: official
     Column {
         FocusBox(
             onClick = onClick, onLongClick = onLongClick, onFocused = onFocused,
@@ -316,8 +326,10 @@ fun PosterCard(
             modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f).then(if (requester != null) Modifier.focusRequester(requester) else Modifier),
             focusKey = "p:$key",
         ) {
-            Logo(image, Modifier.fillMaxSize(), fallback = "", crop = true)
-            if (image.isNullOrBlank()) {
+            // capa que não abre (link quebrado) vira o mesmo cartão com o nome, e não um quadrado cinza vazio
+            var broken by remember(image) { mutableStateOf(false) }
+            Logo(image, Modifier.fillMaxSize(), fallback = "", crop = true, onError = { broken = true })
+            if (image.isNullOrBlank() || broken) {
                 // sem capa: inicial grande, como no Saimo
                 Text(
                     title.trimStart { !it.isLetterOrDigit() }.take(1).uppercase(), Modifier.align(Alignment.Center),
@@ -537,5 +549,24 @@ fun QrCode(text: String, modifier: Modifier = Modifier) {
     }
     if (bitmap != null) {
         Image(bitmap, contentDescription = "QR Code", modifier = modifier.clip(RoundedCornerShape(6.dp)))
+    }
+}
+
+
+/**
+ * Fileira ainda carregando: um cartão "esqueleto" que pode receber o foco (descendo com ▼ o foco
+ * não some). Quando a fileira chega, o foco passa para o primeiro cartão dela.
+ */
+@Composable
+fun LoadingRow(height: Dp, key: String? = null) {
+    androidx.compose.foundation.layout.Row(
+        Modifier.padding(horizontal = 48.dp, vertical = 10.dp).height(height),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        FocusBox(onClick = {}, frame = true, focusScale = 1f, modifier = Modifier.width(136.dp).fillMaxHeight(), focusKey = key?.let { "load:$it" }) {
+            Skeleton(Modifier.fillMaxSize())
+            Spinner(22.dp, Modifier.align(Alignment.Center))
+        }
+        repeat(6) { Skeleton(Modifier.width(136.dp).fillMaxHeight()) }
     }
 }

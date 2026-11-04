@@ -67,3 +67,10 @@ app/src/main/java/dev/guisousa/minhatv/
   ui/                      telas em Compose para controle remoto
   player/PlayerActivity.kt player (ExoPlayer) com zapping
 ```
+
+## Regras de limpeza
+
+`regras/limpeza.json` guarda só as regras de limpeza (categorias para esconder ou juntar, países, adulto,
+exceções de esporte). Não tem links, listas nem senhas. O app traz uma cópia e confere a do GitHub a cada
+6 horas; quando `versao` sobe, a TV aplica as regras no que já baixou, em segundo plano. A limpeza é feita
+uma vez, na importação, e guardada no banco: as telas só leem o resultado.
