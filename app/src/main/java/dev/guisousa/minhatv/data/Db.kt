@@ -222,7 +222,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
         db.beginTransaction()
         try {
             val st = db.compileStatement(
-                "INSERT INTO entries(playlist,name,url,grp,logo,type,show_key,series,season,episode) VALUES(?,?,?,?,?,2,?,?,?,?)"
+                "INSERT INTO entries(playlist,name,url,grp,logo,type,show_key,series,season,episode,ua) VALUES(?,?,?,?,?,2,?,?,?,?,?)"
             )
             for (e in list) {
                 st.clearBindings()
@@ -235,6 +235,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
                 st.bindString(7, series)
                 e.season?.let { st.bindLong(8, it.toLong()) }
                 e.episode?.let { st.bindLong(9, it.toLong()) }
+                e.userAgent?.let { st.bindString(10, it) }
                 st.executeInsert()
             }
             val n = list.size.toString()
