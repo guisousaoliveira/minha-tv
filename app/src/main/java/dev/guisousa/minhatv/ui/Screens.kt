@@ -267,6 +267,7 @@ fun RowsScreen(lib: Library, type: ContentType, nav: Nav) {
                 }
             }
             item("releases") { ReleasesRow(lib, type, nav, header) }
+            if (type == ContentType.MOVIE) item("popular") { PopularRow(lib, nav, header) }
             groups.forEach { g ->
                 item(g.name) {
                     if (type == ContentType.SERIES) ShowRow(lib, g.name, g.count, nav, header)

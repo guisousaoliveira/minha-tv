@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.sp
 import dev.guisousa.minhatv.data.ContentType
 import dev.guisousa.minhatv.data.Library
 import dev.guisousa.minhatv.data.Repository
+import dev.guisousa.minhatv.data.Tmdb
 import kotlinx.coroutines.launch
 
 // Páginas de Filmes/Séries e a grade "Ver todos", no estilo do Saimo TV.
@@ -96,6 +97,23 @@ internal fun ReleasesRow(lib: Library, type: ContentType, nav: Nav, header: Head
         MediaRow(shows, POSTER_SAIMO_W) { _, s ->
             PosterCard(s.name, s.logo, key = "rel:${s.key}", tmdbTitle = s.name, tv = true, onFocused = { header.show(s.name, "Série · ${s.group}", s.logo) }, onClick = { nav.openShow(s) })
         }
+    }
+}
+
+/** "Em alta no Brasil": filmes populares agora no Brasil (TMDB) que estão nas listas. */
+@Composable
+internal fun PopularRow(lib: Library, nav: Nav, header: HeaderState) {
+    if (!Tmdb.enabled) return
+    val context = LocalContext.current
+    val items = load(lib.version, "pop-m") { Repository.popularMovies() } ?: run { Box(Modifier.height(290.dp)); return }
+    if (items.isEmpty()) return
+    SectionTitle("Em alta no Brasil", trailing = "${items.size}")
+    MediaRow(items, POSTER_SAIMO_W) { _, e ->
+        PosterCard(
+            e.name, e.logo, key = "pop:${e.url}", progress = Repository.progress(e.url),
+            onFocused = { header.show(e.name, "Filme · ${e.group}", e.logo) },
+            onClick = { nav.openMovie(e) }, onLongClick = { toggleFav(context, e) },
+        )
     }
 }
 

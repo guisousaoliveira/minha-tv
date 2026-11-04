@@ -57,6 +57,8 @@ data class Entry(
     val norm: String? = null,
     /** Marcas da limpeza (CleanRules.FOREIGN/ADULT), vindas do banco. */
     val hidden: Int = 0,
+    /** Quando o item entrou no servidor (unix, campo "added" do Xtream). Ordena os lançamentos. */
+    val added: Long? = null,
 )
 
 @Serializable

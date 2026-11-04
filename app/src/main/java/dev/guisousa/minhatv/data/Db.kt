@@ -43,6 +43,8 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
         if ("hide" !in cols) db.execSQL("ALTER TABLE entries ADD COLUMN hide INTEGER NOT NULL DEFAULT 0")
         if ("mkey" !in cols) db.execSQL("ALTER TABLE entries ADD COLUMN mkey TEXT")
         if ("rep" !in cols) db.execSQL("ALTER TABLE entries ADD COLUMN rep INTEGER NOT NULL DEFAULT 1")
+        // quando o item entrou no servidor (Xtream "added"): ordena os lançamentos
+        if ("added" !in cols) db.execSQL("ALTER TABLE entries ADD COLUMN added INTEGER")
         // tabela à parte (não some quando as listas são baixadas de novo) e sem mudar a versão do banco
         db.execSQL(
             """CREATE TABLE IF NOT EXISTS health(
@@ -78,7 +80,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
                 playlist TEXT NOT NULL, name TEXT NOT NULL, url TEXT NOT NULL, grp TEXT NOT NULL,
                 logo TEXT, tvg_id TEXT, type INTEGER NOT NULL, ua TEXT, ref TEXT,
                 show_key TEXT, series TEXT, season INTEGER, episode INTEGER, norm TEXT, title TEXT, tag TEXT,
-                hide INTEGER NOT NULL DEFAULT 0, mkey TEXT, rep INTEGER NOT NULL DEFAULT 1)"""
+                hide INTEGER NOT NULL DEFAULT 0, mkey TEXT, rep INTEGER NOT NULL DEFAULT 1, added INTEGER)"""
         )
         db.execSQL("CREATE INDEX idx_norm ON entries(norm, type)")
         db.execSQL("CREATE INDEX idx_type_grp ON entries(type, grp)")
@@ -119,7 +121,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
         try {
             db.delete("entries", "playlist = ?", arrayOf(playlistId))
             val st = db.compileStatement(
-                "INSERT INTO entries(playlist,name,url,grp,logo,tvg_id,type,ua,ref,show_key,series,season,episode,norm,title,tag,hide,mkey) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                "INSERT INTO entries(playlist,name,url,grp,logo,tvg_id,type,ua,ref,show_key,series,season,episode,norm,title,tag,hide,mkey,added) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
             )
             val rules = CleanRules.current
             val clean = cleanOnImport
@@ -171,6 +173,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
                     mergeKey(e.type, d.title, norm, e.logo, e.url)?.let { st.bindString(18, it) }
                 }
                 st.bindLong(17, hide.toLong())
+                e.added?.let { st.bindLong(19, it) }
                 val id = st.executeInsert()
                 if (episode) {
                     val a = shows[lastSeriesKey] ?: ShowAgg(lastSeriesClean, group, id, id).also { shows[lastSeriesKey] = it }
@@ -570,11 +573,33 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
         return showsByKeys(keys("SELECT show_key FROM entries INDEXED BY idx_type_grp WHERE type = 2$gw AND $lw GROUP BY show_key ORDER BY $order LIMIT $limit", ga + la))
     }
 
-    /** Lançamentos: filmes com o ano atual ou o anterior no nome, os adicionados por último primeiro. */
+    /**
+     * Lançamentos: de preferência os filmes da categoria "Lançamentos" do servidor; senão, os com o
+     * ano atual ou o anterior no nome. Os que chegaram por último ao servidor (added) vêm primeiro.
+     * (Antes era só a ordem de importação, que trazia o fim da lista: títulos legendados em hindi/tâmil.)
+     */
     fun recent(limit: Int): List<Entry> {
         val y = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
-        return query("type = 1 AND (name LIKE ? OR name LIKE ?) AND rep = 1 AND $vis ORDER BY id DESC LIMIT $limit", arrayOf("%$y%", "%${y - 1}%"))
+        val order = "ORDER BY COALESCE(added, 0) DESC, (name LIKE ?) DESC, id DESC LIMIT $limit"
+        val cat = query("type = 1 AND grp LIKE '%lan_amento%' AND rep = 1 AND $vis $order", arrayOf("%$y%"))
+        if (cat.size >= 12) return cat
+        return query("type = 1 AND (name LIKE ? OR name LIKE ?) AND rep = 1 AND $vis $order", arrayOf("%$y%", "%${y - 1}%", "%$y%"))
     }
+
+    /** Filmes da lista com estas chaves exatas (títulos em alta do TMDB), na ordem pedida. */
+    fun moviesByKeys(keys: List<String>): List<Entry> {
+        if (keys.isEmpty()) return emptyList()
+        val found = HashMap<String, Entry>()
+        keys.distinct().chunked(400).forEach { chunk ->
+            query("norm IN (${chunk.joinToString(",") { "?" }}) AND +type = 1 AND rep = 1 AND $vis", chunk.toTypedArray())
+                .forEach { e -> e.norm?.let { found.putIfAbsent(it, e) } }
+        }
+        return keys.mapNotNull { found[it] }
+    }
+
+    /** A playlist tem itens guardados (o banco pode ter sido recriado). */
+    fun hasPlaylist(playlistId: String): Boolean =
+        readableDatabase.rawQuery("SELECT 1 FROM entries WHERE playlist = ? LIMIT 1", arrayOf(playlistId)).use { it.moveToFirst() }
 
     /** Séries com o ano atual ou o anterior no nome. */
     fun recentShows(limit: Int): List<Show> {
@@ -761,7 +786,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
     }
 
     private fun query(where: String, args: Array<String>): List<Entry> = readableDatabase.rawQuery(
-        "SELECT playlist,name,url,grp,logo,tvg_id,type,ua,ref,series,season,episode,title,tag,norm,hide FROM entries WHERE $where", args,
+        "SELECT playlist,name,url,grp,logo,tvg_id,type,ua,ref,series,season,episode,title,tag,norm,hide,added FROM entries WHERE $where", args,
     ).use { c ->
         c.map {
             val title = it.getStringOrNull(12)
@@ -783,6 +808,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
                 season = if (it.isNull(10)) null else it.getInt(10),
                 episode = if (it.isNull(11)) null else it.getInt(11),
                 hidden = it.getInt(15),
+                added = if (it.isNull(16)) null else it.getLong(16),
             )
         }
     }

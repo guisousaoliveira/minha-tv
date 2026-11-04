@@ -261,7 +261,7 @@ object Repository {
         CleanRules.use(r)
         android.util.Log.i("MinhaTV", "regras: versão ${r.version} baixada")
         // as listas são baixadas inteiras na próxima atualização (para voltar o que regras velhas tiraram)
-        _playlists.value.forEach { p -> prefs.edit().remove("etag_${p.id}").remove("lastmod_${p.id}").apply() }
+        _playlists.value.forEach { p -> prefs.edit().remove("etag_${p.id}").remove("lastmod_${p.id}").remove("listver_${p.id}").apply() }
         applyRulesToDb()
         rebuild()
     }
@@ -633,7 +633,13 @@ object Repository {
             }
             // na primeira importação, mostra os canais desta lista já, sem esperar as outras.
             // Depois disso reorganiza só no fim, para o menu não ficar pulando enquanto alguém navega.
-            if (total > 1 && _library.value.isEmpty) runCatching { rebuild() }
+            if (_library.value.isEmpty) runCatching { rebuild() }
+        }
+        // guias das listas que ficaram para depois (primeira importação: o conteúdo aparece antes)
+        val epgs = synchronized(pendingEpg) { pendingEpg.toMap().also { pendingEpg.clear() } }
+        if (epgs.isNotEmpty()) {
+            _status.value = "Baixando guia de programação…"
+            withContext(background) { epgs.forEach { (id, url) -> runCatching { downloadEpg(id, url) } } }
         }
         _status.value = "Baixando guia de programação…"
         refreshBuiltinEpg()
@@ -663,18 +669,30 @@ object Repository {
         }
     }
 
+    /** Guias de programação para baixar depois de mostrar o conteúdo (lista id -> endereço do guia). */
+    private val pendingEpg = LinkedHashMap<String, String>()
+
     private suspend fun refreshOne(p: Playlist): Playlist = withContext(background) {
         try {
+            val hasData = p.lastError == null && p.liveCount + p.movieCount + p.seriesCount > 0
             // lista igual à da última vez: não baixa nem reorganiza nada
-            if (!p.isXtream && p.lastError == null && p.liveCount + p.movieCount + p.seriesCount > 0 && unchanged(p)) {
+            if (!p.isXtream && hasData && unchanged(p)) {
                 return@withContext p.copy(lastUpdated = System.currentTimeMillis())
             }
             var detectedEpg: String? = null
             var head = ""
             val counts: Db.Counts
+            var listVersion: String? = null
             if (p.isXtream) {
                 val x = xtream(p)
-                x.login()
+                listVersion = x.login()
+                // o servidor diz que as listas não mudaram desde a última importação: não baixa tudo de novo
+                if (listVersion != null && hasData && prefs.getString("listver_${p.id}", null) == listVersion && db.hasPlaylist(p.id)) {
+                    android.util.Log.i("MinhaTV", "${p.name}: listas iguais às da última vez ($listVersion), nada para baixar")
+                    val epg = p.epgUrl ?: p.detectedEpgUrl
+                    if (epg != null && p.liveCount > 0 && epgStale(p.id)) runCatching { downloadEpg(p.id, epg) }
+                    return@withContext p.copy(lastUpdated = System.currentTimeMillis())
+                }
                 val label = _status.value ?: "Atualizando ${p.name}"
                 var n = 0
                 counts = db.replacePlaylist(p.id) { add ->
@@ -705,10 +723,17 @@ object Repository {
             if (counts.live + counts.movie + counts.series == 0) throw IOException("lista vazia")
             android.util.Log.i("MinhaTV", "limpeza na importação de ${p.name}: ${counts.live + counts.movie + counts.series} itens guardados, ${counts.hidden} marcados para esconder, ${counts.dropped} jogados fora")
 
+            if (p.isXtream) prefs.edit().apply { if (listVersion != null) putString("listver_${p.id}", listVersion) else remove("listver_${p.id}") }.apply()
+
             val epgUrl = p.epgUrl ?: detectedEpg
             if (epgUrl != null && counts.live > 0) {
-                _status.value = "Baixando guia de programação de ${p.name}…"
-                runCatching { downloadEpg(p.id, epgUrl) }
+                if (_library.value.isEmpty) {
+                    // primeira importação: mostra canais e filmes antes, o guia vem logo depois
+                    synchronized(pendingEpg) { pendingEpg[p.id] = epgUrl }
+                } else {
+                    _status.value = "Baixando guia de programação de ${p.name}…"
+                    runCatching { downloadEpg(p.id, epgUrl) }
+                }
             }
             p.copy(
                 lastUpdated = System.currentTimeMillis(),
@@ -722,6 +747,12 @@ object Repository {
             // mantém os canais antigos se a atualização falhar
             p.copy(lastError = e.message ?: e.javaClass.simpleName, lastUpdated = System.currentTimeMillis())
         }
+    }
+
+    /** O guia desta lista tem mais de 12 horas (ou nem existe). */
+    private fun epgStale(id: String): Boolean {
+        val f = file("epg_$id.json")
+        return !f.exists() || f.lastModified() < System.currentTimeMillis() - 12 * 3_600_000L
     }
 
     private fun downloadEpg(id: String, url: String) {
@@ -958,7 +989,37 @@ object Repository {
     }
 
     suspend fun recentMovies(limit: Int = 30): List<Entry> = withContext(Dispatchers.IO) {
-        runCatching { db.recent(limit * 3).visible().unique().take(limit) }.getOrDefault(emptyList())
+        // títulos em outro alfabeto (hindi, chinês...) vão para o fim da fileira; a ordem do banco fica no resto
+        runCatching { db.recent(limit * 3).visible().unique().sortedBy { nonLatin(it.name) }.take(limit) }.getOrDefault(emptyList())
+    }
+
+    /** O título tem letras de outro alfabeto (devanágari, chinês, árabe...). */
+    private fun nonLatin(s: String): Boolean = s.any { c ->
+        c.isLetter() && Character.UnicodeScript.of(c.code) != Character.UnicodeScript.LATIN
+    }
+
+    @Volatile private var popularCache: Pair<Long, List<Entry>>? = null
+
+    /**
+     * "Em alta no Brasil": filmes populares agora no Brasil (TMDB, região BR) que existem nas listas.
+     * Vazio sem a chave do TMDB. Guardado por 6 horas.
+     */
+    suspend fun popularMovies(limit: Int = 30): List<Entry> = withContext(Dispatchers.IO) {
+        if (!Tmdb.enabled) return@withContext emptyList()
+        popularCache?.let { (at, list) -> if (System.currentTimeMillis() - at < 6 * 3_600_000L && list.isNotEmpty()) return@withContext list }
+        runCatching {
+            val titles = Tmdb.popularBr()
+            val keys = titles.flatMap { t ->
+                listOfNotNull(
+                    t.year?.let { Normalize.key("${t.title} ($it)") }, Normalize.key(t.title),
+                    t.original?.let { o -> t.year?.let { Normalize.key("$o ($it)") } }, t.original?.let { Normalize.key(it) },
+                ).filter { it.length >= 2 }
+            }
+            val found = db.moviesByKeys(keys).visible().unique()
+            // um por título do TMDB, na ordem de popularidade
+            val seen = HashSet<String>()
+            found.filter { seen.add(Normalize.name(Normalize.displayCached(it.name).title).replace(Regex("(19|20)\\d{2}$"), "")) }.take(limit)
+        }.getOrDefault(emptyList()).also { if (it.isNotEmpty()) popularCache = System.currentTimeMillis() to it }
     }
 
     /** "Mais como este": os parecidos do TMDB que existem na lista; completa com os mais novos da mesma categoria. */

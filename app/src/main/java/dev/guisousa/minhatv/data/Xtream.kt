@@ -26,24 +26,38 @@ class Xtream(
     private fun api(action: String? = null, extra: String = "") =
         "$base/player_api.php?username=$u&password=$p" + (action?.let { "&action=$it" } ?: "") + extra
 
-    /** Confere usuário e senha (o servidor responde auth = 0 quando estão errados). */
-    fun login() {
-        val auth = open(api()) { input ->
-            var auth: String? = null
+    /**
+     * Confere usuário e senha (o servidor responde auth = 0 quando estão errados).
+     * Devolve a versão das listas (server_info.list_version), quando o servidor informa:
+     * se for igual à da última importação, não precisa baixar tudo de novo.
+     */
+    fun login(): String? {
+        var auth: String? = null
+        var version: String? = null
+        open(api()) { input ->
             reader(input).use { r ->
                 if (r.peek() != JsonToken.BEGIN_OBJECT) throw IOException("o servidor não respondeu como um servidor Xtream")
                 r.beginObject()
                 while (r.hasNext()) {
-                    if (r.nextName() == "user_info" && r.peek() == JsonToken.BEGIN_OBJECT) {
+                    val section = r.nextName()
+                    if ((section == "user_info" || section == "server_info") && r.peek() == JsonToken.BEGIN_OBJECT) {
                         r.beginObject()
-                        while (r.hasNext()) { if (r.nextName() == "auth") auth = r.value() else r.skipValue() }
+                        while (r.hasNext()) {
+                            val key = r.nextName()
+                            when {
+                                section == "user_info" && key == "auth" -> auth = r.value()
+                                section == "server_info" && key == "list_version" -> version = r.value()
+                                else -> r.skipValue()
+                            }
+                        }
                         r.endObject()
                     } else r.skipValue()
                 }
             }
-            auth
-        } as String?
+            null
+        }
         if (auth == "0") throw IOException("usuário ou senha não aceitos pelo servidor")
+        return version?.trim()?.ifBlank { null }
     }
 
     /** category_id -> nome da categoria. */
@@ -81,6 +95,7 @@ class Xtream(
                 logo = o["stream_icon"].orNullIfBlank(),
                 type = ContentType.MOVIE,
                 userAgent = uaFor(o["direct_source"]),
+                added = o["added"]?.trim()?.toLongOrNull(),
             ))
         }
     }

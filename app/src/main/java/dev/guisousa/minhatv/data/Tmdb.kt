@@ -78,6 +78,32 @@ object Tmdb {
         }
     }
 
+    /** Título de filme do TMDB: nome em português, nome original e ano. */
+    class Title(val title: String, val original: String?, val year: Int?)
+
+    /** Filmes em alta no Brasil agora (populares na região BR + mais vistos da semana), em ordem de popularidade. */
+    fun popularBr(): List<Title> {
+        if (!enabled) return emptyList()
+        val pages = listOf(
+            "https://api.themoviedb.org/3/movie/popular" to arrayOf("language" to "pt-BR", "region" to "BR", "page" to "1"),
+            "https://api.themoviedb.org/3/movie/popular" to arrayOf("language" to "pt-BR", "region" to "BR", "page" to "2"),
+            "https://api.themoviedb.org/3/trending/movie/week" to arrayOf("language" to "pt-BR"),
+            "https://api.themoviedb.org/3/movie/now_playing" to arrayOf("language" to "pt-BR", "region" to "BR"),
+        )
+        val seen = HashSet<String>()
+        return pages.flatMap { (url, params) ->
+            runCatching { get(url, *params)?.get("results")?.jsonArray.orEmpty() }.getOrDefault(emptyList())
+        }.mapNotNull { r ->
+            val o = r.jsonObject
+            val id = o["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+            if (!seen.add(id)) return@mapNotNull null
+            val title = o["title"]?.jsonPrimitive?.contentOrNull?.ifBlank { null } ?: return@mapNotNull null
+            val original = o["original_title"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() && it != title }
+            val year = o["release_date"]?.jsonPrimitive?.contentOrNull?.take(4)?.toIntOrNull()
+            Title(title, original, year)
+        }
+    }
+
     private fun get(base: String, vararg params: Pair<String, String>): JsonObject? {
         val url = base.toHttpUrl().newBuilder().addQueryParameter("api_key", BuildConfig.TMDB_KEY)
             .apply { params.forEach { (k, v) -> addQueryParameter(k, v) } }.build()
