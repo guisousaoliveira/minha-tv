@@ -11,7 +11,14 @@ import java.net.URLEncoder
  * Canais e filmes vêm de uma vez; das séries vêm só as capas, e os episódios de cada uma
  * são pedidos ao servidor quando a série é aberta (get_series_info).
  */
-class Xtream(val base: String, val user: String, val pass: String, private val open: (String, (InputStream) -> Any?) -> Any?) {
+class Xtream(
+    val base: String,
+    val user: String,
+    val pass: String,
+    /** O mesmo User-Agent da conexão com a API vai para o player (servidores Xtream costumam amarrar o acesso a ele). */
+    private val userAgent: String?,
+    private val open: (String, (InputStream) -> Any?) -> Any?,
+) {
 
     private val u = enc(user)
     private val p = enc(pass)
@@ -52,11 +59,12 @@ class Xtream(val base: String, val user: String, val pass: String, private val o
             val id = o["stream_id"] ?: return@eachObject
             emit(Entry(
                 name = o["name"] ?: return@eachObject,
-                url = "$base/live/$u/$p/$id.ts",
+                url = o["direct_source"].httpOrNull() ?: "$base/live/$u/$p/$id.ts",
                 group = cats[o["category_id"]] ?: "",
                 logo = o["stream_icon"].orNullIfBlank(),
                 tvgId = o["epg_channel_id"].orNullIfBlank(),
                 type = ContentType.LIVE,
+                userAgent = uaFor(o["direct_source"]),
             ))
         }
     }
@@ -72,6 +80,7 @@ class Xtream(val base: String, val user: String, val pass: String, private val o
                 group = cats[o["category_id"]] ?: "",
                 logo = o["stream_icon"].orNullIfBlank(),
                 type = ContentType.MOVIE,
+                userAgent = uaFor(o["direct_source"]),
             ))
         }
     }
@@ -161,8 +170,15 @@ class Xtream(val base: String, val user: String, val pass: String, private val o
             seriesName = series,
             season = season,
             episode = number,
+            userAgent = uaFor(o["direct_source"]),
         )
     }
+
+    /**
+     * Link direto (direct_source) toca como os outros links de lista, com o UA normal do player;
+     * endereço do próprio servidor (/live, /movie, /series) vai com o mesmo UA da API.
+     */
+    private fun uaFor(direct: String?) = if (direct.httpOrNull() != null) null else userAgent
 
     /** Lê uma lista JSON de objetos sem carregar tudo na memória (as listas de filmes passam de 70 mil itens). */
     private fun eachObject(url: String, block: (Map<String, String?>) -> Unit) {

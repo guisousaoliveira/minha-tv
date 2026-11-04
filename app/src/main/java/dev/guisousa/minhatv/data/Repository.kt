@@ -441,7 +441,7 @@ object Repository {
         return "Encontrei ${added.size} playlists na página ($ok carregaram). Vou verificar essa página de novo a cada atualização."
     }
 
-    private fun xtream(p: Playlist) = Xtream(p.url, p.xtreamUser!!, p.xtreamPass ?: "") { url, block -> open(url) { block(it) } }
+    private fun xtream(p: Playlist) = Xtream(p.url, p.xtreamUser!!, p.xtreamPass ?: "", DEFAULT_UA) { url, block -> open(url) { block(it) } }
 
     private suspend fun addXtream(base: String, user: String, pass: String, name: String?, epgUrl: String?): String {
         if (_playlists.value.any { it.isXtream && it.url.equals(base, true) && it.xtreamUser == user }) return "Esse servidor já estava adicionado."

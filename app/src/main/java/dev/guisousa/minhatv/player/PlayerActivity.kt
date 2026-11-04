@@ -96,6 +96,8 @@ class PlayerActivity : ComponentActivity() {
     private lateinit var infoNext: TextView
     private lateinit var loadingBox: LinearLayout
     private lateinit var loadingText: TextView
+    /** Linha de baixo do "Carregando": qual fonte está sendo aberta. */
+    private lateinit var loadingSource: TextView
     private lateinit var toast: TextView
     private lateinit var controls: PlayerControls
     private var btnPlay: TextView? = null
@@ -428,25 +430,31 @@ class PlayerActivity : ComponentActivity() {
 
         controls = PlayerControls(this, root)
 
-        // "Carregando…" numa pílula no canto de cima: não fica por cima dos controles do vídeo
+        // "Carregando…" no meio da tela, com a fonte que está sendo aberta embaixo
         loadingBox = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
             visibility = View.GONE
-            background = GradientDrawable().apply { setColor(0xE6141414.toInt()); cornerRadius = dp(24).toFloat() }
-            setPadding(dp(16), dp(10), dp(20), dp(10))
-            addView(SpinnerView(this@PlayerActivity), LinearLayout.LayoutParams(dp(22), dp(22)))
+            background = GradientDrawable().apply { setColor(0xD9141414.toInt()); cornerRadius = dp(16).toFloat() }
+            setPadding(dp(36), dp(24), dp(36), dp(22))
+            addView(SpinnerView(this@PlayerActivity), LinearLayout.LayoutParams(dp(52), dp(52)))
         }
-        loadingText = text(15f, Color.WHITE).apply {
+        loadingText = text(20f, Color.WHITE).apply {
             maxLines = 1
             setSingleLine(true)
-            setPadding(dp(12), 0, 0, 0)
+            gravity = Gravity.CENTER
+            setPadding(0, dp(14), 0, 0)
             text = "Carregando…"
         }
+        loadingSource = text(14f, 0xFFB3B3B3.toInt()).apply {
+            maxLines = 1
+            setSingleLine(true)
+            gravity = Gravity.CENTER
+            setPadding(0, dp(6), 0, 0)
+        }
         loadingBox.addView(loadingText, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        root.addView(loadingBox, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.END).apply {
-            setMargins(0, dp(32), dp(40), 0)
-        })
+        loadingBox.addView(loadingSource, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        root.addView(loadingBox, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
 
         // avisos curtos (canto superior)
         toast = text(15f, Color.WHITE).apply {
@@ -540,6 +548,16 @@ class PlayerActivity : ComponentActivity() {
     }
 
     /** Formato que está tocando agora, para mostrar no botão da fonte. */
+    /** "Fonte 2 de 5 · FHD · HLS · servidor.com" (embaixo do Carregando). */
+    private fun sourceLine(): String {
+        val src = playing ?: return ""
+        val parts = mutableListOf(if (sources.size > 1) "Fonte ${sourceIndex + 1} de ${sources.size}" else "Fonte única")
+        src.quality?.takeIf { it.isNotBlank() }?.let { parts += it }
+        parts += formatName()
+        runCatching { android.net.Uri.parse(src.url).host }.getOrNull()?.removePrefix("www.")?.let { parts += it }
+        return parts.joinToString(" · ")
+    }
+
     private fun formatName(): String {
         if (usingHlsVariant) return "HLS"
         val p = (playing?.url ?: "").lowercase().substringBefore('?')
@@ -633,6 +651,7 @@ class PlayerActivity : ComponentActivity() {
         }
         exo.playWhenReady = !ask
         if (ask) askResume(Repository.getResume(current.url))
+        loadingSource.text = sourceLine()
         handler.postDelayed(showLoading, 400)
         updateButtons()
     }
