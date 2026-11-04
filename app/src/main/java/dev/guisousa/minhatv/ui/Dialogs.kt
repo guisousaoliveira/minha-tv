@@ -82,6 +82,44 @@ fun showAddLinkDialog(context: Context, onSave: (url: String, name: String?, epg
     url.requestFocus()
 }
 
+/** Servidor Xtream (o mesmo acesso de TiviMate / Smarters): endereço, usuário e senha. */
+fun showServerDialog(context: Context, onSave: (server: String, user: String, pass: String) -> Unit) {
+    val layout = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        val p = context.dp(20)
+        setPadding(p, p / 2, p, 0)
+    }
+    val server = context.field(layout, "Servidor (http://endereco:porta)", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI)
+    val user = context.field(layout, "Usuário", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD)
+    val pass = context.field(layout, "Senha", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD)
+    val fields = listOf(server, user, pass)
+    val ok = { server.text.isNotBlank() && user.text.isNotBlank() }
+    val save = { onSave(server.text.toString(), user.text.toString(), pass.text.toString()) }
+    val dialog = AlertDialog.Builder(context, dev.guisousa.minhatv.R.style.Theme_MinhaTV_Dialog)
+        .setTitle("Servidor com usuário e senha")
+        .setView(layout)
+        .setPositiveButton("Adicionar") { _, _ -> if (ok()) save() }
+        .setNegativeButton("Cancelar", null)
+        .create()
+    dialog.backClosesKeyboardFirst()
+    // OK do teclado: vai para o próximo campo; no último, adiciona
+    fields.forEachIndexed { i, f ->
+        val last = i == fields.lastIndex
+        f.imeOptions = if (last) EditorInfo.IME_ACTION_DONE else EditorInfo.IME_ACTION_NEXT
+        f.setSingleLine(true)
+        f.setOnEditorActionListener { _, action, ev ->
+            val enter = isEnter(action, ev, EditorInfo.IME_ACTION_DONE, EditorInfo.IME_ACTION_GO, EditorInfo.IME_ACTION_NEXT)
+            if (enter) {
+                if (!last) fields[i + 1].requestFocus()
+                else if (ok()) { save(); dialog.dismiss() }
+            }
+            enter
+        }
+    }
+    dialog.show()
+    server.requestFocus()
+}
+
 fun showSearchDialog(context: Context, initial: String, onSearch: (String) -> Unit) {
     val layout = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
