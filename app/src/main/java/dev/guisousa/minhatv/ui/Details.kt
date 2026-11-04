@@ -125,13 +125,14 @@ private fun DetailTop(kind: String, title: String, poster: String?, info: List<S
 
 /** Botão "Versão": alterna Dublado/Legendado só para este título. */
 @Composable
-private fun VersionButton(e: Entry, available: Set<String>) {
+private fun VersionButton(e: Entry, available: Set<String>, onChange: () -> Unit = {}) {
     val context = LocalContext.current
     var v by remember(e.url) { mutableStateOf(Repository.versionFor(e)) }
     BigButton("Versão: ${Repository.versionName(v)}") {
         val next = if (v == Repository.DUB) Repository.LEG else Repository.DUB
         v = next
         Repository.setVersionFor(e, next)
+        onChange()
         if (available.isNotEmpty() && next !in available) {
             android.widget.Toast.makeText(context, "Não achei ${Repository.versionName(next)} nesta lista; vai tocar o que tiver.", android.widget.Toast.LENGTH_SHORT).show()
         }
@@ -230,7 +231,7 @@ fun SeriesDetailScreen(show: Show) {
     var season by rememberSaveable(show.key) { mutableStateOf(target.season ?: seasons.first().first) }
     val episodes = seasons.firstOrNull { it.first == season }?.second.orEmpty()
     val seasonCount = seasons.count { it.first != 0 }
-    val versions = remember(all) { all.mapNotNull { Repository.versionOf(it) }.toSet() }
+    val versions = result.versions
     fun play(e: Entry) = PlaybackQueue.start(context, queue, queue.indexOfFirst { it.url == e.url }.coerceAtLeast(0))
     val ep = if (target.season != null && target.episode != null) " T${target.season} E${target.episode}" else ""
 
@@ -249,7 +250,8 @@ fun SeriesDetailScreen(show: Show) {
                     overview = tmdb?.overview,
                 ) {
                     BigButton((if (Repository.progress(target.url) != null) "Continuar" else "Assistir") + ep, remember { FocusRequester() }, key = "main:${show.key}", icon = androidx.compose.material.icons.Icons.Filled.PlayArrow) { play(target) }
-                    VersionButton(target, versions)
+                    // trocou a versão: refaz a lista para os episódios virem na versão escolhida
+                    VersionButton(target, versions) { attempt++ }
                     BigButton(if (target.url in favs) "Na Minha lista" else "Minha lista", icon = if (target.url in favs) androidx.compose.material.icons.Icons.Filled.Check else androidx.compose.material.icons.Icons.Filled.Add) { toggleFav(context, target) }
                 }
             }

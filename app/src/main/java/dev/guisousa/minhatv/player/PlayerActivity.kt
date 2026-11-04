@@ -546,7 +546,10 @@ class PlayerActivity : ComponentActivity() {
                 sources = if (isLive) listOf(e) + alts else byVersion(listOf(e) + alts, Repository.versionFor(e))
                 sourceIndex = sources.indexOfFirst { it.url == playing?.url }.coerceAtLeast(0)
                 // filme/série: se a versão preferida (ex.: Dublado) está em outra fonte, já abre nela
-                if (!isLive && !readyOnce && sources[0].url != playing?.url) switchSource(0)
+                // (mesmo se já começou: tocando a versão errada, troca mantendo a posição)
+                val wrongVersion = !isLive && playing?.let { Repository.versionOf(it) } != Repository.versionOf(sources[0]) &&
+                    Repository.versionOf(sources[0]) == Repository.versionFor(e)
+                if (!isLive && (!readyOnce || wrongVersion) && sources[0].url != playing?.url) switchSource(0)
                 // não remonta a barra (tirava o foco de quem estava navegando): só atualiza os textos
                 updateButtons()
                 loadingSource.text = sourceLine()
