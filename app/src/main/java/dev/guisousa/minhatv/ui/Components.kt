@@ -480,6 +480,9 @@ fun GroupColumn(groups: List<GroupInfo>, total: Int, selected: String?, alwaysAl
     }
 }
 
+/** "1 episódio", "12 episódios". */
+fun episodesLabel(n: Int) = if (n == 1) "1 episódio" else "$n episódios"
+
 /** Categoria inicial: "Todos" quando a lista é pequena, senão a primeira categoria. */
 fun defaultGroup(groups: List<GroupInfo>, total: Int): String? =
     if (total <= Library.ALL_LIMIT) null else groups.firstOrNull()?.name

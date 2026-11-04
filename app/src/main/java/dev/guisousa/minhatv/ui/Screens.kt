@@ -36,6 +36,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -239,7 +242,7 @@ private fun ShowRow(lib: Library, group: String, count: Int, nav: Nav, header: H
         seeAll = if (count > shows.size) ({ nav.openCategory(ContentType.SERIES, group) }) else null,
         seeAllCount = count,
     ) { _, s ->
-        PosterCard(s.name, s.logo, key = "$group:${s.key}", tmdbTitle = s.name, tv = true, onFocused = { header.show(s.name, "Série · ${s.episodeCount} episódios", s.logo) }, onClick = { nav.openShow(s) })
+        PosterCard(s.name, s.logo, key = "$group:${s.key}", tmdbTitle = s.name, tv = true, onFocused = { header.show(s.name, "Série · ${episodesLabel(s.episodeCount)}", s.logo) }, onClick = { nav.openShow(s) })
     }
 }
 
@@ -299,7 +302,7 @@ fun CategoryScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
                 val shows = load(lib.version, group) { Repository.shows(group) }
                 if (shows == null) Loading() else PosterGrid(
                     shows.size, { i -> shows[i].name }, { i -> shows[i].logo },
-                    onFocused = { i -> header.show(shows[i].name, "Série · ${shows[i].episodeCount} episódios", shows[i].logo) },
+                    onFocused = { i -> header.show(shows[i].name, "Série · ${episodesLabel(shows[i].episodeCount)}", shows[i].logo) },
                 ) { i -> nav.openShow(shows[i]) }
             }
         }
@@ -536,7 +539,7 @@ fun SearchScreen(lib: Library, nav: Nav) {
                 val uniqueShows = shows.distinctBy { dupKey(it.name).ifEmpty { it.key } }
                 SectionTitle("Séries", trailing = "${uniqueShows.size}")
                 MediaRow(uniqueShows, POSTER_W) { _, s ->
-                    PosterCard(s.name, s.logo, key = "s:${s.key}", tmdbTitle = s.name, tv = true, onFocused = { header.show(s.name, "Série · ${s.episodeCount} episódios", s.logo) }, onClick = { nav.openShow(s) })
+                    PosterCard(s.name, s.logo, key = "s:${s.key}", tmdbTitle = s.name, tv = true, onFocused = { header.show(s.name, "Série · ${episodesLabel(s.episodeCount)}", s.logo) }, onClick = { nav.openShow(s) })
                 }
             }
         }
@@ -553,6 +556,7 @@ fun SettingsScreen() {
     val status by Repository.status.collectAsState()
     var hours by remember { mutableStateOf(Repository.refreshHours) }
     var autoplay by remember { mutableStateOf(Repository.autoplayLast) }
+    val prefsFocus = remember { FocusRequester() }
     val address = rememberPhoneSetupServer()
     val dateFmt = remember { DateFormat.getDateFormat(context) }
     val clockFmt = remember { DateFormat.getTimeFormat(context) }
@@ -579,8 +583,10 @@ fun SettingsScreen() {
                     )
                     Spacer(Modifier.height(12.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        TvButton("Digitar link", onClick = { showAddLinkDialog(context) { u, n, e -> addLink(context, u, n, e) } })
-                        TvButton("Atualizar agora", onClick = {
+                        // ▼ daqui vai para a primeira preferência (sem isso o foco pulava para os botões da direita lá embaixo)
+                        val toPrefs = Modifier.focusProperties { down = prefsFocus }
+                        TvButton("Digitar link", modifier = toPrefs, onClick = { showAddLinkDialog(context) { u, n, e -> addLink(context, u, n, e) } })
+                        TvButton("Atualizar agora", modifier = toPrefs, onClick = {
                             Toast.makeText(context, "Atualizando…", Toast.LENGTH_SHORT).show()
                             Repository.refreshAllAsync()
                         })
@@ -596,7 +602,11 @@ fun SettingsScreen() {
             Text("Filmes e séries: versão preferida", fontSize = 15.sp, color = Palette.TextDim, modifier = Modifier.padding(start = 16.dp, bottom = 6.dp))
             Row(Modifier.padding(start = 12.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(Repository.DUB, Repository.LEG).forEach { v ->
-                    TvButton(Repository.versionName(v), selected = v == version, onClick = { version = v; Repository.preferredVersion = v })
+                    TvButton(
+                        Repository.versionName(v), selected = v == version,
+                        modifier = if (v == Repository.DUB) Modifier.focusRequester(prefsFocus) else Modifier,
+                        onClick = { version = v; Repository.preferredVersion = v },
+                    )
                 }
             }
         }

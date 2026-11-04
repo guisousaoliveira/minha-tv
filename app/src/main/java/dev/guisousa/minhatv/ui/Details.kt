@@ -214,7 +214,7 @@ fun SeriesDetailScreen(show: Show) {
                     "Série", show.name, tmdb?.poster ?: show.logo,
                     listOfNotNull(
                         if (seasonCount > 0) "$seasonCount temporada${if (seasonCount > 1) "s" else ""}" else null,
-                        "${all.size} episódios",
+                        episodesLabel(all.size),
                         show.group,
                     ),
                     overview = tmdb?.overview,

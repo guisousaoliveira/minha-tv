@@ -182,11 +182,27 @@ object Normalize {
 
     private val yearInBrackets = Regex("""\s*[\[(]\s*(?:19|20)\d{2}\s*[\])]\s*""")
 
-    /** Chave da série: sem o ano entre parênteses, para "Smallville" e "Smallville (2001)" virarem uma só. */
+    private val articles = setOf("a", "o", "as", "os", "um", "uma", "the", "de", "da", "do", "das", "dos", "e", "and", "of", "el", "la", "le", "les")
+
+    /**
+     * Chave solta para juntar o mesmo título escrito de jeitos diferentes: sem pontuação, acento,
+     * qualidade nem artigos ("Batman: A Alma do Dragão" = "Batman Alma do Dragao"). Os artigos só
+     * saem quando sobram pelo menos 2 palavras ("A&E" continua "ae").
+     */
+    fun looseKey(title: String): String {
+        val tokens = nonAlnum.split(codec.replace(base(title), " ")).filter { it.isNotEmpty() && it !in dropTokens }
+        val kept = tokens.filter { it !in articles }
+        return (if (kept.size >= 2) kept else tokens).joinToString("").ifEmpty { name(title).ifEmpty { title.lowercase() } }
+    }
+
+    /**
+     * Chave da série: nome limpo (sem Dublado/Legendado, qualidade, ano entre parênteses, pontuação
+     * e artigos), para "Smallville", "Smallville (2001)" e "Smallville: As Aventuras [L]" se juntarem.
+     */
     fun showKey(seriesName: String): String {
-        val cleaned = Normalize.clean(seriesName)
-        val noYear = yearInBrackets.replace(cleaned, " ").trim().ifEmpty { cleaned }
-        return name(noYear).ifEmpty { name(cleaned).ifEmpty { cleaned } }
+        val title = display(seriesName).title
+        val noYear = yearInBrackets.replace(title, " ").trim().ifEmpty { title }
+        return looseKey(noYear)
     }
 
     /** Chave de agrupamento a partir do nome já limpo. */
