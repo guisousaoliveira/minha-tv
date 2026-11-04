@@ -19,6 +19,10 @@ on:
         description: Série
         required: false
         default: Ted Lasso
+      movies:
+        description: Filmes para conferir (separados por vírgula)
+        required: false
+        default: ''
 
 jobs:
   emulador:
@@ -52,6 +56,7 @@ jobs:
           XUSER: ${{ inputs.user }}
           XPASS: ${{ inputs.pass }}
           SERIES: ${{ inputs.series }}
+          MOVIES: ${{ inputs.movies }}
         with:
           api-level: 30
           target: android-tv
@@ -61,5 +66,5 @@ jobs:
           disable-animations: true
           script: |
             adb logcat -c
-            ./gradlew --no-daemon connectedDebugAndroidTest "-Pandroid.testInstrumentationRunnerArguments.server=$SERVER" "-Pandroid.testInstrumentationRunnerArguments.user=$XUSER" "-Pandroid.testInstrumentationRunnerArguments.pass=$XPASS" "-Pandroid.testInstrumentationRunnerArguments.series=$SERIES" || echo "TESTE FALHOU"
-            adb logcat -d -s MinhaTVTeste:I MinhaTV:I | tail -n 80
+            ./gradlew --no-daemon connectedDebugAndroidTest "-Pandroid.testInstrumentationRunnerArguments.server=$SERVER" "-Pandroid.testInstrumentationRunnerArguments.user=$XUSER" "-Pandroid.testInstrumentationRunnerArguments.pass=$XPASS" "-Pandroid.testInstrumentationRunnerArguments.series=$SERIES" "-Pandroid.testInstrumentationRunnerArguments.movies=$MOVIES" || echo "TESTE FALHOU"
+            adb logcat -d -s MinhaTVTeste:I MinhaTV:I | tail -n 200

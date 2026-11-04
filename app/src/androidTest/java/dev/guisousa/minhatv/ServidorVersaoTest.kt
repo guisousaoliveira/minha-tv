@@ -66,5 +66,25 @@ class ServidorVersaoTest {
         assertTrue(summary, leg > 0 && dub > 0)
     }
 
+    /** Filmes com o nome pedido: como vêm do servidor e quais o app junta como "mesmo filme" (fontes alternativas). */
+    @Test
+    fun filmesParecidos() {
+        val args = InstrumentationRegistry.getArguments()
+        val server = args.getString("server").orEmpty().trimEnd('/')
+        val wanted = args.getString("movies").orEmpty().split(',').map { Normalize.name(it.trim()) }.filter { it.isNotEmpty() }
+        assumeTrue("sem servidor ou filmes", server.isNotEmpty() && wanted.isNotEmpty())
+        val user = args.getString("user").orEmpty()
+        val pass = args.getString("pass").orEmpty().ifEmpty { user }
+        val x = Xtream(server, user, pass, ua) { u, b -> open(u, b) }
+        val found = ArrayList<dev.guisousa.minhatv.data.Entry>()
+        x.movies { e -> val n = Normalize.name(Normalize.display(e.name).title); if (wanted.any { n.contains(it) }) found += e }
+        for (e in found.sortedBy { Normalize.display(it.name).title }) {
+            val d = Normalize.display(Normalize.clean(e.name))
+            val norm = Normalize.key(d.title)
+            log("FILME \"${e.name}\" · tela \"${d.title}\" ${d.tag ?: ""} · grupo ${e.group} · capa ${e.logo?.substringAfterLast('/')} · chave $norm")
+        }
+        log("RESULTADO FILMES: ${found.size} achados")
+    }
+
     private fun log(s: String) { Log.i("MinhaTVTeste", s); println(s) }
 }
