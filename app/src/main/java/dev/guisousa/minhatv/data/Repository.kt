@@ -86,12 +86,15 @@ object Repository {
             .build()
     }
 
-    /** Pedidos pequenos com a tela esperando (episódios de uma série): desiste rápido em vez de ficar minutos tentando. */
+    /**
+     * Pedidos pequenos com a tela esperando (episódios de uma série). Pedido que fica parado sem mandar
+     * nada é largado em 6 s e feito de novo na hora: o Ted Lasso levou 96 s porque o 1º pedido ficou
+     * mudo 90 s (o limite das listas grandes) e o 2º respondeu em ~1 s.
+     */
     private val quickHttp: OkHttpClient by lazy {
         http.newBuilder()
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
-            .callTimeout(60, TimeUnit.SECONDS)
+            .connectTimeout(5, TimeUnit.SECONDS)
+            .readTimeout(6, TimeUnit.SECONDS)
             .build()
     }
 
@@ -452,19 +455,19 @@ object Repository {
 
     private fun xtream(p: Playlist) = Xtream(p.url, p.xtreamUser!!, p.xtreamPass ?: "", DEFAULT_UA) { url, block -> open(url) { block(it) } }
 
-    /** Para pedidos com a tela esperando: tempo curto e no máximo 2 tentativas. */
+    /** Para pedidos com a tela esperando: largado rápido se ficar mudo e feito de novo (até 4 vezes). */
     private fun xtreamQuick(p: Playlist) = Xtream(p.url, p.xtreamUser!!, p.xtreamPass ?: "", DEFAULT_UA) { url, block -> openQuick(url) { block(it) } }
 
     private fun <T> openQuick(url: String, block: (InputStream) -> T): T {
         val req = Request.Builder().url(url).header("User-Agent", DEFAULT_UA).build()
         var last: IOException? = null
-        repeat(2) { attempt ->
-            if (attempt > 0) Thread.sleep(1_000)
+        repeat(4) { attempt ->
+            if (attempt > 0) android.util.Log.w("MinhaTV", "tempo: pedido ao servidor sem resposta (${last?.message}), tentativa ${attempt + 1}")
             try {
                 val t0 = System.currentTimeMillis()
                 quickHttp.newCall(req).execute().use { resp ->
                     android.util.Log.i("MinhaTV", "tempo: servidor respondeu ${resp.code} em ${System.currentTimeMillis() - t0} ms (${resp.body?.contentLength() ?: -1} bytes)")
-                    if (resp.code >= 500 && attempt == 0) { last = IOException("servidor respondeu ${resp.code}"); return@repeat }
+                    if (resp.code >= 500 && attempt < 3) { last = IOException("servidor respondeu ${resp.code}"); Thread.sleep(500); return@repeat }
                     if (!resp.isSuccessful) throw IOException("servidor respondeu ${resp.code}")
                     val raw = BufferedInputStream(resp.body!!.byteStream(), 64 * 1024)
                     raw.mark(4)
@@ -472,9 +475,6 @@ object Repository {
                     raw.reset()
                     return block(if (b1 == 0x1f && b2 == 0x8b) GZIPInputStream(raw, 64 * 1024) else raw)
                 }
-            } catch (e: java.io.InterruptedIOException) {
-                // tempo esgotado: tentar de novo só dobraria a espera
-                throw e
             } catch (e: IOException) {
                 last = e
             }
@@ -1018,7 +1018,7 @@ object Repository {
                 val eps = runCatching { xtreamQuick(p).episodes(Xtream.stubSeriesId(c.url), series, c.group, c.logo) }
                     .onFailure {
                         android.util.Log.w("MinhaTV", "episódios de \"$series\" não vieram em ${System.currentTimeMillis() - t0} ms", it)
-                        error = if (it is java.io.InterruptedIOException) "o servidor demorou demais para responder" else (it.message ?: "sem conexão")
+                        error = if (it is java.io.InterruptedIOException) "o servidor não respondeu" else (it.message ?: "sem conexão")
                     }
                     .getOrDefault(emptyList())
                 val t1 = System.currentTimeMillis()
