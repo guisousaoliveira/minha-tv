@@ -452,13 +452,23 @@ object Repository {
             val fresh = unique.filter { LinkExtractor.sameFileKey(it) !in known }.map {
                 Playlist(UUID.randomUUID().toString(), LinkExtractor.nameFromUrl(it), it, sourceId = src.id)
             }
+            // a página não lista mais algum arquivo (o servidor juntou ou tirou partes): sai do app também.
+            // Só quando a página respondeu e trouxe links, para uma falha de rede não apagar nada.
+            val listed = unique.map { LinkExtractor.sameFileKey(it) }.toSet()
+            val gone = if (pageError == null && unique.isNotEmpty())
+                _playlists.value.filter { it.sourceId == src.id && LinkExtractor.sameFileKey(it.url) !in listed } else emptyList()
             mutex.withLock {
-                _playlists.value = _playlists.value + fresh
+                if (gone.isNotEmpty()) {
+                    android.util.Log.i("MinhaTV", "página ${src.url}: ${gone.size} listas saíram dela, removendo")
+                    gone.forEach { db.deletePlaylist(it.id); file("epg_${it.id}.json").delete() }
+                }
+                _playlists.value = _playlists.value.filterNot { p -> gone.any { it.id == p.id } } + fresh
                 _sources.value = _sources.value.map {
                     if (it.id == src.id) it.copy(lastChecked = System.currentTimeMillis(), lastError = null, found = unique.size) else it
                 }
                 savePlaylists(); saveSources()
             }
+            if (gone.isNotEmpty()) runCatching { rebuild() }
             fresh.map { it.id }
         } catch (e: Exception) {
             mutex.withLock {
