@@ -878,6 +878,8 @@ object Repository {
         } else {
             runCatching { db.alternates(e.type, e.norm ?: Normalize.key(e.name), e.url) }
                 .getOrDefault(emptyList()).distinctBy { it.url }
+                // filme sem ano no nome: "101 Dálmatas" pode ser o desenho ou o live action; só é o mesmo filme com o mesmo pôster
+                .filter { e.type != ContentType.MOVIE || Normalize.sameMovie(e, it) }
         }
         val health = runCatching { db.health(list.map { it.url }) }.getOrDefault(emptyMap())
         val (dead, alive) = list.partition { health[it.url]?.dead == true }
