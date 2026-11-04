@@ -33,6 +33,10 @@ class XtreamTest {
         assertEquals(Triple("https://srv.example", "u", "p&q"), back)
     }
 
+    @Test fun blankPasswordUsesTheUser() {
+        assertEquals(Triple("https://srv.example", "tv", "tv"), Xtream.parseLogin(Xtream.loginUrl("https://srv.example", "tv", " ")))
+    }
+
     @Test fun seriesCoverUrlKeepsTheId() {
         val url = Xtream.stubUrl("pl-1", "540106410")
         assertTrue(Xtream.isStub(url))

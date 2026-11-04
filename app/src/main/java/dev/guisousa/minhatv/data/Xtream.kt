@@ -250,12 +250,15 @@ class Xtream(
             return Triple("${uri.scheme}://$host$dir", user, pass)
         }
 
-        /** Endereço do acesso Xtream a partir do servidor, usuário e senha digitados. */
+        /** Endereço do acesso Xtream a partir do servidor, usuário e senha digitados (senha opcional). */
         fun loginUrl(server: String, user: String, pass: String): String {
             var s = server.trim().trimEnd('/')
             if (!s.startsWith("http://") && !s.startsWith("https://")) s = "http://$s"
             s = s.removeSuffix("/player_api.php").removeSuffix("/get.php")
-            return "$s/player_api.php?username=${enc(user.trim())}&password=${enc(pass.trim())}"
+            // senha em branco: vai o próprio usuário (servidores que aceitam qualquer senha funcionam assim)
+            val u = user.trim()
+            val pw = pass.trim().ifEmpty { u }
+            return "$s/player_api.php?username=${enc(u)}&password=${enc(pw)}"
         }
     }
 }

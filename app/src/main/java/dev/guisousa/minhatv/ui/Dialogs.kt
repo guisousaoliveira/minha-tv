@@ -91,7 +91,7 @@ fun showServerDialog(context: Context, onSave: (server: String, user: String, pa
     }
     val server = context.field(layout, "Servidor (http://endereco:porta)", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI)
     val user = context.field(layout, "Usuário", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD)
-    val pass = context.field(layout, "Senha", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD)
+    val pass = context.field(layout, "Senha (opcional)", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD)
     val fields = listOf(server, user, pass)
     val ok = { server.text.isNotBlank() && user.text.isNotBlank() }
     val save = { onSave(server.text.toString(), user.text.toString(), pass.text.toString()) }
