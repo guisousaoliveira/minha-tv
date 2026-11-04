@@ -1078,12 +1078,8 @@ class PlayerActivity : ComponentActivity() {
         if (controls.visible) {
             // com a barra aberta, as setas andam entre os botões e o OK aperta
             if (code == KeyEvent.KEYCODE_BACK) {
-                // fecha a barra e já conta como o primeiro VOLTAR: o segundo sai do vídeo
-                if (!down) {
-                    controls.hide()
-                    lastBackAt = System.currentTimeMillis()
-                    notice("Aperte VOLTAR de novo para sair", 4000)
-                }
+                // um VOLTAR só sai do vídeo (ao soltar a tecla, para não fechar a tela de trás também)
+                if (!down) { controls.hide(); saveResume(); finish() }
                 return true
             }
             if (down) { handler.removeCallbacks(hideControlsTask); handler.postDelayed(hideControlsTask, 5000) }
@@ -1113,14 +1109,10 @@ class PlayerActivity : ComponentActivity() {
             // setas nunca avançam nem voltam sozinhas: só abrem a barra (no filme) ou o "agora passando" (ao vivo)
             KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> { if (isLive) showInfo() else showControls(); return true }
             KeyEvent.KEYCODE_BACK -> {
-                backConsumed = true
                 infoPanel.visibility = View.GONE
-                // igual ao Saimo: precisa apertar VOLTAR duas vezes para sair do vídeo
-                val now = System.currentTimeMillis()
-                // sai ao SOLTAR a tecla: se saísse ao apertar, o soltar chegava na tela de trás e fechava ela também
-                if (now - lastBackAt < 4000) { exitOnUp = true; return true }
-                lastBackAt = now
-                notice("Aperte VOLTAR de novo para sair", 4000)
+                // um VOLTAR só sai do vídeo; sai ao SOLTAR a tecla (se saísse ao apertar, o soltar
+                // chegava na tela de trás e fechava ela também)
+                exitOnUp = true
                 return true
             }
         }

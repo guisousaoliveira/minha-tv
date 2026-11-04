@@ -52,3 +52,17 @@ class SameFileTest {
         assertEquals("", r.entries.single().group)
     }
 }
+
+class EpisodeAndShowTest {
+    @Test fun episodeTitleDropsSeriesName() {
+        assertEquals("Metamorfose", Normalize.episodeTitle("Smallville S01E02 Metamorfose", "Smallville", 2))
+        assertEquals("Episódio 2", Normalize.episodeTitle("Smallville S01E02", "Smallville", 2))
+        assertEquals("O Começo", Normalize.episodeTitle("S01E01 - O Começo", "Lost", 1))
+    }
+
+    @Test fun showKeyIgnoresYearInBrackets() {
+        assertEquals(Normalize.showKey("Smallville"), Normalize.showKey("Smallville (2001)"))
+        assertEquals(Normalize.showKey("Scooby-Doo"), Normalize.showKey("Scooby-Doo [2002]"))
+        assertTrue(Normalize.showKey("Blade 2") != Normalize.showKey("Blade"))
+    }
+}

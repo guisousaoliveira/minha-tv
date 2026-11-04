@@ -40,6 +40,8 @@ object Repository {
     private const val BUILTIN_EPG_FILE = "epg_builtin.json"
     /** Fontes no máximo por canal/filme (contando a primeira). */
     const val MAX_SOURCES = 5
+    /** A partir de quanto tempo assistido o filme/episódio entra em "Continuar assistindo". */
+    private const val MIN_RESUME_MS = 5_000L
     /** Suba quando mudar o jeito de aplicar a limpeza no código (força aplicar as regras de novo). */
     private const val CLEAN_CODE = 3
     private const val RULES_FILE = "limpeza.json"
@@ -289,9 +291,10 @@ object Repository {
         val key = "resume_" + url.hashCode()
         val nearEnd = duration > 0 && position >= duration - 120_000
         if (nearEnd && position > 60_000) markWatched(url)
-        if (position > 60_000 && !nearEnd) {
+        // poucos segundos já contam: o filme aparece em "Continuar assistindo" e pergunta se continua
+        if (position > MIN_RESUME_MS && !nearEnd) {
             prefs.edit().putLong(key, position).putLong("dur_" + url.hashCode(), duration).apply()
-        } else if (nearEnd || position > 60_000) {
+        } else if (nearEnd && position > 60_000) {
             prefs.edit().remove(key).remove("dur_" + url.hashCode()).apply()
         }
     }
@@ -698,7 +701,8 @@ object Repository {
         val out = ArrayList<Any>(size) // Entry (série) ou chave do grupo, na ordem original
         for (e in this) {
             if (e.type == ContentType.SERIES) { out += e; continue }
-            val key = e.type.ordinal.toString() + ":" + Normalize.mergeKey(e)
+            // mesmo nome (com o ano, quando tem) = mesmo título na tela; capas diferentes não separam mais
+            val key = e.type.ordinal.toString() + ":" + (e.norm ?: Normalize.key(e.name))
             val list = order[key]
             if (list == null) { order[key] = mutableListOf(e); out += key } else list += e
         }
@@ -745,7 +749,7 @@ object Repository {
         val t0 = System.currentTimeMillis()
         val r = runCatching { db.entries(type, group, limit * 2).visible().unique().take(limit) }.getOrDefault(emptyList())
         val ms = System.currentTimeMillis() - t0
-        android.util.Log.i("MinhaTV", "tempo: categoria $type \"$group\" ${r.size} itens em $ms ms")
+        android.util.Log.i("MinhaTV", "tempo: categoria $type \"${group ?: "Todos"}\" ${r.size} itens em $ms ms")
         r
     }
 
@@ -756,12 +760,11 @@ object Repository {
         val list = if (e.type == ContentType.SERIES) {
             // episódio: as outras cópias do mesmo número na mesma série (sem número, não há como saber)
             if (ep == null || series == null) emptyList()
-            else runCatching { db.episodeAlternates(Normalize.name(series).ifEmpty { series }, e.season, ep, e.url) }
+            else runCatching { db.episodeAlternates(Normalize.showKey(series), e.season, ep, e.url) }
                 .getOrDefault(emptyList()).distinctBy { it.url }
         } else {
-            val key = Normalize.mergeKey(e)
             runCatching { db.alternates(e.type, e.norm ?: Normalize.key(e.name), e.url) }
-                .getOrDefault(emptyList()).distinctBy { it.url }.filter { Normalize.mergeKey(it) == key }
+                .getOrDefault(emptyList()).distinctBy { it.url }
         }
         val health = runCatching { db.health(list.map { it.url }) }.getOrDefault(emptyMap())
         val (dead, alive) = list.partition { health[it.url]?.dead == true }
