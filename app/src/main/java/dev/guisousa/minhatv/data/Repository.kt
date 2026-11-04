@@ -1067,6 +1067,8 @@ object Repository {
         var error: String? = null
         var versions = emptySet<String>()
         val list = runCatching {
+            // episódios guardados com a leitura antiga (sem a versão Legendada) são buscados de novo
+            db.dropFetchedEpisodes(Xtream.EPISODES_VERSION, _playlists.value.filter { it.isXtream }.map { it.id })
             val rows = db.episodes(show.key)
             val covers = rows.filter { Xtream.isStub(it.url) }
             var list = rows.filterNot { Xtream.isStub(it.url) }
@@ -1077,7 +1079,8 @@ object Repository {
                 val p = _playlists.value.firstOrNull { it.id == c.playlistId && it.isXtream } ?: continue
                 val series = c.seriesName ?: show.name
                 val t0 = System.currentTimeMillis()
-                val eps = runCatching { xtreamQuick(p).episodes(Xtream.stubSeriesId(c.url), series, c.group, c.logo) }
+                val api = xtreamQuick(p)
+                val eps = runCatching { api.episodes(Xtream.stubSeriesId(c.url), series, c.group, c.logo) }
                     .onFailure {
                         android.util.Log.w("MinhaTV", "episódios de \"$series\" não vieram em ${System.currentTimeMillis() - t0} ms", it)
                         error = if (it is java.io.InterruptedIOException) "o servidor não respondeu" else (it.message ?: "sem conexão")
@@ -1086,6 +1089,9 @@ object Repository {
                 val t1 = System.currentTimeMillis()
                 if (eps.isNotEmpty()) { db.addEpisodes(p.id, show.key, series, c.group, eps); fetched = true }
                 android.util.Log.i("MinhaTV", "tempo: ${eps.size} episódios de \"$series\": rede+leitura ${t1 - t0} ms, gravação ${System.currentTimeMillis() - t1} ms")
+                val leg = eps.count { versionOf(it) == LEG }
+                val dub = eps.count { versionOf(it) == DUB }
+                android.util.Log.i("MinhaTV", "versões de \"$series\": $leg legendados, $dub dublados, ${eps.size - leg - dub} sem marca · ex.: ${eps.take(2).joinToString(" | ") { it.name }} · servidor: ${api.rawSample.joinToString(" | ")}")
             }
             if (fetched) list = db.episodes(show.key).filterNot { Xtream.isStub(it.url) }
             // versões de todas as cópias (a lista abaixo mostra só uma por episódio)
