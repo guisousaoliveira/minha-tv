@@ -94,6 +94,9 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
     /** Marcas que as telas não mostram agora (some sempre o lixo; outro país e adulto conforme os Ajustes). */
     @Volatile var hideMask = CleanRules.JUNK or CleanRules.FOREIGN or CleanRules.ADULT
 
+    /** false = a lista já vem limpa: guarda como está, sem passar pelas regras. */
+    @Volatile var cleanOnImport = true
+
     /** Só o que está limpo e visível agora (filtro feito pelo banco, sem passar item por item). */
     private val vis get() = "(hide & $hideMask) = 0"
 
@@ -113,10 +116,12 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
                 "INSERT INTO entries(playlist,name,url,grp,logo,tvg_id,type,ua,ref,show_key,series,season,episode,norm,title,tag,hide,mkey) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
             )
             val rules = CleanRules.current
+            val clean = cleanOnImport
             fill { e ->
-                val group = rules.group(Normalize.label(e.group).ifBlank { "Outros" })
+                val label = Normalize.label(e.group).ifBlank { "Outros" }
+                val group = if (clean) rules.group(label) else label
                 val d = Normalize.display(e.name)
-                val hide = rules.classify(e.name + " " + d.title, group, e.tvgId, e.type)
+                val hide = if (clean) rules.classify(e.name + " " + d.title, group, e.tvgId, e.type) else 0
                 if (hide and CleanRules.JUNK != 0) { counts.dropped++; return@fill }
                 if (hide != 0) counts.hidden++
                 st.clearBindings()

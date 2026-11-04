@@ -108,6 +108,7 @@ object Repository {
         db = Db(app)
         loadSavedRules()
         db.hideMask = currentMask()
+        db.cleanOnImport = !listReady
         _favorites.value = prefs.getStringSet("favorites", emptySet())!!.toSet()
         scope.launch {
             // 1) rápido: listas salvas + resumo das categorias da última vez -> a tela abre na hora
@@ -142,7 +143,7 @@ object Repository {
                     db.deleteExcept(_playlists.value.map { it.id })
                 }
                 // regras de limpeza novas (ou app novo): aplica no que já está no banco, uma vez
-                val stale = prefs.getString("rules_applied", null) != rulesStamp()
+                val stale = !listReady && prefs.getString("rules_applied", null) != rulesStamp()
                 if (stale) withContext(background) { applyRulesToDb() }
                 if (!hadCache || db.wasReset || stale) {
                     rebuild()
@@ -199,7 +200,7 @@ object Repository {
 
     private fun rulesStamp() = "$CLEAN_CODE:${CleanRules.current.version}"
 
-    private fun currentMask(): Int = CleanRules.JUNK or
+    private fun currentMask(): Int = if (listReady) 0 else CleanRules.JUNK or
         (if (hideForeign) CleanRules.FOREIGN else 0) or (if (hideAdult) CleanRules.ADULT else 0)
 
     /** Regras baixadas antes (se forem mais novas que a cópia do app). */
@@ -228,6 +229,7 @@ object Repository {
      * atualização da lista (o app baixa a lista inteira de novo).
      */
     private suspend fun refreshRules(force: Boolean = false) = withContext(background) {
+        if (listReady) return@withContext
         val now = System.currentTimeMillis()
         if (!force && now - prefs.getLong("rules_checked", 0) < 6 * 3_600_000L) return@withContext
         val text = runCatching { fetchText(CleanRules.URL, 256 * 1024) }.getOrElse {
@@ -353,6 +355,24 @@ object Repository {
     var hideAdult: Boolean
         get() = prefs.getBoolean("hide_adult", true)
         set(v) { prefs.edit().putBoolean("hide_adult", v).apply(); db.hideMask = currentMask(); scope.launch { rebuild() } }
+
+    /**
+     * A lista já vem limpa de onde ela é baixada: a TV não aplica regras de limpeza, não esconde
+     * nada e não testa as fontes em segundo plano. Só guarda a lista e mostra (ligado por padrão).
+     */
+    var listReady: Boolean
+        get() = prefs.getBoolean("list_ready", true)
+        set(v) {
+            prefs.edit().putBoolean("list_ready", v).apply()
+            db.cleanOnImport = !v
+            db.hideMask = currentMask()
+            scope.launch {
+                // voltou a limpar na TV: aplica as regras no que já está guardado, em segundo plano
+                if (!v && prefs.getString("rules_applied", null) != rulesStamp()) withContext(background) { applyRulesToDb() }
+                rebuild()
+                if (!v) checkSourcesAsync()
+            }
+        }
 
     /** Testa as fontes em segundo plano (ligado por padrão). */
     var checkSourcesEnabled: Boolean
@@ -643,7 +663,7 @@ object Repository {
     }
 
     private suspend fun rebuild() = withContext(Dispatchers.IO) {
-        val hide = hideAdult
+        val hide = hideAdult && !listReady
         fun List<GroupInfo>.visible() = Library.sortGroups(if (hide) filterNot { Library.isAdult(it.name) } else this) { it.name }
         db.hideMask = currentMask()
         val t0 = System.currentTimeMillis()
@@ -787,7 +807,7 @@ object Repository {
      * para não roubar internet do vídeo. O que faltar continua na próxima rodada.
      */
     suspend fun checkSources(budget: Int = 3000) = withContext(Dispatchers.IO) {
-        if (checkLock.isLocked || !checkSourcesEnabled) return@withContext
+        if (checkLock.isLocked || !checkSourcesEnabled || listReady) return@withContext
         checkLock.withLock {
             awaitLoaded()
             var done = 0
@@ -855,7 +875,7 @@ object Repository {
     }
 
     suspend fun showsPage(group: String?, letter: Char?, limit: Int = 1500): List<Show> = withContext(Dispatchers.IO) {
-        runCatching { db.showsPage(group, letter, limit).let { l -> if (hideAdult) l.filterNot { Library.isAdult(it.group) } else l } }
+        runCatching { db.showsPage(group, letter, limit).let { l -> if (hideAdult && !listReady) l.filterNot { Library.isAdult(it.group) } else l } }
             .getOrDefault(emptyList())
     }
 
@@ -873,7 +893,7 @@ object Repository {
     }
 
     suspend fun recentShows(limit: Int = 30): List<Show> = withContext(Dispatchers.IO) {
-        runCatching { db.recentShows(limit).let { l -> if (hideAdult) l.filterNot { Library.isAdult(it.group) } else l } }.getOrDefault(emptyList())
+        runCatching { db.recentShows(limit).let { l -> if (hideAdult && !listReady) l.filterNot { Library.isAdult(it.group) } else l } }.getOrDefault(emptyList())
     }
 
     // ---- Buscas recentes ----
@@ -894,7 +914,7 @@ object Repository {
 
     private suspend fun showsUncached(group: String?, limit: Int): List<Show> = withContext(Dispatchers.IO) {
         val t0 = System.currentTimeMillis()
-        val r = runCatching { db.shows(group, limit).let { l -> if (hideAdult) l.filterNot { Library.isAdult(it.group) } else l } }
+        val r = runCatching { db.shows(group, limit).let { l -> if (hideAdult && !listReady) l.filterNot { Library.isAdult(it.group) } else l } }
             .getOrDefault(emptyList())
         val ms = System.currentTimeMillis() - t0
         if (ms > 300) android.util.Log.w("MinhaTV", "lento: séries \"$group\" ${r.size} em $ms ms")
@@ -927,7 +947,7 @@ object Repository {
             val t0 = System.currentTimeMillis()
             val (e, s) = db.search(q, quick = quick)
             android.util.Log.w("MinhaTV", "busca${if (quick) " rápida" else ""} \"$q\": ${e.size + s.size} em ${System.currentTimeMillis() - t0} ms")
-            e.visible().unique() to (if (hideAdult) s.filterNot { Library.isAdult(it.group) } else s)
+            e.visible().unique() to (if (hideAdult && !listReady) s.filterNot { Library.isAdult(it.group) } else s)
         }.getOrDefault(emptyList<Entry>() to emptyList())
     }
 
