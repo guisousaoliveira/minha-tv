@@ -248,6 +248,26 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
         } finally { db.endTransaction() }
     }
 
+    /**
+     * Episódios de servidor Xtream ficam guardados depois da primeira abertura. Quando o jeito de ler
+     * esses episódios muda (ex.: passar a achar a versão Legendada), os guardados com a leitura antiga
+     * são apagados uma vez, e a série busca de novo no servidor na próxima vez que for aberta.
+     */
+    fun dropFetchedEpisodes(version: String, playlistIds: Collection<String>) {
+        val key = "xtream_eps_v"
+        val now = readableDatabase.rawQuery("SELECT v FROM meta WHERE k = ?", arrayOf(key)).use { c -> if (c.moveToFirst()) c.getString(0) else null }
+        if (now == version) return
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            for (id in playlistIds) {
+                db.execSQL("DELETE FROM entries WHERE playlist = ? AND +type = 2 AND url NOT LIKE 'xtream-series://%'", arrayOf(id))
+            }
+            db.execSQL("INSERT OR REPLACE INTO meta(k, v) VALUES (?, ?)", arrayOf(key, version))
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+    }
+
     fun deletePlaylist(playlistId: String) {
         writableDatabase.delete("entries", "playlist = ?", arrayOf(playlistId))
         writableDatabase.delete("show_part", "playlist = ?", arrayOf(playlistId))

@@ -117,6 +117,9 @@ class Xtream(
         }
     }
 
+    /** Os 2 primeiros episódios como vieram do servidor, para o log. */
+    val rawSample = ArrayList<String>()
+
     /** Episódios de uma série, pedidos na hora em que ela é aberta. */
     fun episodes(seriesId: String, seriesName: String, group: String, cover: String?): List<Entry> {
         val out = ArrayList<Entry>()
@@ -184,6 +187,8 @@ class Xtream(
         }
         r.endObject()
         val id = o["id"] ?: return null
+        // para o log: como o servidor escreve um episódio (título, versão e info), sem o endereço
+        if (rawSample.size < 2) rawSample += "title=${o["title"]} version=${o["version"]} info=${infoText.toString().trim().take(80)}"
         val season = o["season"]?.toIntOrNull() ?: seasonKey
         val number = o["episode_num"]?.toIntOrNull()
         val ext = o["container_extension"].orNullIfBlank() ?: "mp4"
@@ -240,6 +245,8 @@ class Xtream(
 
     companion object {
         private const val STUB = "xtream-series://"
+        /** Muda quando a leitura dos episódios muda: os guardados antes são buscados de novo. */
+        const val EPISODES_VERSION = "2"
 
         fun stubUrl(playlistId: String, seriesId: String) = "$STUB$playlistId/$seriesId"
 
