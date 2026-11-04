@@ -343,6 +343,12 @@ class PlayerActivity : ComponentActivity() {
                 val code = (error as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)?.responseCode
                 android.util.Log.w("MinhaTV", "player: falha ao baixar $kind (http=$code ${error.javaClass.simpleName})")
             }
+            override fun onTracksChanged(t: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime, tracks: androidx.media3.common.Tracks) {
+                fun count(type: Int) = tracks.groups.filter { it.type == type }.sumOf { it.length }
+                val p = playing ?: current
+                android.util.Log.i("MinhaTV", "player: faixas de áudio ${count(C.TRACK_TYPE_AUDIO)}, legendas ${count(C.TRACK_TYPE_TEXT)} · versão escolhida ${Repository.versionFor(current)}, versão do item ${Repository.versionOf(p) ?: "?"}")
+            }
+
             override fun onPlaybackStateChanged(t: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime, state: Int) {
                 if (state == Player.STATE_BUFFERING) android.util.Log.w("MinhaTV", "player: carregando (buffer)")
             }
@@ -544,6 +550,15 @@ class PlayerActivity : ComponentActivity() {
                 // não remonta a barra (tirava o foco de quem estava navegando): só atualiza os textos
                 updateButtons()
                 loadingSource.text = sourceLine()
+            }
+            // filme/série: a versão escolhida (Dublado/Legendado) não existe em nenhuma fonte: avisa em vez de trocar calado
+            if (index == wanted && !isLive) {
+                val all = if (alts.isNotEmpty()) sources else listOf(e)
+                val want = Repository.versionFor(e)
+                val have = all.mapNotNull { Repository.versionOf(it) }.toSet()
+                if (have.isNotEmpty() && want !in have) {
+                    notice("Não tem a versão ${Repository.versionName(want)} deste título. Está tocando ${Repository.versionName(have.first())}.", 7000)
+                }
             }
         }
     }

@@ -161,8 +161,13 @@ class Xtream(
         val ext = o["container_extension"].orNullIfBlank() ?: "mp4"
         val marker = if (number != null) " S%02dE%02d".format(season ?: 0, number) else ""
         val title = o["title"].orNullIfBlank() ?: "$series$marker"
+        var name = if (marker.isNotEmpty() && !Regex("""[Ss]\d+\s*[Ee]\d+""").containsMatchIn(title)) "$series$marker - $title" else title
+        // alguns servidores dizem a versão num campo à parte ("version": "dub" / "leg"): vai para o nome, onde o app procura
+        versionTag(o["version"] ?: o["audio"] ?: o["language"])?.let { tag ->
+            if (!Regex("""legend|dublad|\b(leg|dub)\b""", RegexOption.IGNORE_CASE).containsMatchIn(name)) name = "$name [$tag]"
+        }
         return Entry(
-            name = if (marker.isNotEmpty() && !Regex("""[Ss]\d+\s*[Ee]\d+""").containsMatchIn(title)) "$series$marker - $title" else title,
+            name = name,
             url = o["direct_source"].httpOrNull() ?: "$base/series/$u/$p/$id.$ext",
             group = group,
             logo = cover ?: image.orNullIfBlank(),
@@ -224,6 +229,16 @@ class Xtream(
             JsonToken.BOOLEAN -> nextBoolean().toString()
             JsonToken.NULL -> { nextNull(); null }
             else -> { skipValue(); null }
+        }
+
+        /** "dub", "dublado", "pt" -> Dublado; "leg", "sub", "legendado" -> Legendado. */
+        fun versionTag(v: String?): String? {
+            val t = v?.trim()?.lowercase() ?: return null
+            return when {
+                t.startsWith("leg") || t.startsWith("sub") -> "Legendado"
+                t.startsWith("dub") || t == "pt" || t == "pt-br" || t == "nacional" -> "Dublado"
+                else -> null
+            }
         }
 
         private fun String?.orNullIfBlank() = this?.trim()?.ifBlank { null }

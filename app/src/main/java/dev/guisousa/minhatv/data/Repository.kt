@@ -86,6 +86,18 @@ object Repository {
             .build()
     }
 
+    /**
+     * Pedidos pequenos com a tela esperando (episódios de uma série). Pedido que fica parado sem mandar
+     * nada é largado em 6 s e feito de novo na hora: o Ted Lasso levou 96 s porque o 1º pedido ficou
+     * mudo 90 s (o limite das listas grandes) e o 2º respondeu em ~1 s.
+     */
+    private val quickHttp: OkHttpClient by lazy {
+        http.newBuilder()
+            .connectTimeout(5, TimeUnit.SECONDS)
+            .readTimeout(6, TimeUnit.SECONDS)
+            .build()
+    }
+
     private val _playlists = MutableStateFlow<List<Playlist>>(emptyList())
     val playlists: StateFlow<List<Playlist>> = _playlists
     private val _sources = MutableStateFlow<List<Source>>(emptyList())
@@ -442,6 +454,33 @@ object Repository {
     }
 
     private fun xtream(p: Playlist) = Xtream(p.url, p.xtreamUser!!, p.xtreamPass ?: "", DEFAULT_UA) { url, block -> open(url) { block(it) } }
+
+    /** Para pedidos com a tela esperando: largado rápido se ficar mudo e feito de novo (até 4 vezes). */
+    private fun xtreamQuick(p: Playlist) = Xtream(p.url, p.xtreamUser!!, p.xtreamPass ?: "", DEFAULT_UA) { url, block -> openQuick(url) { block(it) } }
+
+    private fun <T> openQuick(url: String, block: (InputStream) -> T): T {
+        val req = Request.Builder().url(url).header("User-Agent", DEFAULT_UA).build()
+        var last: IOException? = null
+        repeat(4) { attempt ->
+            if (attempt > 0) android.util.Log.w("MinhaTV", "tempo: pedido ao servidor sem resposta (${last?.message}), tentativa ${attempt + 1}")
+            try {
+                val t0 = System.currentTimeMillis()
+                quickHttp.newCall(req).execute().use { resp ->
+                    android.util.Log.i("MinhaTV", "tempo: servidor respondeu ${resp.code} em ${System.currentTimeMillis() - t0} ms (${resp.body?.contentLength() ?: -1} bytes)")
+                    if (resp.code >= 500 && attempt < 3) { last = IOException("servidor respondeu ${resp.code}"); Thread.sleep(500); return@repeat }
+                    if (!resp.isSuccessful) throw IOException("servidor respondeu ${resp.code}")
+                    val raw = BufferedInputStream(resp.body!!.byteStream(), 64 * 1024)
+                    raw.mark(4)
+                    val b1 = raw.read(); val b2 = raw.read()
+                    raw.reset()
+                    return block(if (b1 == 0x1f && b2 == 0x8b) GZIPInputStream(raw, 64 * 1024) else raw)
+                }
+            } catch (e: IOException) {
+                last = e
+            }
+        }
+        throw last ?: IOException("sem conexão")
+    }
 
     private suspend fun addXtream(base: String, user: String, pass: String, name: String?, epgUrl: String?): String {
         if (_playlists.value.any { it.isXtream && it.url.equals(base, true) && it.xtreamUser == user }) return "Esse servidor já estava adicionado."
@@ -960,8 +999,12 @@ object Repository {
         r
     }
 
-    suspend fun episodes(show: Show): List<Entry> = withContext(Dispatchers.IO) {
-        runCatching {
+    /** Resultado de abrir uma série: episódios, ou o motivo de não terem vindo. */
+    class Episodes(val list: List<Entry>, val error: String? = null)
+
+    suspend fun episodes(show: Show): Episodes = withContext(Dispatchers.IO) {
+        var error: String? = null
+        val list = runCatching {
             val rows = db.episodes(show.key)
             val covers = rows.filter { Xtream.isStub(it.url) }
             var list = rows.filterNot { Xtream.isStub(it.url) }
@@ -972,15 +1015,20 @@ object Repository {
                 val p = _playlists.value.firstOrNull { it.id == c.playlistId && it.isXtream } ?: continue
                 val series = c.seriesName ?: show.name
                 val t0 = System.currentTimeMillis()
-                val eps = runCatching { xtream(p).episodes(Xtream.stubSeriesId(c.url), series, c.group, c.logo) }
-                    .onFailure { android.util.Log.w("MinhaTV", "episódios de \"$series\" não vieram", it) }
+                val eps = runCatching { xtreamQuick(p).episodes(Xtream.stubSeriesId(c.url), series, c.group, c.logo) }
+                    .onFailure {
+                        android.util.Log.w("MinhaTV", "episódios de \"$series\" não vieram em ${System.currentTimeMillis() - t0} ms", it)
+                        error = if (it is java.io.InterruptedIOException) "o servidor não respondeu" else (it.message ?: "sem conexão")
+                    }
                     .getOrDefault(emptyList())
-                android.util.Log.i("MinhaTV", "tempo: ${eps.size} episódios de \"$series\" em ${System.currentTimeMillis() - t0} ms")
+                val t1 = System.currentTimeMillis()
                 if (eps.isNotEmpty()) { db.addEpisodes(p.id, show.key, series, c.group, eps); fetched = true }
+                android.util.Log.i("MinhaTV", "tempo: ${eps.size} episódios de \"$series\": rede+leitura ${t1 - t0} ms, gravação ${System.currentTimeMillis() - t1} ms")
             }
             if (fetched) list = db.episodes(show.key).filterNot { Xtream.isStub(it.url) }
             list.uniqueEpisodes()
         }.getOrDefault(emptyList())
+        Episodes(list, if (list.isEmpty()) error else null)
     }
 
     /**
@@ -996,7 +1044,10 @@ object Repository {
             val key: Any = if (ep == null) e.url else (e.season ?: 0) to ep
             groups.getOrPut(key) { mutableListOf() } += e
         }
-        return groups.values.map { list -> list.minBy { rank(health[it.url]) } }
+        // a versão escolhida para a série (Dublado/Legendado) vem primeiro; depois a fonte que respondeu melhor
+        val want = versionFor(first())
+        fun vrank(e: Entry) = when (versionOf(e)) { want -> 0; null -> 1; else -> 2 }
+        return groups.values.map { list -> list.minWith(compareBy<Entry>({ vrank(it) }, { rank(health[it.url]) })) }
     }
 
     /** [quick] = só nomes que começam com o texto (instantâneo); sem ele, também os que contêm. */

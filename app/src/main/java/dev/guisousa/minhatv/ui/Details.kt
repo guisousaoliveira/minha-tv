@@ -184,9 +184,38 @@ fun MovieDetailScreen(e: Entry, nav: Nav) {
 @Composable
 fun SeriesDetailScreen(show: Show) {
     val context = LocalContext.current
-    val all = load(show.key) { Repository.episodes(show) }
-    if (all == null) { Loading(); return }
-    if (all.isEmpty()) { Message("Nenhum episódio encontrado"); return }
+    var attempt by remember(show.key) { mutableStateOf(0) }
+    val result = load(show.key, attempt) { Repository.episodes(show) }
+    if (result == null) {
+        Box(Modifier.fillMaxSize()) {
+            Loading()
+            // série de servidor busca os episódios agora: mostra que está esperando e há quanto tempo
+            var secs by remember(show.key, attempt) { mutableStateOf(0) }
+            LaunchedEffect(show.key, attempt) { while (true) { delay(1_000); secs++ } }
+            if (secs >= 2) Text(
+                "Buscando os episódios no servidor… $secs s",
+                fontSize = 16.sp, color = Palette.TextDim,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 48.dp),
+            )
+        }
+        return
+    }
+    val all = result.list
+    if (all.isEmpty()) {
+        val err = result.error
+        if (err == null) { Message("Nenhum episódio encontrado"); return }
+        // série de servidor: os episódios vêm na hora de abrir; se não vieram, explica e deixa tentar de novo
+        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("Não consegui buscar os episódios de ${show.name}", fontSize = 20.sp, color = Palette.Text)
+            Spacer(Modifier.height(8.dp))
+            Text("Motivo: $err", fontSize = 15.sp, color = Palette.TextDim)
+            Spacer(Modifier.height(20.dp))
+            val retry = remember { FocusRequester() }
+            TvButton("Tentar de novo", modifier = Modifier.focusRequester(retry), onClick = { attempt++ })
+            LaunchedEffect(Unit) { runCatching { retry.requestFocus() } }
+        }
+        return
+    }
     val favs by Repository.favorites.collectAsState()
     val watched by Repository.watched.collectAsState()
     val seasons = remember(all) { all.groupBy { it.season ?: 0 }.toSortedMap().toList() }
