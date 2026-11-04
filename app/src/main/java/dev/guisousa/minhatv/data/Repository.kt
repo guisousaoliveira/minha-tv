@@ -358,21 +358,9 @@ object Repository {
 
     /**
      * A lista já vem limpa de onde ela é baixada: a TV não aplica regras de limpeza, não esconde
-     * nada e não testa as fontes em segundo plano. Só guarda a lista e mostra (ligado por padrão).
+     * nada e não testa as fontes em segundo plano. Só guarda a lista e mostra.
      */
-    var listReady: Boolean
-        get() = prefs.getBoolean("list_ready", true)
-        set(v) {
-            prefs.edit().putBoolean("list_ready", v).apply()
-            db.cleanOnImport = !v
-            db.hideMask = currentMask()
-            scope.launch {
-                // voltou a limpar na TV: aplica as regras no que já está guardado, em segundo plano
-                if (!v && prefs.getString("rules_applied", null) != rulesStamp()) withContext(background) { applyRulesToDb() }
-                rebuild()
-                if (!v) checkSourcesAsync()
-            }
-        }
+    const val listReady = true
 
     /** Testa as fontes em segundo plano (ligado por padrão). */
     var checkSourcesEnabled: Boolean
