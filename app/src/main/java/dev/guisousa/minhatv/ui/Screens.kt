@@ -553,9 +553,6 @@ fun SettingsScreen() {
     val status by Repository.status.collectAsState()
     var hours by remember { mutableStateOf(Repository.refreshHours) }
     var autoplay by remember { mutableStateOf(Repository.autoplayLast) }
-    var hideAdult by remember { mutableStateOf(Repository.hideAdult) }
-    var hideForeign by remember { mutableStateOf(Repository.hideForeign) }
-    var checkSources by remember { mutableStateOf(Repository.checkSourcesEnabled) }
     val address = rememberPhoneSetupServer()
     val dateFmt = remember { DateFormat.getDateFormat(context) }
     val clockFmt = remember { DateFormat.getTimeFormat(context) }
@@ -618,21 +615,6 @@ fun SettingsScreen() {
         item {
             ToggleRow("Abrir no último canal", "Ao abrir o app, já começa a tocar o último canal assistido", autoplay) {
                 autoplay = !autoplay; Repository.autoplayLast = autoplay
-            }
-        }
-        item {
-            ToggleRow("Esconder conteúdo adulto", "Oculta categorias adultas em todas as telas", hideAdult) {
-                hideAdult = !hideAdult; Repository.hideAdult = hideAdult
-            }
-        }
-        item {
-            ToggleRow("Esconder canais de outros países", "Deixa só os do Brasil; esporte e luta (UFC, ESPN...) de fora continuam", hideForeign) {
-                hideForeign = !hideForeign; Repository.hideForeign = hideForeign
-            }
-        }
-        item {
-            ToggleRow("Testar fontes sozinho", "Quando a TV não está tocando nada, confere os links e esconde os que estão fora do ar", checkSources) {
-                checkSources = !checkSources; Repository.checkSourcesEnabled = checkSources
             }
         }
 

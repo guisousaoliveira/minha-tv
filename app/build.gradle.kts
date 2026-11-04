@@ -54,6 +54,8 @@ android {
         compose = true
         buildConfig = true
     }
+    // regras/limpeza.json (as mesmas que a TV baixa do GitHub) vão dentro do app como cópia inicial
+    sourceSets["main"].resources.srcDirs("../regras")
     lint {
         abortOnError = false
         checkReleaseBuilds = false
