@@ -88,8 +88,12 @@ class Xtream(
         eachObject(api("get_vod_streams")) { o ->
             val id = o["stream_id"] ?: return@eachObject
             val ext = o["container_extension"].orNullIfBlank() ?: "mp4"
+            val rawName = o["name"] ?: return@eachObject
+            // "year" (servidor badwolf e outros): sem ano no nome, põe o ano para o app não juntar
+            // remakes com o mesmo título ("101 Dálmatas" de 1961 e de 1996)
+            val year = o["year"]?.trim()?.takeIf { it.length == 4 && it.all(Char::isDigit) }
             emit(Entry(
-                name = o["name"] ?: return@eachObject,
+                name = if (year != null && !Normalize.hasYear(rawName)) "$rawName ($year)" else rawName,
                 url = o["direct_source"].httpOrNull() ?: "$base/movie/$u/$p/$id.$ext",
                 group = cats[o["category_id"]] ?: "",
                 logo = o["stream_icon"].orNullIfBlank(),
