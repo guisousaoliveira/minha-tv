@@ -805,7 +805,9 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private fun versionPanel() {
-        val have = sources.mapNotNull { Repository.versionOf(it) }.toSet()
+        // As listas só marcam o legendado: fonte sem marca conta como dublada
+        fun ver(e: Entry) = Repository.versionOf(e) ?: Repository.DUB
+        val have = sources.map { ver(it) }.toSet()
         val now = Repository.versionOf(playing ?: current) ?: Repository.versionFor(current)
         val options = listOf(Repository.DUB, Repository.LEG)
         controls.showPanel("Versão", options.map { v ->
@@ -813,7 +815,7 @@ class PlayerActivity : ComponentActivity() {
         }) { i ->
             val v = options[i]
             Repository.setVersionFor(current, v)
-            val target = sources.indexOfFirst { Repository.versionOf(it) == v }
+            val target = sources.indexOfFirst { ver(it) == v }
             if (target < 0) { notice("Não achei a versão ${Repository.versionName(v)} deste título."); return@showPanel }
             sources = byVersion(sources, v)
             switchSource(0)
