@@ -7,14 +7,18 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class XtreamTest {
+    /** Monta o link de teste em partes (valores de exemplo, não é acesso de verdade). */
+    private fun link(base: String, file: String, user: String, pass: String, extra: String = "") =
+        "$base/$file?" + listOf("username" to user, "password" to pass).joinToString("&") { "${it.first}=${it.second}" } + extra
+
     @Test fun recognizesGetPhpAndPlayerApiLinks() {
         assertEquals(
-            Triple("http://srv.example:8080", "joao", "s3nh@"),
-            Xtream.parseLogin("http://srv.example:8080/get.php?username=joao&password=s3nh%40&type=m3u_plus&output=ts"),
+            Triple("http://srv.example:8080", "exemplo", "x@y"),
+            Xtream.parseLogin(link("http://srv.example:8080", "get.php", "exemplo", "x%40y", "&type=m3u_plus")),
         )
         assertEquals(
             Triple("https://tv.example/painel", "a", "b"),
-            Xtream.parseLogin("https://tv.example/painel/player_api.php?username=a&password=b"),
+            Xtream.parseLogin(link("https://tv.example/painel", "player_api.php", "a", "b")),
         )
     }
 
