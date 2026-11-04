@@ -124,6 +124,8 @@ class Xtream(
     fun episodes(seriesId: String, seriesName: String, group: String, cover: String?): List<Entry> {
         val out = ArrayList<Entry>()
         open(api("get_series_info", "&series_id=${enc(seriesId)}")) { input ->
+            // tentativa anterior cortada no meio: começa do zero, sem episódios repetidos
+            out.clear(); rawSample.clear()
             reader(input).use { r ->
                 if (r.peek() != JsonToken.BEGIN_OBJECT) return@use
                 r.beginObject()
