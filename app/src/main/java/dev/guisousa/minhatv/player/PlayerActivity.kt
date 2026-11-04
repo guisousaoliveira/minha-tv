@@ -543,11 +543,11 @@ class PlayerActivity : ComponentActivity() {
                 if (!isLive && !readyOnce && sources[0].url != playing?.url) switchSource(0)
                 // não remonta a barra (tirava o foco de quem estava navegando): só atualiza os textos
                 updateButtons()
+                loadingSource.text = sourceLine()
             }
         }
     }
 
-    /** Formato que está tocando agora, para mostrar no botão da fonte. */
     /** "Fonte 2 de 5 · FHD · HLS · servidor.com" (embaixo do Carregando). */
     private fun sourceLine(): String {
         val src = playing ?: return ""
@@ -558,6 +558,7 @@ class PlayerActivity : ComponentActivity() {
         return parts.joinToString(" · ")
     }
 
+    /** Formato que está tocando agora, para mostrar no botão da fonte. */
     private fun formatName(): String {
         if (usingHlsVariant) return "HLS"
         val p = (playing?.url ?: "").lowercase().substringBefore('?')
@@ -618,6 +619,8 @@ class PlayerActivity : ComponentActivity() {
             override fun getRetryDelayMsFor(info: androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy.LoadErrorInfo): Long {
                 val code = (info.exception as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)?.responseCode
                 if (isLive && code != null && code in 400..499 && info.mediaLoadData.dataType == C.DATA_TYPE_MANIFEST) return C.TIME_UNSET
+                // versão HLS que o servidor não consegue montar (502/503 do outro lado): volta logo para o .ts, sem ~14 s de tentativas
+                if (hls != null && !firstFrame && code != null && code >= 500 && info.mediaLoadData.dataType == C.DATA_TYPE_MANIFEST) return C.TIME_UNSET
                 // filme/série: link que dá 404/403 não volta; desiste na hora para ir à próxima fonte (antes: ~15 s de tela preta)
                 if (!isLive && code != null && code in 400..499) return C.TIME_UNSET
                 return super.getRetryDelayMsFor(info)
