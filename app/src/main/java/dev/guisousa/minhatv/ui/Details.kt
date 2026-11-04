@@ -269,7 +269,7 @@ private fun EpisodeCard(e: Entry, i: Int, fallbackImage: String?, seen: Boolean,
             }
             if (progress != null) ProgressLine(progress, Modifier.align(Alignment.BottomStart))
         }
-        Text(e.name, Modifier.padding(top = 8.dp).width(300.dp), fontSize = 14.sp, color = Palette.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(dev.guisousa.minhatv.data.Normalize.episodeTitle(e.name, e.seriesName, e.episode), Modifier.padding(top = 8.dp).width(300.dp), fontSize = 14.sp, color = Palette.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text(
             listOfNotNull(
                 if (e.season != null && e.episode != null) "T${e.season} E${e.episode}" else null,

@@ -471,7 +471,9 @@ fun GroupColumn(groups: List<GroupInfo>, total: Int, selected: String?, alwaysAl
                         color = if (focused) Palette.OnFocus else if (isSel) Palette.Text else Palette.TextDim,
                         fontWeight = if (isSel || focused) FontWeight.SemiBold else FontWeight.Normal,
                     )
-                    Text("$count", fontSize = 12.sp, color = if (focused) Palette.OnFocus.copy(alpha = 0.6f) else Palette.TextFaint)
+                    // espaço fixo: nome comprido não encosta no número
+                    Spacer(Modifier.width(10.dp))
+                    Text("$count", fontSize = 12.sp, maxLines = 1, softWrap = false, color = if (focused) Palette.OnFocus.copy(alpha = 0.6f) else Palette.TextFaint)
                 }
             }
         }

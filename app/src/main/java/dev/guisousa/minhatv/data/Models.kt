@@ -159,6 +159,36 @@ object Normalize {
         return norm + "|" + (e.logo?.trim()?.lowercase()?.ifEmpty { null } ?: e.url)
     }
 
+    private val episodeMark = Regex("""(?i)(?:^|[^a-z0-9])(?:[ST]\d{1,2}\s*[._ -]?\s*EP?\s*\d{1,3}|\d{1,2}x\d{1,3}|EP?\s*\d{1,3})(?![0-9])""")
+    private val edgeSeps = Regex("""^[\s\-–—|:·.,_]+|[\s\-–—|:·.,_]+$""")
+
+    /**
+     * Nome do episódio sem repetir o da série: "Smallville S01E02 Metamorfose" -> "Metamorfose".
+     * Sem nada sobrando, fica "Episódio 2".
+     */
+    fun episodeTitle(name: String, series: String?, episode: Int?): String {
+        var t = name
+        if (!series.isNullOrBlank()) {
+            // tira o nome da série do começo, comparando sem acento e sem maiúsculas
+            val s = base(series).trim()
+            if (s.isNotEmpty() && base(t).startsWith(s)) t = t.substring(minOf(s.length, t.length))
+        }
+        t = episodeMark.find(t)?.let { m -> t.substring(m.range.last + 1).ifBlank { t.substring(0, m.range.first) } } ?: t
+        t = edgeSeps.replace(t, "").trim()
+        // sobrou só o nome da série ou nada: mostra o número
+        if (t.isEmpty() || (!series.isNullOrBlank() && name(t) == name(series))) return if (episode != null) "Episódio $episode" else name
+        return t
+    }
+
+    private val yearInBrackets = Regex("""\s*[\[(]\s*(?:19|20)\d{2}\s*[\])]\s*""")
+
+    /** Chave da série: sem o ano entre parênteses, para "Smallville" e "Smallville (2001)" virarem uma só. */
+    fun showKey(seriesName: String): String {
+        val cleaned = Normalize.clean(seriesName)
+        val noYear = yearInBrackets.replace(cleaned, " ").trim().ifEmpty { cleaned }
+        return name(noYear).ifEmpty { name(cleaned).ifEmpty { cleaned } }
+    }
+
     /** Chave de agrupamento a partir do nome já limpo. */
     fun key(title: String): String = name(title).ifEmpty { title.lowercase() }
 

@@ -89,6 +89,8 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
         wasReset = true
     }
 
+    private companion object { const val MAX_LOGOS = 40 }
+
     class Counts { var live = 0; var movie = 0; var series = 0; var dropped = 0; var hidden = 0 }
 
     /** Marcas que as telas não mostram agora (some sempre o lixo; outro país e adulto conforme os Ajustes). */
@@ -149,7 +151,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
                     if (raw != lastSeries) {
                         lastSeries = raw
                         lastSeriesClean = Normalize.clean(raw)
-                        lastSeriesKey = Normalize.name(lastSeriesClean).ifEmpty { lastSeriesClean }
+                        lastSeriesKey = Normalize.showKey(lastSeriesClean)
                     }
                     st.bindString(10, lastSeriesKey)
                     st.bindString(11, lastSeriesClean)
@@ -307,12 +309,47 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
      * Refaz o resumo das séries se as listas mudaram (3 varreduras do banco, uma vez por importação).
      * Depois disso cada fileira de séries é uma consulta pequena, em vez de agrupar dezenas de milhares de episódios.
      */
+    /** Uma série no resumo, montada numa passada só pelo banco. */
+    private class ShowAgg(var series: String?, var grp: String, var minId: Long, var maxId: Long) {
+        val eps = HashSet<Long>()
+        var unnumbered = 0
+        /** contagem de capas (no máximo [MAX_LOGOS] diferentes: a capa da série aparece logo nos primeiros episódios) */
+        val logos = HashMap<String, Int>()
+        val groups = LinkedHashMap<String, LongArray>()
+    }
+
     fun refreshShowSummary(): Boolean {
-        val sig = "v3:" + readableDatabase.rawQuery("SELECT COUNT(*), MAX(id) FROM entries", null).use { c -> c.moveToFirst(); "${c.getLong(0)}:${c.getLong(1)}" }
+        val sig = "v4:" + readableDatabase.rawQuery("SELECT COUNT(*), MAX(id) FROM entries", null).use { c -> c.moveToFirst(); "${c.getLong(0)}:${c.getLong(1)}" }
         val old = readableDatabase.rawQuery("SELECT v FROM meta WHERE k = 'show_sig'", null).use { c -> if (c.moveToFirst()) c.getString(0) else null }
         if (old == sig) { summaryReady = true; return false }
         summaryReady = false
+        fixShowKeys()
         val db = writableDatabase
+        val t0 = System.currentTimeMillis()
+        // 1) uma leitura em ordem do banco (sem agrupar no SQLite, que ordenava 200 mil linhas três vezes na TV)
+        val shows = HashMap<String, ShowAgg>()
+        db.rawQuery("SELECT id, show_key, series, grp, logo, season, episode FROM entries WHERE +type = 2 AND show_key IS NOT NULL", null).use { c ->
+            while (c.moveToNext()) {
+                val id = c.getLong(0)
+                val key = c.getString(1)
+                val series = c.getStringOrNull(2)
+                val grp = c.getString(3)
+                val a = shows[key] ?: ShowAgg(series, grp, id, id).also { shows[key] = it }
+                if (series != null && (a.series == null || series < a.series!!)) a.series = series
+                if (grp < a.grp) a.grp = grp
+                if (id < a.minId) a.minId = id
+                if (id > a.maxId) a.maxId = id
+                if (c.isNull(6)) a.unnumbered++ else a.eps += ((if (c.isNull(5)) 0L else c.getLong(5)) shl 20) or c.getLong(6)
+                if (!c.isNull(4)) {
+                    val logo = c.getString(4)
+                    val n = a.logos[logo]
+                    if (n != null) a.logos[logo] = n + 1 else if (a.logos.size < MAX_LOGOS) a.logos[logo] = 1
+                }
+                val g = a.groups[grp]
+                if (g == null) a.groups[grp] = longArrayOf(id, id) else { if (id < g[0]) g[0] = id; if (id > g[1]) g[1] = id }
+            }
+        }
+        val t1 = System.currentTimeMillis()
         db.beginTransaction()
         try {
             markRepresentatives(db)
@@ -320,30 +357,56 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
             db.execSQL("DELETE FROM show_grp")
             db.execSQL("DELETE FROM search_names")
             db.execSQL("INSERT INTO search_names SELECT norm, type, MIN(id) FROM entries WHERE +type != 2 AND norm IS NOT NULL GROUP BY norm, type")
-            db.execSQL("INSERT INTO show_grp SELECT show_key, grp, MIN(id), MAX(id) FROM entries WHERE +type = 2 AND show_key IS NOT NULL GROUP BY show_key, grp")
-            db.execSQL(
-                "INSERT INTO show_info(show_key, series, grp, eps, min_id, max_id) SELECT show_key, MIN(series), MIN(grp), " +
-                    "COUNT(DISTINCT CASE WHEN episode IS NULL THEN 'u' || id ELSE COALESCE(season, 0) || 'x' || episode END), MIN(id), MAX(id) " +
-                    "FROM entries WHERE +type = 2 AND show_key IS NOT NULL GROUP BY show_key"
-            )
-            // capa = a imagem que mais se repete entre os episódios (as outras costumam ser quadros do episódio)
-            val upd = db.compileStatement("UPDATE show_info SET logo = ? WHERE show_key = ?")
-            var key: String? = null; var best: String? = null; var bestN = -1
-            fun flush() { val k = key; val b = best; if (k != null && b != null) { upd.bindString(1, b); upd.bindString(2, k); upd.executeUpdateDelete() } }
-            db.rawQuery("SELECT show_key, logo, COUNT(*) FROM entries WHERE +type = 2 AND show_key IS NOT NULL AND logo IS NOT NULL GROUP BY show_key, logo ORDER BY show_key", null).use { c ->
-                while (c.moveToNext()) {
-                    val k = c.getString(0)
-                    if (k != key) { flush(); key = k; best = null; bestN = -1 }
-                    val n = c.getInt(2)
-                    if (n > bestN) { bestN = n; best = c.getString(1) }
+            val info = db.compileStatement("INSERT INTO show_info(show_key, series, grp, logo, eps, min_id, max_id) VALUES (?,?,?,?,?,?,?)")
+            val grpSt = db.compileStatement("INSERT INTO show_grp(show_key, grp, min_id, max_id) VALUES (?,?,?,?)")
+            for ((key, a) in shows) {
+                info.clearBindings()
+                info.bindString(1, key)
+                a.series?.let { info.bindString(2, it) }
+                info.bindString(3, a.grp)
+                // capa = a imagem que mais se repete entre os episódios (as outras costumam ser quadros do episódio)
+                a.logos.maxByOrNull { it.value }?.let { info.bindString(4, it.key) }
+                info.bindLong(5, (a.eps.size + a.unnumbered).toLong())
+                info.bindLong(6, a.minId)
+                info.bindLong(7, a.maxId)
+                info.executeInsert()
+                for ((g, ids) in a.groups) {
+                    grpSt.clearBindings()
+                    grpSt.bindString(1, key); grpSt.bindString(2, g); grpSt.bindLong(3, ids[0]); grpSt.bindLong(4, ids[1])
+                    grpSt.executeInsert()
                 }
             }
-            flush()
             db.execSQL("INSERT OR REPLACE INTO meta(k, v) VALUES ('show_sig', ?)", arrayOf(sig))
             db.setTransactionSuccessful()
         } finally { db.endTransaction() }
+        android.util.Log.i("MinhaTV", "tempo: resumo de ${shows.size} séries: leitura ${t1 - t0} ms, gravação ${System.currentTimeMillis() - t1} ms")
         summaryReady = true
         return true
+    }
+
+    /**
+     * Séries que só diferem pelo ano entre parênteses ("Smallville" e "Smallville (2001)") viram
+     * uma só. Importações novas já saem assim; isto arruma o que foi importado antes (uma vez).
+     */
+    private fun fixShowKeys() {
+        val done = readableDatabase.rawQuery("SELECT v FROM meta WHERE k = 'show_key_v'", null).use { c -> c.moveToFirst() && c.getString(0) == "2" }
+        if (done) return
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val pairs = db.rawQuery("SELECT DISTINCT show_key, series FROM entries WHERE +type = 2 AND series LIKE '%(%'", null)
+                .use { c -> c.map { it.getStringOrNull(0) to it.getStringOrNull(1) } }
+            val upd = db.compileStatement("UPDATE entries SET show_key = ? WHERE show_key = ? AND series = ?")
+            for ((key, series) in pairs) {
+                if (key == null || series == null) continue
+                val fixed = Normalize.showKey(series)
+                if (fixed == key) continue
+                upd.bindString(1, fixed); upd.bindString(2, key); upd.bindString(3, series)
+                upd.executeUpdateDelete()
+            }
+            db.execSQL("INSERT OR REPLACE INTO meta(k, v) VALUES ('show_key_v', '2')")
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
     }
 
     private fun summaryShows(sql: String, args: Array<String>): List<Show> =
