@@ -702,7 +702,7 @@ object Repository {
         for (e in this) {
             if (e.type == ContentType.SERIES) { out += e; continue }
             // mesmo nome (com o ano, quando tem) = mesmo título na tela; capas diferentes não separam mais
-            val key = e.type.ordinal.toString() + ":" + (e.norm ?: Normalize.key(e.name))
+            val key = e.type.ordinal.toString() + ":" + Normalize.looseKey(e.name)
             val list = order[key]
             if (list == null) { order[key] = mutableListOf(e); out += key } else list += e
         }
@@ -710,12 +710,11 @@ object Repository {
         val deadHere = order.filterValues { l -> l.all { health[it.url]?.dead == true } }
         val rescued = HashSet<String>()
         if (hideDead && deadHere.isNotEmpty()) {
-            deadHere.keys.groupBy { it.substringBefore(':') }.forEach { (t, keys) ->
+            deadHere.entries.groupBy { it.key.substringBefore(':') }.forEach { (t, groups) ->
                 val type = ContentType.entries[t.toInt()]
-                // filmes sem ano têm chave própria (nome|pôster): esses não são resgatados por outra categoria
-                val plain = keys.map { it.substringAfter(':') }.filter { '|' !in it }
-                runCatching { db.aliveNorms(type, plain) }.getOrNull()
-                    ?.forEach { rescued += "$t:$it" }
+                val norms = groups.flatMap { g -> g.value.mapNotNull { it.norm } }
+                val alive = runCatching { db.aliveNorms(type, norms) }.getOrNull() ?: return@forEach
+                groups.forEach { g -> if (g.value.any { it.norm in alive }) rescued += g.key }
             }
         }
         return out.mapNotNull { o ->

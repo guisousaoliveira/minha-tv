@@ -64,5 +64,13 @@ class EpisodeAndShowTest {
         assertEquals(Normalize.showKey("Smallville"), Normalize.showKey("Smallville (2001)"))
         assertEquals(Normalize.showKey("Scooby-Doo"), Normalize.showKey("Scooby-Doo [2002]"))
         assertTrue(Normalize.showKey("Blade 2") != Normalize.showKey("Blade"))
+        assertEquals(Normalize.showKey("Smallville: As Aventuras do Superboy"), Normalize.showKey("Smallville As Aventuras do Superboy [L]"))
+    }
+
+    @Test fun looseKeyIgnoresPunctuationAndArticles() {
+        assertEquals(Normalize.looseKey("Batman: A Alma do Dragão"), Normalize.looseKey("Batman Alma do Dragao"))
+        assertEquals(Normalize.looseKey("Batman A Alma do Dragão FHD"), Normalize.looseKey("Batman: Alma do Dragão"))
+        assertTrue(Normalize.looseKey("A&E") != Normalize.looseKey("E"))
+        assertTrue(Normalize.looseKey("Duna (2021)") != Normalize.looseKey("Duna (1984)"))
     }
 }
