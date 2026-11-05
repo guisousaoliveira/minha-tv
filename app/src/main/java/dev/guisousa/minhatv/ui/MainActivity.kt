@@ -175,21 +175,67 @@ fun AppRoot(onLoaded: () -> Unit) {
         openCategory = { type, group -> FocusMemory.push(); stack.add(Detail.Category(type, group)) },
     )
 
-    Column(Modifier.fillMaxSize().background(Palette.Background)) {
+    val top = stack.lastOrNull()
+    Box(Modifier.fillMaxSize().background(Palette.Background)) {
+        Box(Modifier.fillMaxSize()) {
+            // guarda o estado de cada tela (termo da busca, rolagem, temporada...) quando ela sai da frente,
+            // para o Voltar devolver exatamente onde você estava
+            val holder = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
+            when {
+                loading -> Box(Modifier.padding(top = TOP_BAR)) { Message("Carregando…") }
+                library.isEmpty && Tab.entries[tab] != Tab.SETTINGS -> Box(Modifier.padding(top = TOP_BAR)) { Message(status ?: "Baixando o catálogo…") }
+                else -> {
+                // a aba continua montada (invisível e sem foco) por baixo dos detalhes: ao voltar,
+                // a lista, a busca e a rolagem estão do mesmo jeito e o foco volta para o cartão
+                androidx.compose.runtime.CompositionLocalProvider(LocalFocusEnabled provides (top == null)) {
+                Box(Modifier.fillMaxSize().graphicsLayer { alpha = if (top == null) 1f else 0f }) {
+                androidx.compose.animation.Crossfade(Tab.entries[tab], animationSpec = androidx.compose.animation.core.tween(180), label = "tab") { t ->
+                    // Início, Filmes, Séries e Ao vivo vão até o topo (o menu fica por cima); o resto começa abaixo do menu
+                    Box(Modifier.fillMaxSize().padding(top = if (t in FULL_BLEED) 0.dp else TOP_BAR)) {
+                    holder.SaveableStateProvider("tab:${t.name}") { when (t) {
+                        Tab.HOME -> HomeScreen(library, nav)
+                        Tab.LIVE -> LiveScreen(library)
+                        Tab.MOVIES -> RowsScreen(library, ContentType.MOVIE, nav)
+                        Tab.SERIES -> RowsScreen(library, ContentType.SERIES, nav)
+                        Tab.MYLIST -> MyListScreen(library, nav)
+                        Tab.SEARCH -> SearchScreen(library, nav)
+                        Tab.SETTINGS -> SettingsScreen()
+                    } }
+                    }
+                }
+                }
+                }
+                // as telas de baixo da pilha (ex.: a grade "Todos de A a Z" sob os detalhes) também continuam
+                // montadas: ao voltar, a grade está na mesma rolagem e o foco volta para a capa que você abriu
+                stack.forEachIndexed { i, d ->
+                    androidx.compose.runtime.key(i, d) {
+                        val isTop = i == stack.lastIndex
+                        androidx.compose.runtime.CompositionLocalProvider(LocalFocusEnabled provides isTop) {
+                            Box(Modifier.fillMaxSize().graphicsLayer { alpha = if (isTop) 1f else 0f }.background(Palette.Background).padding(top = TOP_BAR)) {
+                                when (d) {
+                                    is Detail.OfShow -> holder.SaveableStateProvider("show:${d.show.key}") { SeriesDetailScreen(d.show) }
+                                    is Detail.OfMovie -> holder.SaveableStateProvider("movie:${d.entry.url}") { MovieDetailScreen(d.entry, nav) }
+                                    is Detail.Category -> holder.SaveableStateProvider("cat:${d.type}:${d.group}") { CategoryScreen(library, d.type, d.group, nav) }
+                                }
+                            }
+                        }
+                    }
+                }
+                }
+            }
+        }
         Row(
             Modifier.fillMaxWidth()
+                // o menu fica por cima da tela (o fundo do destaque passa por trás dele)
+                .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(androidx.compose.ui.graphics.Color(0xE6000000), androidx.compose.ui.graphics.Color.Transparent)))
                 // subindo da tela para o menu, o foco cai na aba aberta (e não sempre no Início)
                 .focusProperties { enter = { tabRequesters[tab] } }
                 .focusGroup()
-                .padding(start = 48.dp, end = 48.dp, top = 20.dp, bottom = 6.dp),
+                .padding(start = 48.dp, end = 48.dp, top = 18.dp, bottom = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            Text(
-                "MINHA TV",
-                style = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.Black, letterSpacing = 3.sp),
-                color = Palette.Text,
-            )
+            BrandMark()
             Spacer(Modifier.width(28.dp))
             Tab.entries.forEachIndexed { i, t ->
                 if (t == Tab.SEARCH || t == Tab.SETTINGS) return@forEachIndexed
@@ -208,51 +254,24 @@ fun AppRoot(onLoaded: () -> Unit) {
             IconNav(androidx.compose.material.icons.Icons.Filled.Settings, "Ajustes", selected = Tab.entries[tab] == Tab.SETTINGS, modifier = Modifier.focusRequester(tabRequesters[Tab.SETTINGS.ordinal])) { tab = Tab.SETTINGS.ordinal; stack.clear(); FocusMemory.clear() }
         }
 
-        Box(Modifier.weight(1f).fillMaxWidth()) {
-            val top = stack.lastOrNull()
-            // guarda o estado de cada tela (termo da busca, rolagem, temporada...) quando ela sai da frente,
-            // para o Voltar devolver exatamente onde você estava
-            val holder = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
-            when {
-                loading -> Message("Carregando…")
-                library.isEmpty && Tab.entries[tab] != Tab.SETTINGS -> Message(status ?: "Baixando o catálogo…")
-                else -> {
-                // a aba continua montada (invisível e sem foco) por baixo dos detalhes: ao voltar,
-                // a lista, a busca e a rolagem estão do mesmo jeito e o foco volta para o cartão
-                androidx.compose.runtime.CompositionLocalProvider(LocalFocusEnabled provides (top == null)) {
-                Box(Modifier.fillMaxSize().graphicsLayer { alpha = if (top == null) 1f else 0f }) {
-                androidx.compose.animation.Crossfade(Tab.entries[tab], animationSpec = androidx.compose.animation.core.tween(180), label = "tab") { t ->
-                    holder.SaveableStateProvider("tab:${t.name}") { when (t) {
-                        Tab.HOME -> HomeScreen(library, nav)
-                        Tab.LIVE -> LiveScreen(library)
-                        Tab.MOVIES -> RowsScreen(library, ContentType.MOVIE, nav)
-                        Tab.SERIES -> RowsScreen(library, ContentType.SERIES, nav)
-                        Tab.MYLIST -> MyListScreen(library, nav)
-                        Tab.SEARCH -> SearchScreen(library, nav)
-                        Tab.SETTINGS -> SettingsScreen()
-                    } }
-                }
-                }
-                }
-                // as telas de baixo da pilha (ex.: a grade "Todos de A a Z" sob os detalhes) também continuam
-                // montadas: ao voltar, a grade está na mesma rolagem e o foco volta para a capa que você abriu
-                stack.forEachIndexed { i, d ->
-                    androidx.compose.runtime.key(i, d) {
-                        val isTop = i == stack.lastIndex
-                        androidx.compose.runtime.CompositionLocalProvider(LocalFocusEnabled provides isTop) {
-                            Box(Modifier.fillMaxSize().graphicsLayer { alpha = if (isTop) 1f else 0f }.background(Palette.Background)) {
-                                when (d) {
-                                    is Detail.OfShow -> holder.SaveableStateProvider("show:${d.show.key}") { SeriesDetailScreen(d.show) }
-                                    is Detail.OfMovie -> holder.SaveableStateProvider("movie:${d.entry.url}") { MovieDetailScreen(d.entry, nav) }
-                                    is Detail.Category -> holder.SaveableStateProvider("cat:${d.type}:${d.group}") { CategoryScreen(library, d.type, d.group, nav) }
-                                }
-                            }
-                        }
-                    }
-                }
-                }
-            }
-        }
+    }
+}
+
+private val TOP_BAR = 64.dp
+private val FULL_BLEED = setOf(Tab.HOME, Tab.LIVE, Tab.MOVIES, Tab.SERIES)
+
+/** Marca no canto do menu: lobo + BAD WOLF TV (TV no ciano do W4LLE). */
+@Composable
+private fun BrandMark() {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        androidx.compose.foundation.Image(
+            androidx.compose.ui.res.painterResource(dev.guisousa.minhatv.R.drawable.logo_lobo), contentDescription = null,
+            modifier = Modifier.size(30.dp),
+        )
+        Spacer(Modifier.width(10.dp))
+        Text("BAD WOLF", style = TextStyle(fontSize = 17.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp), color = Palette.Text)
+        Spacer(Modifier.width(6.dp))
+        Text("TV", style = TextStyle(fontSize = 17.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp), color = Palette.Brand)
     }
 }
 
@@ -310,7 +329,7 @@ private fun NavItem(title: String, selected: Boolean, onClick: () -> Unit, modif
             Spacer(Modifier.height(4.dp))
             Box(
                 Modifier.width(18.dp).height(2.dp).background(
-                    if (selected && !focused) Palette.Text else androidx.compose.ui.graphics.Color.Transparent,
+                    if (selected && !focused) Palette.Brand else androidx.compose.ui.graphics.Color.Transparent,
                 ),
             )
         }

@@ -35,12 +35,16 @@ class Fonte(val u: String, val q: String? = null, val h: Map<String, String>? = 
 class Canal(val id: Long, val n: String, val c: String = "", val l: String? = null, val e: String? = null, val f: List<Fonte> = emptyList())
 
 @Serializable
-class CardFilme(val id: Long, val t: String, val a: Int? = null, val p: String? = null, val v: String = "d", val ad: Long? = null)
+class CardFilme(
+    val id: Long, val t: String, val a: Int? = null, val p: String? = null, val v: String = "d", val ad: Long? = null,
+    val b: String? = null, val g: List<String>? = null, val k: String? = null,
+)
 
 @Serializable
 class CardSerie(
     val id: Long, val t: String, val a: Int? = null, val p: String? = null, val v: String = "d",
     val nt: Int = 0, val ne: Int = 0, val m: Long? = null,
+    val b: String? = null, val g: List<String>? = null,
 )
 
 @Serializable

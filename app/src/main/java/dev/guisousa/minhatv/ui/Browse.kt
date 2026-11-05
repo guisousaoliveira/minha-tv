@@ -85,7 +85,7 @@ internal fun ReleasesRow(lib: Library, type: ContentType, nav: Nav, header: Head
         MediaRow(items, POSTER_SAIMO_W) { _, e ->
             PosterCard(
                 e.name, e.logo, key = "rel:${e.url}", progress = Repository.progress(e.url),
-                onFocused = { header.show(e.name, "Filme · ${e.group}", e.logo) },
+                onFocused = { header.show(e, "Filme · ${e.group}") },
                 onClick = { nav.openMovie(e) }, onLongClick = { toggleFav(context, e) },
             )
         }
@@ -94,7 +94,7 @@ internal fun ReleasesRow(lib: Library, type: ContentType, nav: Nav, header: Head
         if (shows.isEmpty()) return
         SectionTitle("Lançamentos", trailing = "${shows.size}")
         MediaRow(shows, POSTER_SAIMO_W) { _, s ->
-            PosterCard(s.name, s.logo, key = "rel:${s.key}", tmdbTitle = s.name, tv = true, onFocused = { header.show(s.name, "Série · ${s.group}", s.logo) }, onClick = { nav.openShow(s) })
+            PosterCard(s.name, s.logo, key = "rel:${s.key}", tmdbTitle = s.name, tv = true, onFocused = { header.show(s, "Série · ${s.group}") }, onClick = { nav.openShow(s) })
         }
     }
 }
@@ -109,7 +109,7 @@ internal fun PopularRow(lib: Library, nav: Nav, header: HeaderState) {
     MediaRow(items, POSTER_SAIMO_W) { _, e ->
         PosterCard(
             e.name, e.logo, key = "pop:${e.url}", progress = Repository.progress(e.url),
-            onFocused = { header.show(e.name, "Filme · ${e.group}", e.logo) },
+            onFocused = { header.show(e, "Filme · ${e.group}") },
             onClick = { nav.openMovie(e) }, onLongClick = { toggleFav(context, e) },
         )
     }

@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -52,6 +53,7 @@ import dev.guisousa.minhatv.data.Repository
 import dev.guisousa.minhatv.data.Show
 import dev.guisousa.minhatv.player.PlaybackQueue
 import kotlinx.coroutines.delay
+import androidx.compose.animation.core.tween
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -111,13 +113,17 @@ internal class HeaderState {
     var image by mutableStateOf<String?>(null)
     var detail by mutableStateOf<String?>(null)
     var isLogo by mutableStateOf(false)
-    fun show(t: String, s: String?, img: String? = null) { title = t; subtitle = s; image = img; detail = null; isLogo = false }
+    /** Filme ("v2:f:id") ou série (Repository.showRef) em foco: o destaque busca fundo, gêneros e sinopse. */
+    var ref by mutableStateOf<String?>(null)
+    fun show(t: String, s: String?, img: String? = null, ref: String? = null) { title = t; subtitle = s; image = img; detail = null; isLogo = false; this.ref = ref }
+    fun show(e: Entry, s: String?) = show(e.name, s, e.logo, e.url)
+    fun show(sh: Show, s: String?) = show(sh.name, s, sh.logo, Repository.showRef(sh))
 
     /** Canal em foco: mostra a logo inteira e o que está passando agora/depois. */
     fun channel(e: Entry, s: String) {
         val now = System.currentTimeMillis()
         val epg = Repository.epg.value
-        title = e.name; subtitle = s; image = e.logo; isLogo = true
+        title = e.name; subtitle = s; image = e.logo; isLogo = true; ref = null
         val cur = epg.current(e, now)
         val next = epg.next(e, now)
         detail = listOfNotNull(
@@ -144,8 +150,7 @@ fun HomeScreen(lib: Library, nav: Nav) {
         Message("Carregando as listas", "Os canais, filmes e séries aparecem aqui assim que a primeira lista terminar de carregar.")
         return
     }
-    Column(Modifier.fillMaxSize()) {
-        FocusHeader(header.title ?: "O que vamos assistir?", header.subtitle ?: "Início", image = header.image, detail = header.detail, logo = header.isLogo)
+    CinemaLayout(header, lib.version, "O que vamos assistir?", "Bad Wolf TV") {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 48.dp)) {
             if (cont.isNotEmpty()) item("cont") {
                 SectionTitle("Continuar assistindo")
@@ -153,7 +158,7 @@ fun HomeScreen(lib: Library, nav: Nav) {
                     PosterCard(
                         e.name, e.logo, key = "cont:${e.url}", progress = Repository.progress(e.url) ?: 0f,
                         tmdbTitle = e.seriesName ?: e.name, tv = e.type == ContentType.SERIES,
-                        onFocused = { header.show(e.name, "Continuar · ${e.group}", e.logo) },
+                        onFocused = { header.show(e, "Continuar · ${e.group}") },
                         onClick = { PlaybackQueue.start(context, cont, i) },
                     )
                 }
@@ -177,7 +182,7 @@ fun HomeScreen(lib: Library, nav: Nav) {
             if (favVod.isNotEmpty()) item("favvod") {
                 SectionTitle("Minha lista")
                 MediaRow(favVod, POSTER_W) { i, e ->
-                    PosterCard(e.name, e.logo, key = "fav:${e.url}", onFocused = { header.show(e.name, "${kindOf(e.type)} · ${e.group}", e.logo) }, onClick = {
+                    PosterCard(e.name, e.logo, key = "fav:${e.url}", onFocused = { header.show(e, "${kindOf(e.type)} · ${e.group}") }, onClick = {
                         PlaybackQueue.start(context, favVod, i)
                     }, onLongClick = { toggleFav(context, e) })
                 }
@@ -189,12 +194,12 @@ fun HomeScreen(lib: Library, nav: Nav) {
                         when (it) {
                             is dev.guisousa.minhatv.data.Entry -> PosterCard(
                                 it.name, it.logo, key = "h$ri:${it.url}", progress = Repository.progress(it.url),
-                                onFocused = { header.show(it.name, "Filme · ${it.group}", it.logo) },
+                                onFocused = { header.show(it, "Filme · ${it.group}") },
                                 onClick = { nav.openMovie(it) }, onLongClick = { toggleFav(context, it) },
                             )
                             is dev.guisousa.minhatv.data.Show -> PosterCard(
                                 it.name, it.logo, key = "h$ri:s${it.key}",
-                                onFocused = { header.show(it.name, "Série · ${it.group}", it.logo) },
+                                onFocused = { header.show(it, "Série · ${it.group}") },
                                 onClick = { nav.openShow(it) },
                             )
                         }
@@ -236,7 +241,7 @@ private fun EntryRow(lib: Library, type: ContentType, group: String, count: Int,
         } else {
             PosterCard(
                 e.name, e.logo, key = "$group:${e.url}", progress = Repository.progress(e.url),
-                onFocused = { header.show(e.name, "Filme · $group", e.logo) },
+                onFocused = { header.show(e, "Filme · $group") },
                 onClick = { nav.openMovie(e) },
                 onLongClick = { toggleFav(context, e) },
             )
@@ -260,7 +265,7 @@ private fun ShowRow(lib: Library, group: String, count: Int, nav: Nav, header: H
         seeAll = if (count > shows.size) ({ nav.openCategory(ContentType.SERIES, group) }) else null,
         seeAllCount = count,
     ) { _, s ->
-        PosterCard(s.name, s.logo, key = "$group:${s.key}", tmdbTitle = s.name, tv = true, onFocused = { header.show(s.name, seriesLabel(s.episodeCount), s.logo) }, onClick = { nav.openShow(s) })
+        PosterCard(s.name, s.logo, key = "$group:${s.key}", tmdbTitle = s.name, tv = true, onFocused = { header.show(s, seriesLabel(s.episodeCount)) }, onClick = { nav.openShow(s) })
     }
 }
 
@@ -274,8 +279,7 @@ fun RowsScreen(lib: Library, type: ContentType, nav: Nav) {
         Message(if (type == ContentType.SERIES) "Nenhuma série" else "Nenhum filme", "As listas adicionadas não têm esse tipo de conteúdo (ou ainda estão carregando).")
         return
     }
-    Column(Modifier.fillMaxSize()) {
-        FocusHeader(header.title ?: (if (type == ContentType.SERIES) "Séries" else "Filmes"), header.subtitle ?: "${groups.size} categorias", image = header.image, detail = header.detail, logo = header.isLogo)
+    CinemaLayout(header, lib.version, if (type == ContentType.SERIES) "Séries" else "Filmes", "${groups.size} categorias") {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 48.dp)) {
             // igual ao Saimo: Lançamentos, uma fileira por gênero e no fim "Todos de A a Z"
             // atalho logo no topo para a grade com tudo de A a Z
@@ -314,14 +318,14 @@ fun CategoryScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
                 val items = load(lib.version, group) { Repository.entries(type, group) }
                 if (items == null) Loading() else PosterGrid(
                     items.size, { i -> items[i].name }, { i -> items[i].logo },
-                    onFocused = { i -> header.show(items[i].name, "Filme · $group", items[i].logo) },
+                    onFocused = { i -> header.show(items[i], "Filme · $group") },
                 ) { i -> nav.openMovie(items[i]) }
             }
             ContentType.SERIES -> {
                 val shows = load(lib.version, group) { Repository.shows(group) }
                 if (shows == null) Loading() else PosterGrid(
                     shows.size, { i -> shows[i].name }, { i -> shows[i].logo },
-                    onFocused = { i -> header.show(shows[i].name, seriesLabel(shows[i].episodeCount), shows[i].logo) },
+                    onFocused = { i -> header.show(shows[i], seriesLabel(shows[i].episodeCount)) },
                 ) { i -> nav.openShow(shows[i]) }
             }
         }
@@ -345,36 +349,111 @@ private fun PosterGrid(count: Int, title: (Int) -> String, image: (Int) -> Strin
 
 @Composable
 fun LiveScreen(lib: Library) {
-    if (lib.liveTotal == 0) { Message("Nenhum canal ao vivo", "As listas adicionadas não têm canais ao vivo (ou ainda estão carregando)."); return }
+    if (lib.liveTotal == 0) {
+        Box(Modifier.padding(top = 64.dp)) { Message("Nenhum canal ao vivo", "As listas adicionadas não têm canais ao vivo (ou ainda estão carregando).") }
+        return
+    }
     var group by rememberSaveable(lib.version) { mutableStateOf(defaultGroup(lib.liveGroups, lib.liveTotal)) }
     val channels = load(lib.version, group) { Repository.entries(ContentType.LIVE, group) }
     var focused by remember(group) { mutableStateOf<Entry?>(null) }
-    Row(Modifier.fillMaxSize().padding(top = 8.dp)) {
-        GroupColumn(lib.liveGroups, lib.liveTotal, group) { group = it }
-        Box(Modifier.weight(1f)) {
-            if (channels == null) Loading() else ChannelList(channels, onFocused = { focused = it })
+    // brilho de fundo na cor da categoria (Globo azul, Record vermelho...), sumindo no preto
+    val tint by androidx.compose.animation.animateColorAsState(groupColor(focused?.group ?: group), tween(500), label = "tint")
+    Box(
+        Modifier.fillMaxSize().background(
+            androidx.compose.ui.graphics.Brush.radialGradient(
+                0f to tint, 1f to Palette.Background,
+                center = androidx.compose.ui.geometry.Offset(1100f * 1.5f, 220f * 1.5f), radius = 1100f,
+            ),
+        ),
+    ) {
+        Row(Modifier.fillMaxSize().padding(top = 72.dp)) {
+            GroupColumn(lib.liveGroups, lib.liveTotal, group) { group = it }
+            Box(Modifier.weight(1f)) {
+                if (channels == null) Loading() else ChannelList(channels, onFocused = { focused = it })
+            }
+            ChannelPreview(focused)
         }
-        ChannelPreview(focused)
     }
 }
 
-/** Painel à direita com o canal em foco: logo grande, o que passa agora e as fontes. */
+/** Cor de fundo de cada categoria de canais (escura: só um brilho atrás da tela). */
+private fun groupColor(g: String?): Color {
+    val n = (g ?: "").lowercase()
+    return when {
+        "globo" in n -> Color(0xFF0D3B66)
+        "record" in n -> Color(0xFF5A1414)
+        "sbt" in n -> Color(0xFF3D2A66)
+        "band" in n -> Color(0xFF5A3A10)
+        "regiona" in n || "aberto" in n -> Color(0xFF1D4A3A)
+        "document" in n || "discovery" in n -> Color(0xFF14425A)
+        "esporte" in n || "espn" in n || "sport" in n || "premiere" in n || "futebol" in n -> Color(0xFF5A1010)
+        "filme" in n || "hbo" in n || "telecine" in n -> Color(0xFF2A2A2A)
+        "infant" in n || "kids" in n -> Color(0xFF4A3A10)
+        "not" in n -> Color(0xFF16324F)
+        n.isBlank() -> Color(0xFF0A2A33)
+        else -> Color.hsv(((n.hashCode() and 0x7fffffff) % 360).toFloat(), 0.55f, 0.32f)
+    }
+}
+
+/** Painel à direita com o canal em foco: logo num quadro "ao vivo", o programa de agora e os próximos. */
 @Composable
 private fun ChannelPreview(e: Entry?) {
     val epg by Repository.epg.collectAsState()
     val now = nowTicker()
-    val sourceCount = e?.let { Repository.sourceCount(it) } ?: 0
-    Column(Modifier.width(300.dp).padding(end = 48.dp, top = 4.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(Modifier.width(424.dp).fillMaxHeight().padding(end = 56.dp, top = 4.dp)) {
         if (e == null) return@Column
-        Logo(e.logo, Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(6.dp)), fallback = e.name)
-        Text(e.name, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Palette.Text, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        e.quality?.let { Text(it, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Palette.TextDim) }
-        val cur = epg.current(e, now)
-        val next = epg.next(e, now)
-        if (cur != null) Text("Agora · ${cur.title}", fontSize = 14.sp, color = Palette.TextDim, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        if (next != null) Text("${timeFmt.format(Date(next.start))} · ${next.title}", fontSize = 14.sp, color = Palette.TextFaint, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        if (cur == null && next == null) Text(e.group, fontSize = 14.sp, color = Palette.TextDim, maxLines = 2)
-        if (sourceCount > 1) Text("$sourceCount fontes · troca sozinho se uma falhar", fontSize = 13.sp, color = Palette.TextFaint)
+        Box(
+            Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp))
+                .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color(0xFF1A1A1F), Color(0xFF0B0B0E)))),
+        ) {
+            Logo(e.logo, Modifier.align(Alignment.Center).size(width = 200.dp, height = 112.dp), fallback = e.name)
+            Row(
+                Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(4.dp)).background(Palette.Live).padding(horizontal = 8.dp, vertical = 3.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(Modifier.size(6.dp).clip(RoundedCornerShape(50)).background(Color.White))
+                Spacer(Modifier.width(6.dp))
+                Text("AO VIVO", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White, letterSpacing = 1.sp)
+            }
+            e.quality?.let { q ->
+                Text(
+                    q, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Palette.TextDim,
+                    modifier = Modifier.align(Alignment.TopEnd).padding(12.dp),
+                )
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        val progs = epg.forEntry(e).orEmpty()
+        val cur = progs.firstOrNull { it.start <= now && now < it.stop }
+        val upcoming = progs.filter { it.start > now }.take(3)
+        Text(cur?.title ?: e.name, fontSize = 23.sp, lineHeight = 28.sp, fontWeight = FontWeight.ExtraBold, color = Palette.Text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Spacer(Modifier.height(6.dp))
+        if (cur != null) {
+            val left = ((cur.stop - now) / 60_000).coerceAtLeast(0)
+            Text(
+                "${e.name}  ·  ${timeFmt.format(Date(cur.start))}–${timeFmt.format(Date(cur.stop))}  ·  " + (if (left >= 60) "falta ${left / 60} h ${left % 60} min" else "falta $left min"),
+                fontSize = 13.sp, color = Palette.TextDim, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(10.dp))
+            ProgressLine((now - cur.start).toFloat() / (cur.stop - cur.start).coerceAtLeast(1))
+            cur.desc?.takeIf { it.isNotBlank() }?.let {
+                Spacer(Modifier.height(12.dp))
+                Text(it, fontSize = 14.sp, lineHeight = 20.sp, color = Color(0xFFCFCFD4), maxLines = 3, overflow = TextOverflow.Ellipsis)
+            }
+        } else {
+            Text(e.group.ifBlank { "Sem guia de programação" }, fontSize = 13.sp, color = Palette.TextDim)
+        }
+        if (upcoming.isNotEmpty()) {
+            Spacer(Modifier.height(18.dp))
+            Text("A SEGUIR", fontSize = 11.sp, letterSpacing = 2.sp, fontWeight = FontWeight.Bold, color = Palette.Brand)
+            Spacer(Modifier.height(6.dp))
+            upcoming.forEach { p ->
+                Row(Modifier.padding(vertical = 4.dp)) {
+                    Text(timeFmt.format(Date(p.start)), Modifier.width(52.dp), fontSize = 14.sp, color = Palette.TextFaint)
+                    Text(p.title, fontSize = 14.sp, color = Palette.TextDim, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
     }
 }
 
@@ -397,9 +476,9 @@ fun ChannelList(channels: List<Entry>, modifier: Modifier = Modifier, onFocused:
                 onFocused = onFocused?.let { cb -> { cb(e) } },
                 modifier = Modifier.fillMaxWidth(),
                 focusKey = "l:${e.url}",
-                focusScale = 1.01f,
-                background = Palette.Surface,
-                shape = RoundedCornerShape(4.dp),
+                focusScale = 1.03f,
+                background = Color(0x0FFFFFFF),
+                shape = RoundedCornerShape(8.dp),
             ) { focused ->
                 Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("${i + 1}", Modifier.width(44.dp), fontSize = 14.sp, color = if (focused) Palette.OnFocus else Palette.TextFaint)
@@ -473,7 +552,7 @@ fun MyListScreen(lib: Library, nav: Nav) {
                     MediaRow(vod, POSTER_W) { i, e ->
                         PosterCard(
                             e.name, e.logo, key = "my:${e.url}", progress = Repository.progress(e.url),
-                            onFocused = { header.show(e.name, "${kindOf(e.type)} · ${e.group}", e.logo) },
+                            onFocused = { header.show(e, "${kindOf(e.type)} · ${e.group}") },
                             onClick = { if (e.type == ContentType.MOVIE) nav.openMovie(e) else PlaybackQueue.start(context, vod, i) }, onLongClick = { toggleFav(context, e) },
                         )
                     }
@@ -549,7 +628,7 @@ fun SearchScreen(lib: Library, nav: Nav) {
                 SectionTitle("Filmes", trailing = "${movies.size}")
                 MediaRow(movies, POSTER_W) { _, e ->
                     PosterCard(
-                        e.name, e.logo, key = "s:${e.url}", onFocused = { header.show(e.name, "Filme · ${e.group}", e.logo) },
+                        e.name, e.logo, key = "s:${e.url}", onFocused = { header.show(e, "Filme · ${e.group}") },
                         onClick = { nav.openMovie(e) }, onLongClick = { toggleFav(context, e) },
                     )
                 }
@@ -558,7 +637,7 @@ fun SearchScreen(lib: Library, nav: Nav) {
                 val uniqueShows = shows.distinctBy { dupKey(it.name).ifEmpty { it.key } }
                 SectionTitle("Séries", trailing = "${uniqueShows.size}")
                 MediaRow(uniqueShows, POSTER_W) { _, s ->
-                    PosterCard(s.name, s.logo, key = "s:${s.key}", tmdbTitle = s.name, tv = true, onFocused = { header.show(s.name, seriesLabel(s.episodeCount), s.logo) }, onClick = { nav.openShow(s) })
+                    PosterCard(s.name, s.logo, key = "s:${s.key}", tmdbTitle = s.name, tv = true, onFocused = { header.show(s, seriesLabel(s.episodeCount)) }, onClick = { nav.openShow(s) })
                 }
             }
         }

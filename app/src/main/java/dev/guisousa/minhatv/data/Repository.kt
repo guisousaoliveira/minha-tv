@@ -311,6 +311,47 @@ object Repository {
         return catalogo.ficha(false, idOf(e.url, F) ?: return null)
     }
 
+    /** Dados do destaque (tela no estilo cinema): fundo largo, gêneros e versões, tudo do cartão. */
+    class Destaque(
+        val fundo: String?, val generos: List<String>, val ano: Int?, val versoes: String,
+        val serie: Boolean, val temporadas: Int = 0, val episodios: Int = 0, val k4: Boolean = false,
+    )
+
+    /** Referência usada no destaque para uma série (mesmo prefixo dos episódios). */
+    fun showRef(s: Show) = E + s.key
+
+    private fun fundoUrl(b: String?) = when {
+        b.isNullOrBlank() -> null
+        b.startsWith("http") -> b
+        else -> "https://image.tmdb.org/t/p/w1280/$b"
+    }
+
+    fun destaque(ref: String?): Destaque? {
+        val d = dados ?: return null
+        ref ?: return null
+        return when {
+            ref.startsWith(F) -> d.filmePorId[idOf(ref, F) ?: return null]?.first?.let { f ->
+                Destaque(fundoUrl(f.b), f.g.orEmpty(), f.a, f.v, serie = false, k4 = f.k == "4K")
+            }
+            ref.startsWith(E) -> d.seriePorId[idOf(ref, E) ?: return null]?.first?.let { s ->
+                Destaque(fundoUrl(s.b), s.g.orEmpty(), s.a, s.v, serie = true, temporadas = s.nt, episodios = s.ne)
+            }
+            else -> null
+        }
+    }
+
+    /** Sinopse e fundo da ficha (baixa a ficha se ainda não estiver no aparelho). */
+    suspend fun fichaDe(ref: String?): Ficha? {
+        ref ?: return null
+        return runCatching {
+            when {
+                ref.startsWith(F) -> catalogo.ficha(false, idOf(ref, F) ?: return null)
+                ref.startsWith(E) -> catalogo.ficha(true, idOf(ref, E) ?: return null)
+                else -> null
+            }
+        }.getOrNull()
+    }
+
     /** Versões que o filme tem (sem baixar a ficha: vem no cartão). */
     fun movieVersions(e: Entry): Set<String> {
         val d = dados ?: return setOf(DUB)

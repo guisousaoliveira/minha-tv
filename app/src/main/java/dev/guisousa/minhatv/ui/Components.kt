@@ -75,6 +75,8 @@ object Palette {
     val Live = Color(0xFFE24B4A)
     val Error = Color(0xFFFF6B6B)
     val Hairline = Color(0x22FFFFFF)
+    /** Ciano da marca (o mesmo do W4LLE): uso contido, em detalhes e no que está selecionado. */
+    val Brand = Color(0xFF00E5FF)
 }
 
 @Composable
@@ -285,6 +287,8 @@ fun <T> MediaRow(
     seeAllAspect: Float = 2f / 3f,
     item: @Composable (Int, T) -> Unit,
 ) {
+    // a fileira rola do jeito normal mesmo dentro da tela cinema (que sobe a fileira em foco para o topo)
+    androidx.compose.runtime.CompositionLocalProvider(androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides MinimalScrollSpec) {
     LazyRow(
         // no fim da fileira, ◀ ▶ param ali em vez de pular para o menu do topo
         modifier = Modifier.focusProperties {
@@ -297,6 +301,7 @@ fun <T> MediaRow(
         if (seeAll != null) {
             item(key = "see-all") { Box(Modifier.width(itemWidth)) { SeeAllCard(seeAllCount, seeAllAspect, seeAll) } }
         }
+    }
     }
 }
 
@@ -317,7 +322,7 @@ fun PosterCard(
     Column {
         FocusBox(
             onClick = onClick, onLongClick = onLongClick, onFocused = onFocused,
-            frame = true, focusScale = 1.07f,
+            frame = true, focusScale = 1.1f,
             modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f).then(if (requester != null) Modifier.focusRequester(requester) else Modifier),
             focusKey = "p:$key",
         ) {
@@ -366,7 +371,7 @@ fun SeeAllCard(count: Int, aspect: Float, onClick: () -> Unit) {
 @Composable
 fun ProgressLine(fraction: Float, modifier: Modifier = Modifier) {
     Box(modifier.fillMaxWidth().height(3.dp).background(Color(0x55FFFFFF))) {
-        Box(Modifier.fillMaxWidth(fraction.coerceIn(0f, 1f)).fillMaxHeight().background(Palette.Text))
+        Box(Modifier.fillMaxWidth(fraction.coerceIn(0f, 1f)).fillMaxHeight().background(Palette.Brand))
     }
 }
 
