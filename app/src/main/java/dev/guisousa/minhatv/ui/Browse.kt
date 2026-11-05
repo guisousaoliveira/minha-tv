@@ -154,22 +154,20 @@ fun VodGridScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
                 shows.mapIndexed { i, s -> GridItem(s.key, s.name, s.logo?.ifBlank { null }, "Série · ${s.group}", yearRe.find(s.name)?.value?.toInt() ?: 0, i, { nav.openShow(s) }, null) }
             } else {
                 val movies = if (paged) Repository.moviesPage(genre, if (newest) null else letter) else Repository.entries(ContentType.MOVIE, genre, 3000)
-                movies.mapIndexed { i, e -> GridItem(e.url, e.name, e.logo?.ifBlank { null }, "Filme · ${e.group}", yearRe.find(e.name)?.value?.toInt() ?: 0, i, { nav.openMovie(e) }, { toggleFav(context, e) }) }
+                movies.mapIndexed { i, e -> GridItem(e.url, e.name, e.logo?.ifBlank { null }, "Filme · ${e.group}", e.year ?: yearRe.find(e.name)?.value?.toInt() ?: 0, i, { nav.openMovie(e) }, { toggleFav(context, e) }) }
             }
             // ordena fora da tela principal, calculando a chave uma vez só por item
-            if (newest) list.sortedWith(compareByDescending<GridItem> { it.year }.thenBy { if (paged) it.order else -it.order })
+            // (o ano do nome, não o do catálogo: "novidades" segue a ordem de chegada que vem do servidor)
+            if (newest) list.sortedWith(compareByDescending<GridItem> { yearRe.find(it.title)?.value?.toInt() ?: 0 }.thenBy { if (paged) it.order else -it.order })
             else list.map { sortKey(it.title) to it }.sortedBy { it.first }.map { it.second }
         }.let { l ->
             // o mesmo título repetido (dublado e legendado, outra qualidade): um cartão só, as versões ficam nos detalhes
-            // sem ano junta com o que tem ano; anos diferentes (refilmagem) ficam separados
-            val seen = HashMap<String, MutableSet<Int>>()
+            // anos diferentes (refilmagem: Aladdin 1992 e 2019) ficam separados
+            val seen = HashSet<String>()
             l.filter { it.title.isNotBlank() }.filter { item ->
                 val k = dupKey(item.title).ifEmpty { sortKey(item.title) }
-                val ys = seen[k]
                 // séries: o ano no nome costuma ser só da temporada, então junta sempre
-                val keep = ys == null || (type != ContentType.SERIES && item.year != 0 && item.year !in ys && ys.any { it != 0 })
-                seen.getOrPut(k) { HashSet() } += item.year
-                keep
+                seen.add(if (type == ContentType.SERIES) k else "$k|${item.year}")
             }
         }
     }

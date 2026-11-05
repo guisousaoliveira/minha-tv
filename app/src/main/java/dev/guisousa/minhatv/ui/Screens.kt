@@ -535,8 +535,8 @@ fun SearchScreen(lib: Library, nav: Nav) {
         val (entries, shows) = results!!
         if (entries.isEmpty() && shows.isEmpty()) { Message("Nada encontrado para \"$query\""); return@Column }
         val live = entries.filter { it.type == ContentType.LIVE }
-        // o mesmo filme/série de várias listas aparece uma vez só
-        val movies = entries.filter { it.type == ContentType.MOVIE }.distinctBy { dupKey(it.name).ifEmpty { it.url } }
+        // o mesmo filme/série de várias listas aparece uma vez só (com o ano: Aladdin 1992 e 2019 são dois filmes)
+        val movies = entries.filter { it.type == ContentType.MOVIE }.distinctBy { dupKey(it.name).ifEmpty { it.url } + "|" + it.year }
         FocusHeader(header.title ?: "Resultados", header.subtitle ?: "\"$query\"", image = header.image, detail = header.detail, logo = header.isLogo)
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(top = 8.dp, bottom = 48.dp)) {
             if (live.isNotEmpty()) item("live") {

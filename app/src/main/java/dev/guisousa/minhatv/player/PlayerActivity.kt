@@ -175,16 +175,60 @@ class PlayerActivity : ComponentActivity() {
     private var liveStillMs = 0L
     private val tlWindow = androidx.media3.common.Timeline.Window()
 
-    /** 12 s sem a primeira imagem: vai para a próxima fonte. */
-    private val firstFrameWatch = Runnable {
+    /** Bytes de vídeo que chegaram da internet (para saber se o servidor está respondendo, mesmo devagar). */
+    private val bytesIn = java.util.concurrent.atomic.AtomicLong()
+    private val transfer = object : androidx.media3.datasource.TransferListener {
+        override fun onTransferInitializing(s: androidx.media3.datasource.DataSource, d: androidx.media3.datasource.DataSpec, net: Boolean) {}
+        override fun onTransferStart(s: androidx.media3.datasource.DataSource, d: androidx.media3.datasource.DataSpec, net: Boolean) {}
+        override fun onBytesTransferred(s: androidx.media3.datasource.DataSource, d: androidx.media3.datasource.DataSpec, net: Boolean, n: Int) { if (net) bytesIn.addAndGet(n.toLong()) }
+        override fun onTransferEnd(s: androidx.media3.datasource.DataSource, d: androidx.media3.datasource.DataSpec, net: Boolean) {}
+    }
+    private var firstWaitStart = 0L
+    private var stallBytes = 0L
+    private var stallExtends = 0
+    private var bytesAtCheck = 0L
+    /** Filme/série: rodadas extras quando nenhuma fonte abriu sem erro claro (servidor lento, não morto). */
+    private var vodRounds = 0
+
+    /** Ao vivo: 12 s sem a primeira imagem vai para a próxima fonte. Filme: 20 s (35 s na 2ª rodada),
+     *  e enquanto o vídeo estiver chegando continua esperando, até 45 s (60 s na 2ª rodada). */
+    private val firstFrameWatch: Runnable = Runnable {
         if (firstFrame || isFinishing) return@Runnable
         if (isLive) {
             android.util.Log.w("MinhaTV", "player: 12 s sem imagem, próxima fonte")
             nextOrRound(frozen = true)
         } else {
-            android.util.Log.w("MinhaTV", "player: filme 15 s sem imagem, próxima fonte")
-            if (!nextSource(frozen = true)) { hideLoading(); notice("Não foi possível abrir este conteúdo.", 8000) }
+            val waited = System.currentTimeMillis() - firstWaitStart
+            val now = bytesIn.get()
+            val arriving = now > bytesAtCheck
+            bytesAtCheck = now
+            val limit = if (vodRounds > 0) 60_000L else 45_000L
+            if (arriving && waited < limit) {
+                android.util.Log.w("MinhaTV", "player: filme ${waited / 1000} s sem imagem, mas o vídeo está chegando: espera mais")
+                loadingText.text = "Servidor lento, esperando o vídeo… ${waited / 1000} s"
+                loadingBox.visibility = View.VISIBLE
+                handler.postDelayed(firstFrameWatch, 5_000L)
+                return@Runnable
+            }
+            android.util.Log.w("MinhaTV", "player: filme ${waited / 1000} s sem imagem, próxima fonte")
+            if (!nextSource(frozen = true)) vodRetryOrGiveUp("Não foi possível abrir este conteúdo.")
         }
+    }
+
+    /** Filme/série: acabaram as fontes sem erro claro. Tenta todas mais uma vez, com mais paciência, antes de desistir. */
+    private fun vodRetryOrGiveUp(message: String) {
+        if (vodRounds >= 1 || sources.isEmpty()) { hideLoading(); notice(message, 8000); return }
+        vodRounds++
+        android.util.Log.w("MinhaTV", "player: nenhuma fonte abriu, tentando todas de novo com mais tempo")
+        loadingText.text = "Nenhuma fonte respondeu a tempo. Tentando de novo com mais calma…"
+        loadingBox.visibility = View.VISIBLE
+        val mine = index
+        handler.postDelayed({
+            if (index != mine || isFinishing) return@postDelayed
+            sourceIndex = -1
+            retries = 0
+            if (!nextSource()) { hideLoading(); notice(message, 8000) }
+        }, 2_000L)
     }
     /** Filme/série: quantas vezes já reabriu na mesma posição depois de ter tocado (máx. 3). */
     private var vodReprepares = 0
@@ -370,12 +414,13 @@ class PlayerActivity : ComponentActivity() {
                     Player.STATE_BUFFERING -> {
                         handler.postDelayed(showLoading, 400)
                         handler.removeCallbacks(stallCheck)
-                        if (!isLive) handler.postDelayed(stallCheck, 12_000)
+                        if (!isLive) { stallBytes = bytesIn.get(); handler.postDelayed(stallCheck, 12_000) }
                     }
                     Player.STATE_READY -> {
                         retries = 0
                         limitRetried = false
                         readyOnce = true
+                        stallExtends = 0
                         sourcePlayed = true
                         playing?.url?.let { if (it != markedWorking) { markedWorking = it; SourceHealth.markWorking(it); if (!usingHlsVariant && it in hlsFailed) SourceHealth.markTsOnly(it) } }
                         reopenFails = 0
@@ -530,7 +575,7 @@ class PlayerActivity : ComponentActivity() {
         syncQueue()
         index = ((i % items.size) + items.size) % items.size
         retries = 0
-        sourcePlayed = false; reopenFails = 0; wraps = 0; sameReopens = 0; rounds = 0; lastPlayingAt = 0L; vodReprepares = 0
+        sourcePlayed = false; reopenFails = 0; wraps = 0; sameReopens = 0; rounds = 0; lastPlayingAt = 0L; vodReprepares = 0; vodRounds = 0
         hideNextCard()
         val e = current
         Repository.addRecent(e)
@@ -633,7 +678,9 @@ class PlayerActivity : ComponentActivity() {
         firstFrame = false
         livePos = -1L; liveStillMs = 0
         handler.removeCallbacks(firstFrameWatch)
-        handler.postDelayed(firstFrameWatch, 12_000L)
+        firstWaitStart = System.currentTimeMillis()
+        bytesAtCheck = bytesIn.get()
+        handler.postDelayed(firstFrameWatch, if (isLive) 12_000L else if (vodRounds > 0) 35_000L else 20_000L)
         // conexão igual à do Saimo: OkHttp, UA do Safari (se a lista não definir outro) e Accept */*
         val http = androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(PlayerHttp.client)
             .setUserAgent(src.userAgent ?: PlayerHttp.SAFARI_UA)
@@ -647,7 +694,7 @@ class PlayerActivity : ComponentActivity() {
         usingHlsVariant = hls != null
         val url = hls ?: src.url
         val path = url.lowercase().substringBefore('?')
-        val base = DefaultDataSource.Factory(this, StableRedirectDataSource.Factory(http))
+        val base = DefaultDataSource.Factory(this, StableRedirectDataSource.Factory(http)).setTransferListener(transfer)
         // ao vivo: playlist que dá 404/403/410 não volta repetindo o mesmo endereço (é link com prazo).
         // Desiste na hora para reabrir o canal pelo link original, em vez de ficar ~24 s tentando com a tela parada.
         val retry404 = object : androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy() {
@@ -766,8 +813,7 @@ class PlayerActivity : ComponentActivity() {
         }
         if (nextSource()) return
         if (isLive) { retryFromStart(); return }
-        hideLoading()
-        notice("Não foi possível abrir este conteúdo.", 8000)
+        vodRetryOrGiveUp("Não foi possível abrir este conteúdo.")
     }
 
     /**
@@ -864,6 +910,17 @@ class PlayerActivity : ComponentActivity() {
     private fun onStall() {
         val exo = player ?: return
         if (exo.playbackState != Player.STATE_BUFFERING) return
+        // antes da primeira imagem quem decide é o vigia da abertura (que espera mais por servidor lento)
+        if (!firstFrame) return
+        // o vídeo continua chegando, só devagar: espera mais um pouco antes de trocar de fonte (até ~1 min)
+        val got = bytesIn.get()
+        if (got > stallBytes && stallExtends < 4) {
+            stallBytes = got; stallExtends++
+            android.util.Log.w("MinhaTV", "player: carregando há muito tempo, mas o vídeo está chegando: espera mais")
+            handler.postDelayed(stallCheck, 12_000)
+            return
+        }
+        stallExtends = 0
         if (!nextSource()) {
             reconnect("Reconectando…")
             handler.postDelayed(stallCheck, 20_000)
