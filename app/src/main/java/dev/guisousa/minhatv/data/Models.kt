@@ -5,38 +5,6 @@ import kotlinx.serialization.Serializable
 @Serializable
 enum class ContentType { LIVE, MOVIE, SERIES }
 
-/** Uma playlist M3U adicionada pelo usuário. */
-@Serializable
-data class Playlist(
-    val id: String,
-    val name: String,
-    val url: String,
-    val epgUrl: String? = null,
-    val detectedEpgUrl: String? = null,
-    /** Página de onde a playlist foi importada (se houver). */
-    val sourceId: String? = null,
-    val lastUpdated: Long = 0,
-    val lastError: String? = null,
-    val liveCount: Int = 0,
-    val movieCount: Int = 0,
-    val seriesCount: Int = 0,
-    /** Servidor Xtream (url = endereço do servidor): usuário e senha. */
-    val xtreamUser: String? = null,
-    val xtreamPass: String? = null,
-) {
-    val isXtream get() = xtreamUser != null
-}
-
-/** Uma página (ex.: README do GitHub) que lista várias playlists. É verificada de novo a cada atualização. */
-@Serializable
-data class Source(
-    val id: String,
-    val url: String,
-    val lastChecked: Long = 0,
-    val lastError: String? = null,
-    val found: Int = 0,
-)
-
 @Serializable
 data class Entry(
     val name: String,
@@ -59,6 +27,9 @@ data class Entry(
     val hidden: Int = 0,
     /** Quando o item entrou no servidor (unix, campo "added" do Xtream). Ordena os lançamentos. */
     val added: Long? = null,
+    /** Versão desta fonte (Repository.DUB/LEG), quando o catálogo diz. */
+    val version: String? = null,
+    val year: Int? = null,
 )
 
 @Serializable

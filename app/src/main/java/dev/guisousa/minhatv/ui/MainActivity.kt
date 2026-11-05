@@ -50,7 +50,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
 import dev.guisousa.minhatv.data.ContentType
-import dev.guisousa.minhatv.data.PhoneSetupServer
 import dev.guisousa.minhatv.data.Repository
 import dev.guisousa.minhatv.data.Show
 import dev.guisousa.minhatv.data.Updater
@@ -141,8 +140,7 @@ fun AppRoot(onLoaded: () -> Unit) {
     val context = LocalContext.current
     val loading by Repository.isLoading.collectAsState()
     val library by Repository.library.collectAsState()
-    val playlists by Repository.playlists.collectAsState()
-    val sources by Repository.sources.collectAsState()
+    val status by Repository.status.collectAsState()
     var tab by rememberSaveable { mutableIntStateOf(0) }
     // telas abertas por cima: guardadas mesmo se o Android fechar o app no fundo enquanto o vídeo toca
     val stack = rememberSaveable(saver = detailSaver) { mutableStateListOf<Detail>() }
@@ -176,7 +174,6 @@ fun AppRoot(onLoaded: () -> Unit) {
         openMovie = { FocusMemory.push(); stack.add(Detail.OfMovie(it)) },
         openCategory = { type, group -> FocusMemory.push(); stack.add(Detail.Category(type, group)) },
     )
-    val nothingAdded = !loading && playlists.isEmpty() && sources.isEmpty()
 
     Column(Modifier.fillMaxSize().background(Palette.Background)) {
         Row(
@@ -218,7 +215,7 @@ fun AppRoot(onLoaded: () -> Unit) {
             val holder = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
             when {
                 loading -> Message("Carregando…")
-                nothingAdded && Tab.entries[tab] != Tab.SETTINGS -> Welcome(onTyped = { url, name, epg -> addLink(context, url, name, epg) })
+                library.isEmpty && Tab.entries[tab] != Tab.SETTINGS -> Message(status ?: "Baixando o catálogo…")
                 else -> {
                 // a aba continua montada (invisível e sem foco) por baixo dos detalhes: ao voltar,
                 // a lista, a busca e a rolagem estão do mesmo jeito e o foco volta para o cartão
@@ -318,67 +315,4 @@ private fun NavItem(title: String, selected: Boolean, onClick: () -> Unit, modif
             )
         }
     }
-}
-
-fun addLink(context: android.content.Context, url: String, name: String?, epg: String?) {
-    if (url.isBlank()) return
-    Toast.makeText(context, "Carregando o link…", Toast.LENGTH_SHORT).show()
-    Repository.addFromUrl(url, name, epg) { msg -> Toast.makeText(context, msg, Toast.LENGTH_LONG).show() }
-}
-
-fun addServer(context: android.content.Context, server: String, user: String, pass: String) {
-    if (server.isBlank() || user.isBlank()) return
-    Toast.makeText(context, "Conectando ao servidor…", Toast.LENGTH_SHORT).show()
-    val url = dev.guisousa.minhatv.data.Xtream.loginUrl(server, user, pass)
-    Repository.addFromUrl(url) { msg -> Toast.makeText(context, msg, Toast.LENGTH_LONG).show() }
-}
-
-/** Primeira abertura: QR Code para configurar pelo celular. */
-@Composable
-fun Welcome(onTyped: (String, String?, String?) -> Unit) {
-    val context = LocalContext.current
-    val address = rememberPhoneSetupServer()
-    Row(Modifier.fillMaxSize().padding(horizontal = 96.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text("Vamos colocar os canais", fontSize = 34.sp, fontWeight = FontWeight.Bold, color = Palette.Text)
-            Spacer(Modifier.height(16.dp))
-            Text(
-                "1. Conecte o celular no mesmo Wi-Fi da TV.\n" +
-                    "2. Aponte a câmera para o código ao lado.\n" +
-                    "3. Cole o link da playlist, da página ou do repositório do GitHub.",
-                fontSize = 18.sp, color = Palette.TextDim, lineHeight = 30.sp,
-            )
-            Spacer(Modifier.height(28.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                TvButton("Digitar o link com o controle", onClick = { showAddLinkDialog(context, onTyped) })
-                TvButton("Servidor com usuário e senha", onClick = { showServerDialog(context) { s, u, p -> addServer(context, s, u, p) } })
-            }
-        }
-        Spacer(Modifier.width(48.dp))
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            if (address != null) {
-                QrCode(address, Modifier.size(240.dp))
-                Spacer(Modifier.height(12.dp))
-                Text(address, fontSize = 15.sp, color = Palette.TextFaint)
-            } else {
-                Text("Conecte a TV ao Wi-Fi para usar o QR Code", color = Palette.Error)
-            }
-        }
-    }
-}
-
-/** Liga o servidor de configuração pelo celular enquanto a tela estiver aberta. */
-@Composable
-fun rememberPhoneSetupServer(): String? {
-    val context = LocalContext.current
-    val server = remember {
-        PhoneSetupServer { url, name, epg ->
-            android.os.Handler(android.os.Looper.getMainLooper()).post { addLink(context, url, name, epg) }
-        }
-    }
-    DisposableEffect(server) {
-        server.start()
-        onDispose { server.stop() }
-    }
-    return remember(server) { server.address() }
 }

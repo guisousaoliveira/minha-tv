@@ -48,7 +48,6 @@ import androidx.compose.ui.unit.sp
 import dev.guisousa.minhatv.data.ContentType
 import dev.guisousa.minhatv.data.Library
 import dev.guisousa.minhatv.data.Repository
-import dev.guisousa.minhatv.data.Tmdb
 import kotlinx.coroutines.launch
 
 // Páginas de Filmes/Séries e a grade "Ver todos", no estilo do Saimo TV.
@@ -103,7 +102,6 @@ internal fun ReleasesRow(lib: Library, type: ContentType, nav: Nav, header: Head
 /** "Em alta no Brasil": filmes populares agora no Brasil (TMDB) que estão nas listas. */
 @Composable
 internal fun PopularRow(lib: Library, nav: Nav, header: HeaderState) {
-    if (!Tmdb.enabled) return
     val context = LocalContext.current
     val items = load(lib.version, "pop-m") { Repository.popularMovies() } ?: run { Box(Modifier.height(290.dp)); return }
     if (items.isEmpty()) return

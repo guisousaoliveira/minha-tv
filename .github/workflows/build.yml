@@ -23,8 +23,6 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       - name: Testes e build
-        env:
-          TMDB_KEY: ${{ secrets.TMDB_KEY }}
         run: |
           chmod +x gradlew
           ./gradlew --no-daemon testReleaseUnitTest assembleRelease

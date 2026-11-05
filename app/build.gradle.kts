@@ -18,8 +18,6 @@ android {
         versionCode = buildNumber
         versionName = "1.0.$buildNumber"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        // chave do TMDB (capas e sinopses): vem do segredo TMDB_KEY do GitHub, nunca do código
-        buildConfigField("String", "TMDB_KEY", "\"${System.getenv("TMDB_KEY") ?: ""}\"")
     }
 
     signingConfigs {
@@ -51,12 +49,13 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+    // android.util.Log nos testes de JVM: não faz nada em vez de dar erro
+    testOptions { unitTests.isReturnDefaultValues = true }
+
     buildFeatures {
         compose = true
         buildConfig = true
     }
-    // regras/limpeza.json (as mesmas que a TV baixa do GitHub) vão dentro do app como cópia inicial
-    sourceSets["main"].resources.srcDirs("../regras")
     lint {
         abortOnError = false
         checkReleaseBuilds = false

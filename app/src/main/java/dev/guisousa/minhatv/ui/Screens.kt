@@ -182,13 +182,32 @@ fun HomeScreen(lib: Library, nav: Nav) {
                     }, onLongClick = { toggleFav(context, e) })
                 }
             }
+            Repository.homeRows().forEachIndexed { ri, row ->
+                item("home-$ri") {
+                    SectionTitle(row.title, trailing = "${row.items.size}")
+                    MediaRow(row.items, POSTER_SAIMO_W) { _, it ->
+                        when (it) {
+                            is dev.guisousa.minhatv.data.Entry -> PosterCard(
+                                it.name, it.logo, key = "h$ri:${it.url}", progress = Repository.progress(it.url),
+                                onFocused = { header.show(it.name, "Filme · ${it.group}", it.logo) },
+                                onClick = { nav.openMovie(it) }, onLongClick = { toggleFav(context, it) },
+                            )
+                            is dev.guisousa.minhatv.data.Show -> PosterCard(
+                                it.name, it.logo, key = "h$ri:s${it.key}",
+                                onFocused = { header.show(it.name, "Série · ${it.group}", it.logo) },
+                                onClick = { nav.openShow(it) },
+                            )
+                        }
+                    }
+                }
+            }
             lib.liveGroups.take(2).forEach { g ->
                 item("live-${g.name}") { EntryRow(lib, ContentType.LIVE, g.name, g.count, nav, header) }
             }
-            lib.movieGroups.take(6).forEach { g ->
+            lib.movieGroups.drop(1).take(5).forEach { g ->
                 item("movie-${g.name}") { EntryRow(lib, ContentType.MOVIE, g.name, g.count, nav, header) }
             }
-            lib.showGroups.take(4).forEach { g ->
+            lib.showGroups.drop(1).take(3).forEach { g ->
                 item("show-${g.name}") { ShowRow(lib, g.name, g.count, nav, header) }
             }
         }
@@ -344,7 +363,7 @@ fun LiveScreen(lib: Library) {
 private fun ChannelPreview(e: Entry?) {
     val epg by Repository.epg.collectAsState()
     val now = nowTicker()
-    val sourceCount = load(e?.url) { e?.let { Repository.alternates(it).size + 1 } ?: 0 }
+    val sourceCount = e?.let { Repository.sourceCount(it) } ?: 0
     Column(Modifier.width(300.dp).padding(end = 48.dp, top = 4.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (e == null) return@Column
         Logo(e.logo, Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(6.dp)), fallback = e.name)
@@ -355,7 +374,7 @@ private fun ChannelPreview(e: Entry?) {
         if (cur != null) Text("Agora · ${cur.title}", fontSize = 14.sp, color = Palette.TextDim, maxLines = 2, overflow = TextOverflow.Ellipsis)
         if (next != null) Text("${timeFmt.format(Date(next.start))} · ${next.title}", fontSize = 14.sp, color = Palette.TextFaint, maxLines = 2, overflow = TextOverflow.Ellipsis)
         if (cur == null && next == null) Text(e.group, fontSize = 14.sp, color = Palette.TextDim, maxLines = 2)
-        if ((sourceCount ?: 0) > 1) Text("$sourceCount fontes · troca sozinho se uma falhar", fontSize = 13.sp, color = Palette.TextFaint)
+        if (sourceCount > 1) Text("$sourceCount fontes · troca sozinho se uma falhar", fontSize = 13.sp, color = Palette.TextFaint)
     }
 }
 
@@ -551,15 +570,10 @@ fun SearchScreen(lib: Library, nav: Nav) {
 @Composable
 fun SettingsScreen() {
     val context = LocalContext.current
-    val playlists by Repository.playlists.collectAsState()
-    val sources by Repository.sources.collectAsState()
     val status by Repository.status.collectAsState()
+    val lib by Repository.library.collectAsState()
     var autoplay by remember { mutableStateOf(Repository.autoplayLast) }
     val prefsFocus = remember { FocusRequester() }
-    val address = rememberPhoneSetupServer()
-    val dateFmt = remember { DateFormat.getDateFormat(context) }
-    val clockFmt = remember { DateFormat.getTimeFormat(context) }
-    fun fmt(t: Long) = if (t <= 0) "nunca" else "${dateFmt.format(Date(t))} ${clockFmt.format(Date(t))}"
 
     LazyColumn(
         Modifier.fillMaxSize(),
@@ -567,31 +581,19 @@ fun SettingsScreen() {
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (address != null) {
-                    QrCode(address, Modifier.size(140.dp))
-                    Spacer(Modifier.width(24.dp))
-                }
-                Column(Modifier.weight(1f)) {
-                    Text("Adicionar listas", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = Palette.Text)
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "Aponte a câmera do celular para o código (mesmo Wi-Fi da TV) e cole o link de uma playlist, " +
-                            "de uma página ou de um repositório do GitHub." + (address?.let { "\nOu abra $it no navegador." } ?: ""),
-                        fontSize = 14.sp, color = Palette.TextDim, lineHeight = 21.sp,
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        // ▼ daqui vai para a primeira preferência (sem isso o foco pulava para os botões da direita lá embaixo)
-                        val toPrefs = Modifier.focusProperties { down = prefsFocus }
-                        TvButton("Digitar link", modifier = toPrefs, onClick = { showAddLinkDialog(context) { u, n, e -> addLink(context, u, n, e) } })
-                        TvButton("Servidor (usuário e senha)", modifier = toPrefs, onClick = { showServerDialog(context) { sv, u, pw -> addServer(context, sv, u, pw) } })
-                        TvButton("Atualizar agora", modifier = toPrefs, onClick = {
-                            Toast.makeText(context, "Atualizando…", Toast.LENGTH_SHORT).show()
-                            Repository.refreshAllAsync()
-                        })
-                    }
-                }
+            Column {
+                Text("Catálogo", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = Palette.Text)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "${lib.liveTotal} canais · ${lib.movieTotal} filmes · ${lib.showTotal} séries\n" +
+                        "Os canais, filmes e séries chegam prontos do servidor e se atualizam sozinhos.",
+                    fontSize = 14.sp, color = Palette.TextDim, lineHeight = 21.sp,
+                )
+                Spacer(Modifier.height(12.dp))
+                TvButton("Atualizar agora", modifier = Modifier.focusProperties { down = prefsFocus }, onClick = {
+                    Toast.makeText(context, "Atualizando…", Toast.LENGTH_SHORT).show()
+                    Repository.refreshAllAsync()
+                })
             }
             status?.let { Text(it, color = Palette.TextDim, fontSize = 13.sp, modifier = Modifier.padding(top = 10.dp)) }
         }
@@ -619,33 +621,6 @@ fun SettingsScreen() {
         item {
             ListRow(title = "Versão ${dev.guisousa.minhatv.data.Updater.currentName}", subtitle = "O app confere sozinho se há versão nova ao abrir", error = false) {
                 TvButton("Procurar atualização", onClick = { (context as? MainActivity)?.checkUpdate(force = true) })
-            }
-        }
-        if (sources.isNotEmpty()) {
-            item { SettingsHeader("Páginas e repositórios") }
-            items(sources) { s ->
-                ListRow(
-                    title = s.url.removePrefix("https://").removePrefix("raw.githubusercontent.com/"),
-                    subtitle = "${s.found} listas encontradas · verificado ${fmt(s.lastChecked)}" + (s.lastError?.let { " · erro: $it" } ?: ""),
-                    error = s.lastError != null,
-                ) {
-                    TvButton("Remover", onClick = {
-                        confirm(context, "Remover?", "Remove o link e todas as listas que vieram dele.", "Remover") { Repository.removeSource(s.id) }
-                    })
-                }
-            }
-        }
-        item { SettingsHeader("Listas (${playlists.size})") }
-        items(playlists, key = { it.id }) { p ->
-            ListRow(
-                title = p.name,
-                subtitle = "${p.liveCount} canais · ${p.movieCount} filmes · ${p.seriesCount} ${if (p.isXtream) "séries" else "episódios"} · atualizada ${fmt(p.lastUpdated)}" +
-                    (p.lastError?.let { " · erro: $it" } ?: ""),
-                error = p.lastError != null,
-            ) {
-                TvButton("Atualizar", onClick = { Repository.refreshOneAsync(p.id) })
-                Spacer(Modifier.width(8.dp))
-                TvButton("Remover", onClick = { confirm(context, "Remover lista?", p.name, "Remover") { Repository.removePlaylist(p.id) } })
             }
         }
     }

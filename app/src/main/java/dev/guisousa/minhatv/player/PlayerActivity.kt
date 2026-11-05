@@ -271,7 +271,6 @@ class PlayerActivity : ComponentActivity() {
     private var sources: List<Entry> = emptyList()
     private var sourceIndex = 0
     /** Última fonte que já foi marcada como boa (para marcar uma vez só). */
-    private var markedWorking: String? = null
     private var sourcesJob: Job? = null
     private var retries = 0
 
@@ -382,7 +381,6 @@ class PlayerActivity : ComponentActivity() {
                         rounds = 0
                         lastPlayingAt = System.currentTimeMillis()
                         hideLoading()
-                        playing?.url?.let { if (it != markedWorking) { markedWorking = it; Repository.markWorking(it) } }
                     }
                     Player.STATE_ENDED -> {
                         if (isLive) {
@@ -533,33 +531,41 @@ class PlayerActivity : ComponentActivity() {
         val e = current
         Repository.addRecent(e)
         if (isLive) Repository.lastChannelUrl = e.url
-        sources = listOf(e)
-        sourceIndex = 0
-        playSource(e, resume = true)
+        sourcesJob?.cancel()
+        player?.stop()
+        if (!e.url.startsWith("v2:")) {
+            sources = listOf(e)
+            sourceIndex = 0
+            playSource(e, resume = true)
+        } else {
+            // as fontes (links reais, já em ordem e com a versão escolhida primeiro) vêm do catálogo
+            sources = emptyList()
+            sourceIndex = 0
+            playing = null
+            loadingText.text = "Carregando…"
+            loadingBox.visibility = View.VISIBLE
+        }
         setupControls()
         if (isLive) showInfo() else { infoPanel.visibility = View.GONE; showControls() }
-        // procura outras fontes do mesmo canal/filme em segundo plano
-        sourcesJob?.cancel()
+        if (!e.url.startsWith("v2:")) return
         val wanted = index
         sourcesJob = lifecycleScope.launch {
-            val alts = Repository.alternates(e)
-            if (index == wanted && alts.isNotEmpty()) {
-                sources = if (isLive) listOf(e) + alts else byVersion(listOf(e) + alts, Repository.versionFor(e))
-                sourceIndex = sources.indexOfFirst { it.url == playing?.url }.coerceAtLeast(0)
-                // filme/série: se a versão preferida (ex.: Dublado) está em outra fonte, já abre nela
-                // (mesmo se já começou: tocando a versão errada, troca mantendo a posição)
-                val wrongVersion = !isLive && playing?.let { Repository.versionOrDub(it) } != Repository.versionOrDub(sources[0]) &&
-                    Repository.versionOrDub(sources[0]) == Repository.versionFor(e)
-                if (!isLive && (!readyOnce || wrongVersion) && sources[0].url != playing?.url) switchSource(0)
-                // não remonta a barra (tirava o foco de quem estava navegando): só atualiza os textos
-                updateButtons()
-                loadingSource.text = sourceLine()
+            val list = runCatching { Repository.sources(e) }.getOrDefault(emptyList())
+            if (index != wanted) return@launch
+            if (list.isEmpty()) {
+                hideLoading()
+                notice("Não achei fonte para este item (sem internet ou saiu do catálogo).", 8000)
+                return@launch
             }
-            // filme/série: a versão escolhida (Dublado/Legendado) não existe em nenhuma fonte: avisa em vez de trocar calado
-            if (index == wanted && !isLive) {
-                val all = if (alts.isNotEmpty()) sources else listOf(e)
+            sources = list
+            sourceIndex = 0
+            playSource(list[0], resume = true)
+            updateButtons()
+            loadingSource.text = sourceLine()
+            // filme/série: a versão escolhida (Dublado/Legendado) não existe: avisa em vez de trocar calado
+            if (!isLive) {
                 val want = Repository.versionFor(e)
-                val have = all.map { Repository.versionOrDub(it) }.toSet()
+                val have = list.map { Repository.versionOrDub(it) }.toSet()
                 if (want !in have) {
                     notice("Não tem a versão ${Repository.versionName(want)} deste título. Está tocando ${Repository.versionName(have.first())}.", 7000)
                 }
@@ -610,6 +616,12 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private fun playSource(src: Entry, resume: Boolean) {
+        // item do catálogo (v2:...) não é link: toca a primeira fonte dele (ou busca as fontes de novo)
+        if (src.url.startsWith("v2:")) {
+            val first = sources.firstOrNull()
+            if (first == null) play(index) else playSource(first, resume)
+            return
+        }
         val exo = player ?: return
         playing = src
         lastPos = -1L; lastFrames = -1; frozenFor = -4000 // dá uns segundos para começar
@@ -735,7 +747,6 @@ class PlayerActivity : ComponentActivity() {
             return
         }
         if (dead) {
-            if (!sourcePlayed) playing?.let { Repository.markFailed(it.url) }
             if (nextSource()) return
             if (isLive) { retryFromStart(); return }
             hideLoading()
@@ -770,7 +781,6 @@ class PlayerActivity : ComponentActivity() {
             playing?.let { hlsFailed += it.url; android.util.Log.w("MinhaTV", "player: HLS não abriu, usando o .ts"); playSource(it, resume = false) }
             return
         }
-        if (!sourcePlayed) playing?.let { Repository.markFailed(it.url) }
         nextOrRound(frozen = false)
     }
 

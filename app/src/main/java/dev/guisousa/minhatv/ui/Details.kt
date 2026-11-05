@@ -150,31 +150,30 @@ fun MovieDetailScreen(e: Entry, nav: Nav) {
     val context = LocalContext.current
     val favs by Repository.favorites.collectAsState()
     val watched by Repository.watched.collectAsState()
-    val versions = load(e.url) { (listOf(e) + Repository.alternates(e)).map { Repository.versionOrDub(it) }.toSet() }
+    val versions = remember(e.url) { Repository.movieVersions(e) }
     val resume = Repository.getResume(e.url)
-    // capa, fundo e sinopse oficiais (TMDB), quando houver
-    // procura pelo nome limpo (sem FHD, [L], Dublado...), senão o TMDB não acha e só sobra a capa esticada
-    val tmdb = load("tmdb-m", e.name) { dev.guisousa.minhatv.data.Tmdb.lookup(dev.guisousa.minhatv.data.Normalize.displayCached(e.name).title, tv = false) }
-    val extra = load("tmdb-x", e.name) { dev.guisousa.minhatv.data.Tmdb.extra(dev.guisousa.minhatv.data.Normalize.displayCached(e.name).title, tv = false) }
-    // parecidos de verdade (recomendações do TMDB que existem na lista), e não a categoria em ordem alfabética
-    val similar = load(e.url, extra?.related?.size ?: -1) { Repository.similarMovies(e, extra?.related.orEmpty()) }
+    // capa, fundo, sinopse e gêneros vêm na ficha do servidor
+    val info = load("ficha", e.url) { Repository.movieInfo(e) }
+    val similar = load("sim", e.url) { Repository.similarMovies(e) }
     Box(Modifier.fillMaxSize()) {
         // só imagem horizontal de verdade (de preferência sem letreiro); a capa em pé esticada fica feia
-        Backdrop(extra?.backdrop ?: tmdb?.backdrop)
+        Backdrop(info?.b)
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 48.dp)) {
             item("top") {
                 DetailTop(
-                    "Filme", e.name, e.logo ?: tmdb?.poster,
+                    "Filme", e.name, info?.p ?: e.logo,
                     listOfNotNull(
+                        (e.year ?: info?.a)?.toString(),
                         e.group,
+                        info?.g?.take(3)?.joinToString(", "),
                         // "Legendado" já pode vir na etiqueta (e.quality): não repete
                         e.quality, versionInfo(versions)?.takeIf { v -> e.quality?.contains(v, ignoreCase = true) != true },
                         if (e.url.hashCode().toString() in watched) "Visto" else null,
                     ),
-                    overview = tmdb?.overview,
+                    overview = info?.s,
                 ) {
                     BigButton(if (resume > 0) "Continuar de ${clock(resume)}" else "Assistir", remember { FocusRequester() }, key = "main:${e.url}", icon = androidx.compose.material.icons.Icons.Filled.PlayArrow) { PlaybackQueue.start(context, listOf(e), 0) }
-                    VersionButton(e, versions.orEmpty())
+                    VersionButton(e, versions)
                     BigButton(if (e.url in favs) "Na Minha lista" else "Minha lista", icon = if (e.url in favs) androidx.compose.material.icons.Icons.Filled.Check else androidx.compose.material.icons.Icons.Filled.Add) { toggleFav(context, e) }
                 }
             }
@@ -244,20 +243,21 @@ fun SeriesDetailScreen(show: Show) {
     fun play(e: Entry) = PlaybackQueue.start(context, queue, queue.indexOfFirst { it.url == e.url }.coerceAtLeast(0))
     val ep = if (target.season != null && target.episode != null) " T${target.season} E${target.episode}" else ""
 
-    val tmdb = load("tmdb-t", show.name) { dev.guisousa.minhatv.data.Tmdb.lookup(show.name, tv = true) }
+    val info = result.info
     Box(Modifier.fillMaxSize()) {
-        Backdrop(tmdb?.backdrop ?: show.logo)
+        Backdrop(info?.b)
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 48.dp)) {
             item("top") {
                 DetailTop(
-                    "Série", show.name, tmdb?.poster ?: show.logo,
+                    "Série", show.name, info?.p ?: show.logo,
                     listOfNotNull(
+                        info?.a?.toString(),
                         if (seasonCount > 0) "$seasonCount temporada${if (seasonCount > 1) "s" else ""}" else null,
                         episodesLabel(all.size),
                         show.group,
                         versionInfo(versions),
                     ),
-                    overview = tmdb?.overview,
+                    overview = info?.s,
                 ) {
                     BigButton((if (Repository.progress(target.url) != null) "Continuar" else "Assistir") + ep, remember { FocusRequester() }, key = "main:${show.key}", icon = androidx.compose.material.icons.Icons.Filled.PlayArrow) { play(target) }
                     // trocou a versão: refaz a lista para os episódios virem na versão escolhida
@@ -310,7 +310,7 @@ private fun EpisodeCard(e: Entry, i: Int, fallbackImage: String?, seen: Boolean,
             }
             if (progress != null) ProgressLine(progress, Modifier.align(Alignment.BottomStart))
         }
-        Text(dev.guisousa.minhatv.data.Normalize.episodeTitle(e.name, e.seriesName, e.episode), Modifier.padding(top = 8.dp).width(300.dp), fontSize = 14.sp, color = Palette.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(if (e.episode != null) "Episódio ${e.episode}" else e.name, Modifier.padding(top = 8.dp).width(300.dp), fontSize = 14.sp, color = Palette.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text(
             listOfNotNull(
                 if (e.season != null && e.episode != null) "T${e.season} E${e.episode}" else null,

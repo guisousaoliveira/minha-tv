@@ -314,11 +314,6 @@ fun PosterCard(
     tmdbTitle: String? = null,
     tv: Boolean = false,
 ) {
-    // série: a lista costuma trazer um quadro do episódio; usa o pôster oficial do TMDB quando achar
-    val official = if (tmdbTitle != null && dev.guisousa.minhatv.data.Tmdb.enabled) {
-        androidx.compose.runtime.produceState<String?>(null, tmdbTitle) { value = dev.guisousa.minhatv.data.Tmdb.lookup(tmdbTitle, tv)?.poster }.value
-    } else null
-    @Suppress("NAME_SHADOWING") val image = if (tv) official ?: image else image ?: official
     Column {
         FocusBox(
             onClick = onClick, onLongClick = onLongClick, onFocused = onFocused,
