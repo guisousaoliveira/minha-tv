@@ -61,16 +61,20 @@ private fun fichaParada(ref: String?) = produceState<dev.guisousa.minhatv.data.F
 /** Tela inteira no estilo cinema: fundo + destaque em cima, [rows] (as fileiras) embaixo. */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-internal fun CinemaLayout(header: HeaderState, lib: Any?, fallbackTitle: String, fallbackSub: String, rows: @Composable () -> Unit) {
+internal fun CinemaLayout(
+    header: HeaderState, lib: Any?, fallbackTitle: String, fallbackSub: String,
+    heroHeight: Dp = CINEMA_HERO, infoTop: Dp = 84.dp, infoStart: Dp = 56.dp, snapMargin: Dp = 60.dp, backdropTop: Dp = 0.dp,
+    rows: @Composable () -> Unit,
+) {
     val destaque = remember(header.ref, lib) { Repository.destaque(header.ref) }
     val ficha by fichaParada(header.ref)
     Box(Modifier.fillMaxSize()) {
-        CinemaBackdrop(header, destaque, ficha)
+        CinemaBackdrop(header, destaque, ficha, backdropTop)
         Column(Modifier.fillMaxSize()) {
-            CinemaInfo(header, destaque, ficha, fallbackTitle, fallbackSub)
+            CinemaInfo(header, destaque, ficha, fallbackTitle, fallbackSub, heroHeight, infoTop, infoStart)
             // a fileira em foco sobe para o topo da área das fileiras (com o título dela à mostra),
             // em vez de parar cortada pela metade embaixo do destaque
-            val px = with(androidx.compose.ui.platform.LocalDensity.current) { 60.dp.toPx() }
+            val px = with(androidx.compose.ui.platform.LocalDensity.current) { snapMargin.toPx() }
             val spec = remember(px) { TopSnapSpec(px) }
             Box(Modifier.fillMaxWidth().weight(1f).clipToBounds()) {
                 androidx.compose.runtime.CompositionLocalProvider(androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides spec) { rows() }
@@ -81,9 +85,9 @@ internal fun CinemaLayout(header: HeaderState, lib: Any?, fallbackTitle: String,
 
 /** Fundo da tela: imagem larga do item em foco, sumindo no preto à esquerda e embaixo. */
 @Composable
-private fun CinemaBackdrop(header: HeaderState, destaque: Repository.Destaque?, ficha: dev.guisousa.minhatv.data.Ficha?) {
+private fun CinemaBackdrop(header: HeaderState, destaque: Repository.Destaque?, ficha: dev.guisousa.minhatv.data.Ficha?, top: Dp) {
     val fundo = destaque?.fundo ?: ficha?.b
-    Box(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize().padding(top = top)) {
         when {
             header.isLogo && !header.image.isNullOrBlank() -> {
                 // canal: logo inteira à direita, num brilho suave
@@ -119,8 +123,12 @@ private fun BoxScope.FadeEdges() {
 
 /** Texto do destaque: tipo, título grande, ano/gêneros/versões e sinopse. */
 @Composable
-private fun CinemaInfo(header: HeaderState, destaque: Repository.Destaque?, ficha: dev.guisousa.minhatv.data.Ficha?, fallbackTitle: String, fallbackSub: String) {
-    Column(Modifier.fillMaxWidth().height(CINEMA_HERO).padding(start = 56.dp, top = 84.dp, end = 56.dp)) {
+private fun CinemaInfo(
+    header: HeaderState, destaque: Repository.Destaque?, ficha: dev.guisousa.minhatv.data.Ficha?, fallbackTitle: String, fallbackSub: String,
+    heroHeight: Dp, infoTop: Dp, infoStart: Dp,
+) {
+    val compact = heroHeight < CINEMA_HERO
+    Column(Modifier.fillMaxWidth().height(heroHeight).padding(start = infoStart, top = infoTop, end = 56.dp)) {
         Text(
             (header.subtitle ?: fallbackSub).uppercase(), fontSize = 12.sp, letterSpacing = 2.5.sp, fontWeight = FontWeight.Bold,
             color = Palette.Brand, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(560.dp),
@@ -132,8 +140,8 @@ private fun CinemaInfo(header: HeaderState, destaque: Repository.Destaque?, fich
             label = "titulo",
         ) { t ->
             Text(
-                t, fontSize = 42.sp, lineHeight = 46.sp, fontWeight = FontWeight.ExtraBold, color = Palette.Text,
-                maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(600.dp),
+                t, fontSize = if (compact) 34.sp else 42.sp, lineHeight = if (compact) 38.sp else 46.sp, fontWeight = FontWeight.ExtraBold, color = Palette.Text,
+                maxLines = if (compact) 1 else 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(600.dp),
             )
         }
         Spacer(Modifier.height(10.dp))
@@ -144,7 +152,7 @@ private fun CinemaInfo(header: HeaderState, destaque: Repository.Destaque?, fich
         val sinopse = ficha?.s
         if (!sinopse.isNullOrBlank()) {
             Spacer(Modifier.height(10.dp))
-            Text(sinopse, fontSize = 14.sp, lineHeight = 20.sp, color = Color(0xFFCFCFD4), maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(540.dp))
+            Text(sinopse, fontSize = 14.sp, lineHeight = 20.sp, color = Color(0xFFCFCFD4), maxLines = if (compact) 2 else 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(540.dp))
         }
     }
 }

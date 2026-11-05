@@ -62,6 +62,8 @@ object PlaybackQueue {
 
     fun start(context: Context, items: List<Entry>, index: Int) {
         if (items.isEmpty()) return
+        // fecha a prévia do ao vivo antes (o servidor conta cada conexão como uma tela)
+        LivePreview.stop()
         this.items = items
         this.index = index.coerceIn(0, items.size - 1)
         version++

@@ -38,6 +38,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusProperties
@@ -188,10 +189,18 @@ fun AppRoot(onLoaded: () -> Unit) {
                 // a aba continua montada (invisível e sem foco) por baixo dos detalhes: ao voltar,
                 // a lista, a busca e a rolagem estão do mesmo jeito e o foco volta para o cartão
                 androidx.compose.runtime.CompositionLocalProvider(LocalFocusEnabled provides (top == null)) {
-                Box(Modifier.fillMaxSize().graphicsLayer { alpha = if (top == null) 1f else 0f }) {
-                androidx.compose.animation.Crossfade(Tab.entries[tab], animationSpec = androidx.compose.animation.core.tween(180), label = "tab") { t ->
+                Box(Modifier.fillMaxSize().placedIf(top == null)) {
+                // Início, Ao vivo, Filmes e Séries ficam montadas depois da primeira visita (invisíveis e sem foco):
+                // voltar para elas é na hora, sem recarregar as fileiras nem as imagens
+                val cur = Tab.entries[tab]
+                val kept = remember { mutableSetOf<Tab>() }
+                if (cur in KEEP) kept += cur
+                Tab.entries.filter { it == cur || it in kept }.forEach { t ->
+                    androidx.compose.runtime.key(t) {
+                    val on = t == cur
+                    androidx.compose.runtime.CompositionLocalProvider(LocalFocusEnabled provides (top == null && on)) {
                     // Início, Filmes, Séries e Ao vivo vão até o topo (o menu fica por cima); o resto começa abaixo do menu
-                    Box(Modifier.fillMaxSize().padding(top = if (t in FULL_BLEED) 0.dp else TOP_BAR)) {
+                    Box(Modifier.fillMaxSize().placedIf(on).padding(top = if (t in FULL_BLEED) 0.dp else TOP_BAR)) {
                     holder.SaveableStateProvider("tab:${t.name}") { when (t) {
                         Tab.HOME -> HomeScreen(library, nav)
                         Tab.LIVE -> LiveScreen(library)
@@ -202,6 +211,8 @@ fun AppRoot(onLoaded: () -> Unit) {
                         Tab.SETTINGS -> SettingsScreen()
                     } }
                     }
+                    }
+                    }
                 }
                 }
                 }
@@ -211,7 +222,7 @@ fun AppRoot(onLoaded: () -> Unit) {
                     androidx.compose.runtime.key(i, d) {
                         val isTop = i == stack.lastIndex
                         androidx.compose.runtime.CompositionLocalProvider(LocalFocusEnabled provides isTop) {
-                            Box(Modifier.fillMaxSize().graphicsLayer { alpha = if (isTop) 1f else 0f }.background(Palette.Background).padding(top = TOP_BAR)) {
+                            Box(Modifier.fillMaxSize().placedIf(isTop).background(Palette.Background).padding(top = TOP_BAR)) {
                                 when (d) {
                                     is Detail.OfShow -> holder.SaveableStateProvider("show:${d.show.key}") { SeriesDetailScreen(d.show) }
                                     is Detail.OfMovie -> holder.SaveableStateProvider("movie:${d.entry.url}") { MovieDetailScreen(d.entry, nav) }
@@ -258,7 +269,9 @@ fun AppRoot(onLoaded: () -> Unit) {
 }
 
 private val TOP_BAR = 64.dp
-private val FULL_BLEED = setOf(Tab.HOME, Tab.LIVE, Tab.MOVIES, Tab.SERIES)
+private val FULL_BLEED = setOf(Tab.HOME, Tab.LIVE, Tab.MOVIES, Tab.SERIES, Tab.MYLIST, Tab.SEARCH)
+/** Abas que ficam montadas depois da primeira visita (trocar de aba é na hora). */
+private val KEEP = setOf(Tab.HOME, Tab.LIVE, Tab.MOVIES, Tab.SERIES, Tab.SEARCH)
 
 /** Marca no canto do menu: lobo + BAD WOLF TV (TV no ciano do W4LLE). */
 @Composable
@@ -334,4 +347,13 @@ private fun NavItem(title: String, selected: Boolean, onClick: () -> Unit, modif
             )
         }
     }
+}
+
+/**
+ * Mede a tela escondida (ela continua pronta) mas não coloca ela na tela: assim ela não desenha
+ * e a busca de foco do controle não entra nas listas dela (antes o app travava montando milhares de itens).
+ */
+private fun Modifier.placedIf(show: Boolean): Modifier = layout { m, c ->
+    val p = m.measure(c)
+    layout(p.width, p.height) { if (show) p.place(0, 0) }
 }

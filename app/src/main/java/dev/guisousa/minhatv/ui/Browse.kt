@@ -71,7 +71,7 @@ private fun initialOf(s: String): Char {
 }
 
 /** Um item da grade: filme ou série. */
-private class GridItem(val id: String, val title: String, val image: String?, val subtitle: String, val year: Int, val order: Int, val open: () -> Unit, val fav: (() -> Unit)?)
+private class GridItem(val id: String, val title: String, val image: String?, val subtitle: String, val year: Int, val order: Int, val open: () -> Unit, val fav: (() -> Unit)?, val ref: String? = null)
 
 /** Fileira "Lançamentos" no topo das páginas de Filmes e Séries. */
 @Composable
@@ -151,10 +151,10 @@ fun VodGridScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
             val list = if (type == ContentType.SERIES) {
                 val shows = if (paged) Repository.showsPage(genre, if (newest) null else letter) else Repository.shows(genre)
-                shows.mapIndexed { i, s -> GridItem(s.key, s.name, s.logo?.ifBlank { null }, "Série · ${s.group}", yearRe.find(s.name)?.value?.toInt() ?: 0, i, { nav.openShow(s) }, null) }
+                shows.mapIndexed { i, s -> GridItem(s.key, s.name, s.logo?.ifBlank { null }, "Série · ${s.group}", yearRe.find(s.name)?.value?.toInt() ?: 0, i, { nav.openShow(s) }, null, Repository.showRef(s)) }
             } else {
                 val movies = if (paged) Repository.moviesPage(genre, if (newest) null else letter) else Repository.entries(ContentType.MOVIE, genre, 3000)
-                movies.mapIndexed { i, e -> GridItem(e.url, e.name, e.logo?.ifBlank { null }, "Filme · ${e.group}", e.year ?: yearRe.find(e.name)?.value?.toInt() ?: 0, i, { nav.openMovie(e) }, { toggleFav(context, e) }) }
+                movies.mapIndexed { i, e -> GridItem(e.url, e.name, e.logo?.ifBlank { null }, "Filme · ${e.group}", e.year ?: yearRe.find(e.name)?.value?.toInt() ?: 0, i, { nav.openMovie(e) }, { toggleFav(context, e) }, e.url) }
             }
             // ordena fora da tela principal, calculando a chave uma vez só por item
             // (o ano do nome, não o do catálogo: "novidades" segue a ordem de chegada que vem do servidor)
@@ -199,8 +199,9 @@ fun VodGridScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
     val groups = if (type == ContentType.SERIES) lib.showGroups else lib.movieGroups
     val title = when { genre != null -> genre!!; else -> if (type == ContentType.SERIES) "Todas as séries" else "Todos os filmes" }
 
+    // mesmo visual das abas: fundo e ficha do título em foco em cima (mais baixo, para caber a grade)
+    CinemaLayout(header, lib.version, title, if (isAll) "De A a Z" else kind + "s", heroHeight = 232.dp, infoTop = 14.dp, snapMargin = 14.dp) {
     Column(Modifier.fillMaxSize()) {
-        FocusHeader(header.title ?: title, header.subtitle ?: (if (isAll) "De A a Z" else kind + "s"), image = header.image, tall = false)
         Row(Modifier.padding(start = 48.dp, end = 48.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(
                 when {
@@ -263,11 +264,12 @@ fun VodGridScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
             ) {
                 itemsIndexed(items, key = { i, it -> "$i:${it.title}" }) { i, it ->
                     PosterCard(
-                        it.title, it.image, key = "grid:${it.id}", tmdbTitle = if (type == ContentType.SERIES) it.title else null, tv = true, onFocused = { header.show(it.title, it.subtitle, it.image); gridLetter = initialOf(it.title) }, onClick = it.open, onLongClick = it.fav,
+                        it.title, it.image, key = "grid:${it.id}", tmdbTitle = if (type == ContentType.SERIES) it.title else null, tv = true, onFocused = { header.show(it.title, it.subtitle, it.image, it.ref); gridLetter = initialOf(it.title) }, onClick = it.open, onLongClick = it.fav,
                         requester = if (i == 0) firstPoster else null,
                     )
                 }
             }
         }
     }
+}
 }

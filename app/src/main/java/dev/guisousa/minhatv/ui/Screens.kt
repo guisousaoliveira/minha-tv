@@ -36,6 +36,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
@@ -407,6 +408,8 @@ private fun ChannelPreview(e: Entry?) {
                 .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color(0xFF1A1A1F), Color(0xFF0B0B0E)))),
         ) {
             Logo(e.logo, Modifier.align(Alignment.Center).size(width = 200.dp, height = 112.dp), fallback = e.name)
+            // o canal tocando de verdade (sem tirar a logo até a imagem chegar)
+            dev.guisousa.minhatv.player.LivePreviewVideo(e, active = LocalFocusEnabled.current, modifier = Modifier.matchParentSize())
             Row(
                 Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(4.dp)).background(Palette.Live).padding(horizontal = 8.dp, vertical = 3.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -530,17 +533,16 @@ fun MyListScreen(lib: Library, nav: Nav) {
     val favorites by Repository.favorites.collectAsState()
     val items = load(lib.version, favorites) { Repository.favoriteEntries() }
     when {
-        items == null -> Loading()
-        items.isEmpty() -> Message(
+        items == null -> Box(Modifier.padding(top = 64.dp)) { Loading() }
+        items.isEmpty() -> Box(Modifier.padding(top = 64.dp)) { Message(
             "Sua lista está vazia",
             "Segure o botão OK em um canal, filme ou episódio para adicionar.\nDurante o vídeo, use o menu de opções.",
-        )
+        ) }
         else -> {
             val live = items.filter { it.type == ContentType.LIVE }
             val vod = items.filter { it.type != ContentType.LIVE }
-            Column(Modifier.fillMaxSize()) {
-            FocusHeader(header.title ?: "Minha lista", header.subtitle ?: "${items.size} itens", image = header.image, detail = header.detail, logo = header.isLogo)
-            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(top = 8.dp, bottom = 48.dp)) {
+            CinemaLayout(header, lib.version, "Minha lista", "${items.size} itens") {
+            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 48.dp)) {
                 if (live.isNotEmpty()) item("live") {
                     SectionTitle("Canais", trailing = "${live.size}")
                     MediaRow(live, CHANNEL_W) { i, e ->
@@ -571,76 +573,121 @@ fun SearchScreen(lib: Library, nav: Nav) {
     val header = remember { HeaderState() }
     var query by rememberSaveable { mutableStateOf("") }
     var searching by remember { mutableStateOf(false) }
-    // aqui o resultado antigo some na hora (mostra "Carregando resultados…" enquanto busca)
+    // busca enquanto você digita (espera uma pausa curta entre as letras)
     val results by produceState<Pair<List<Entry>, List<Show>>?>(null, lib.version, query) {
-        value = null
         val q = query.trim()
         if (q.isEmpty()) { value = emptyList<Entry>() to emptyList(); searching = false; return@produceState }
         searching = true
+        delay(350)
         // primeiro o que começa com o texto (sai na hora), depois completa com o que contém
-        val quick = Repository.search(q, quick = true)
-        if (quick.first.isNotEmpty() || quick.second.isNotEmpty()) value = quick
+        value = Repository.search(q, quick = true)
         value = Repository.search(q)
         searching = false
     }
-    Column(Modifier.fillMaxSize()) {
-        Row(Modifier.padding(start = 48.dp, end = 48.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            FocusBox(
-                onClick = { showSearchDialog(context, query) { query = it; Repository.addRecentSearch(it) } },
-                modifier = Modifier.width(520.dp), focusScale = 1.01f, shape = RoundedCornerShape(4.dp),
-            ) { focused ->
-                Text(
-                    query.ifBlank { "Buscar canais, filmes e séries" },
-                    Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
-                    fontSize = 17.sp,
-                    color = if (focused) Palette.OnFocus else if (query.isBlank()) Palette.TextFaint else Palette.Text,
-                )
-            }
-            if (searching) { Spacer(Modifier.width(16.dp)); Spinner(22.dp); Spacer(Modifier.width(10.dp)); Text(if (results == null) "Buscando…" else "Procurando mais resultados…", fontSize = 14.sp, color = Palette.TextDim) }
-        }
-        if (query.isBlank()) {
-            val recent = remember { Repository.recentSearches() }
-            if (recent.isNotEmpty()) {
-                SectionTitle("Buscas recentes")
-                LazyRow(contentPadding = PaddingValues(horizontal = 48.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(recent) { r -> TvButton(r, onClick = { query = r; Repository.addRecentSearch(r) }) }
+    val saveQuery = { if (query.isNotBlank()) Repository.addRecentSearch(query) }
+    Row(Modifier.fillMaxSize()) {
+        SearchKeyboard(query, searching, onQuery = { query = it }, onSystem = { showSearchDialog(context, query) { query = it; Repository.addRecentSearch(it) } })
+        Box(Modifier.weight(1f).fillMaxHeight()) {
+            val r = results
+            when {
+                query.isBlank() -> Box(Modifier.padding(top = 64.dp)) {
+                    Message("O que você quer assistir?", "Digite com o teclado ao lado: os resultados aparecem enquanto você digita.\nCanais, filmes e séries.")
                 }
-            } else {
-                Message("O que você quer assistir?", "Aperte OK no campo acima e digite parte do nome.")
-            }
-            return@Column
-        }
-        if (results == null) { Message("Carregando resultados para \"$query\"…"); return@Column }
-        val (entries, shows) = results!!
-        if (entries.isEmpty() && shows.isEmpty()) { Message("Nada encontrado para \"$query\""); return@Column }
-        val live = entries.filter { it.type == ContentType.LIVE }
-        // o mesmo filme/série de várias listas aparece uma vez só (com o ano: Aladdin 1992 e 2019 são dois filmes)
-        val movies = entries.filter { it.type == ContentType.MOVIE }.distinctBy { dupKey(it.name).ifEmpty { it.url } + "|" + it.year }
-        FocusHeader(header.title ?: "Resultados", header.subtitle ?: "\"$query\"", image = header.image, detail = header.detail, logo = header.isLogo)
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(top = 8.dp, bottom = 48.dp)) {
-            if (live.isNotEmpty()) item("live") {
-                SectionTitle("Canais", trailing = "${live.size}")
-                MediaRow(live, CHANNEL_W) { i, e ->
-                    ChannelCard(e.name, e.logo, e.group, onFocused = { header.channel(e, "Canal · ${e.group}") }) { PlaybackQueue.start(context, live, i) }
+                r == null -> Box(Modifier.padding(top = 64.dp)) { Loading() }
+                r.first.isEmpty() && r.second.isEmpty() -> Box(Modifier.padding(top = 64.dp)) {
+                    if (searching) Loading()
+                    else Message("Nada encontrado para \"$query\"", "Tente só uma parte do nome (ex.: \"vingad\" em vez do título inteiro).")
                 }
-            }
-            if (movies.isNotEmpty()) item("movies") {
-                SectionTitle("Filmes", trailing = "${movies.size}")
-                MediaRow(movies, POSTER_W) { _, e ->
-                    PosterCard(
-                        e.name, e.logo, key = "s:${e.url}", onFocused = { header.show(e, "Filme · ${e.group}") },
-                        onClick = { nav.openMovie(e) }, onLongClick = { toggleFav(context, e) },
-                    )
-                }
-            }
-            if (shows.isNotEmpty()) item("shows") {
-                val uniqueShows = shows.distinctBy { dupKey(it.name).ifEmpty { it.key } }
-                SectionTitle("Séries", trailing = "${uniqueShows.size}")
-                MediaRow(uniqueShows, POSTER_W) { _, s ->
-                    PosterCard(s.name, s.logo, key = "s:${s.key}", tmdbTitle = s.name, tv = true, onFocused = { header.show(s, seriesLabel(s.episodeCount)) }, onClick = { nav.openShow(s) })
+                else -> {
+                    val (entries, shows) = r
+                    val live = entries.filter { it.type == ContentType.LIVE }
+                    // o mesmo filme/série de várias listas aparece uma vez só (com o ano: Aladdin 1992 e 2019 são dois filmes)
+                    val movies = entries.filter { it.type == ContentType.MOVIE }.distinctBy { dupKey(it.name).ifEmpty { it.url } + "|" + it.year }
+                    val uniqueShows = shows.distinctBy { dupKey(it.name).ifEmpty { it.key } }
+                    CinemaLayout(header, lib.version, "Resultados", "\"$query\"", infoStart = 40.dp) {
+                        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 48.dp)) {
+                            if (movies.isNotEmpty()) item("movies") {
+                                SectionTitle("Filmes", trailing = "${movies.size}")
+                                MediaRow(movies, POSTER_W) { _, e ->
+                                    PosterCard(
+                                        e.name, e.logo, key = "s:${e.url}", onFocused = { header.show(e, "Filme · ${e.group}") },
+                                        onClick = { saveQuery(); nav.openMovie(e) }, onLongClick = { toggleFav(context, e) },
+                                    )
+                                }
+                            }
+                            if (uniqueShows.isNotEmpty()) item("shows") {
+                                SectionTitle("Séries", trailing = "${uniqueShows.size}")
+                                MediaRow(uniqueShows, POSTER_W) { _, s ->
+                                    PosterCard(s.name, s.logo, key = "s:${s.key}", tmdbTitle = s.name, tv = true, onFocused = { header.show(s, seriesLabel(s.episodeCount)) }, onClick = { saveQuery(); nav.openShow(s) })
+                                }
+                            }
+                            if (live.isNotEmpty()) item("live") {
+                                SectionTitle("Canais", trailing = "${live.size}")
+                                MediaRow(live, CHANNEL_W) { i, e ->
+                                    ChannelCard(e.name, e.logo, e.group, onFocused = { header.channel(e, "Canal · ${e.group}") }) { saveQuery(); PlaybackQueue.start(context, live, i) }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
+    }
+}
+
+private val KEYS = listOf("abcdef", "ghijkl", "mnopqr", "stuvwx", "yz1234", "567890")
+
+/** Teclado na tela (estilo YouTube): letras e números, espaço, apagar e as buscas recentes embaixo. */
+@Composable
+private fun SearchKeyboard(query: String, searching: Boolean, onQuery: (String) -> Unit, onSystem: () -> Unit) {
+    val recent = remember(query.isBlank()) { Repository.recentSearches() }
+    Column(
+        Modifier.width(352.dp).fillMaxHeight().background(Color(0xFF0B0B0E)).padding(start = 40.dp, end = 24.dp, top = 84.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Filled.Search, null, tint = Palette.TextDim, modifier = Modifier.size(22.dp))
+            Spacer(Modifier.width(10.dp))
+            Text(
+                query.ifEmpty { "Buscar" }, fontSize = 22.sp, fontWeight = FontWeight.SemiBold,
+                color = if (query.isEmpty()) Palette.TextFaint else Palette.Text, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            if (searching) Spinner(18.dp)
+        }
+        Spacer(Modifier.height(8.dp))
+        Box(Modifier.fillMaxWidth().height(2.dp).background(Palette.Brand))
+        Spacer(Modifier.height(16.dp))
+        KEYS.forEach { row ->
+            Row(Modifier.padding(bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                row.forEach { c -> Key(c.toString(), Modifier.size(width = 42.dp, height = 40.dp)) { onQuery(query + c) } }
+            }
+        }
+        Row(Modifier.padding(bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Key("espaço", Modifier.size(width = 90.dp, height = 40.dp), small = true) { if (query.isNotEmpty() && !query.endsWith(' ')) onQuery("$query ") }
+            Key("apagar", Modifier.size(width = 90.dp, height = 40.dp), small = true) { onQuery(query.dropLast(1)) }
+            Key("limpar", Modifier.size(width = 90.dp, height = 40.dp), small = true) { onQuery("") }
+        }
+        Spacer(Modifier.height(4.dp))
+        Key("Teclado do sistema / voz", Modifier.size(width = 282.dp, height = 40.dp), small = true) { onSystem() }
+        if (recent.isNotEmpty() && query.isBlank()) {
+            Spacer(Modifier.height(18.dp))
+            Text("BUSCAS RECENTES", fontSize = 11.sp, letterSpacing = 2.sp, fontWeight = FontWeight.Bold, color = Palette.Brand)
+            Spacer(Modifier.height(6.dp))
+            recent.take(4).forEach { r ->
+                Key(r, Modifier.padding(bottom = 4.dp).size(width = 282.dp, height = 34.dp), small = true, start = true) { onQuery(r) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun Key(label: String, modifier: Modifier, small: Boolean = false, start: Boolean = false, onClick: () -> Unit) {
+    FocusBox(onClick = onClick, modifier = modifier, focusScale = 1.06f, background = Color(0x14FFFFFF), shape = RoundedCornerShape(6.dp)) { focused ->
+        Text(
+            label, fontSize = if (small) 14.sp else 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            color = if (focused) Palette.OnFocus else Palette.Text,
+            modifier = Modifier.align(if (start) Alignment.CenterStart else Alignment.Center).padding(horizontal = 12.dp),
+        )
     }
 }
 
