@@ -162,9 +162,14 @@ object Normalize {
      */
     fun mergeKey(e: Entry): String {
         val norm = e.norm ?: name(e.name).ifEmpty { e.url }
-        if (e.type != ContentType.MOVIE || yearRx.containsMatchIn(e.name)) return norm
-        return norm + "|" + (e.logo?.trim()?.lowercase()?.ifEmpty { null } ?: e.url)
+        if (e.type != ContentType.MOVIE || hasYear(e.name)) return norm
+        // mesmo critério do [sameMovie]: o arquivo do pôster, não o endereço inteiro
+        // (".../w300/x.jpg" e ".../w600_and_h900_bestv2/x.jpg" são o mesmo pôster)
+        return norm + "|" + (posterId(e.logo) ?: e.url)
     }
+
+    /** O nome tem ano ("Duna (2021)", "Duna 2021")? */
+    fun hasYear(name: String): Boolean = yearRx.containsMatchIn(name)
 
     /**
      * Duas cópias com o mesmo nome são o mesmo filme? Com ano no nome, o ano já está na chave.
@@ -172,13 +177,14 @@ object Normalize {
      * "101 Dálmatas" com o pôster do desenho não é o "101 Dálmatas" com o pôster do live action.
      */
     fun sameMovie(a: Entry, b: Entry): Boolean {
-        if (yearRx.containsMatchIn(a.name) && yearRx.containsMatchIn(b.name)) return true
-        val pa = posterId(a.logo) ?: return true
-        val pb = posterId(b.logo) ?: return true
-        return pa == pb
+        if (hasYear(a.name) && hasYear(b.name)) return true
+        // Sem pôster nas duas não há como saber: junta (como sempre foi). Só uma com pôster: não junta,
+        // porque "101 Dálmatas" sem capa pode ser o desenho ou o live action.
+        return posterId(a.logo) == posterId(b.logo)
     }
 
-    private fun posterId(logo: String?): String? =
+    /** Arquivo do pôster, sem pasta de tamanho nem o número que alguns servidores põem na frente. */
+    fun posterId(logo: String?): String? =
         logo?.trim()?.substringBefore('?')?.substringAfterLast('/')?.lowercase()?.replace(Regex("""^\d+_"""), "")?.ifEmpty { null }
 
     private val episodeMark = Regex("""(?i)(?:^|[^a-z0-9])(?:[ST]\d{1,2}\s*[._ -]?\s*EP?\s*\d{1,3}|\d{1,2}x\d{1,3}|EP?\s*\d{1,3})(?![0-9])""")

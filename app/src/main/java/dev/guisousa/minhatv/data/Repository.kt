@@ -815,8 +815,10 @@ object Repository {
         val out = ArrayList<Any>(size) // Entry (série) ou chave do grupo, na ordem original
         for (e in this) {
             if (e.type == ContentType.SERIES) { out += e; continue }
-            // mesmo nome (com o ano, quando tem) = mesmo título na tela; capas diferentes não separam mais
-            val key = e.type.ordinal.toString() + ":" + Normalize.looseKey(e.name)
+            // mesmo nome (com o ano, quando tem) = mesmo título na tela. Filme SEM ano também precisa da
+            // mesma capa: "101 Dálmatas" desenho e live action, os dois sem ano, são dois cards
+            var key = e.type.ordinal.toString() + ":" + Normalize.looseKey(e.name)
+            if (e.type == ContentType.MOVIE && !Normalize.hasYear(e.name)) key += "|" + (Normalize.posterId(e.logo) ?: "")
             val list = order[key]
             if (list == null) { order[key] = mutableListOf(e); out += key } else list += e
         }

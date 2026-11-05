@@ -3,7 +3,9 @@ package dev.guisousa.minhatv
 import dev.guisousa.minhatv.data.ContentType
 import dev.guisousa.minhatv.data.Entry
 import dev.guisousa.minhatv.data.Normalize
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -27,8 +29,22 @@ class MesmoFilmeTest {
     }
 
     @Test
-    fun comAnoOuSemPosterContinuaJuntando() {
+    fun comAnoContinuaJuntando() {
         assertTrue(Normalize.sameMovie(movie("Duna (2021)", "a.jpg"), movie("Duna [L] (2021)", "b.jpg")))
-        assertTrue(Normalize.sameMovie(movie("Filme", null), movie("Filme [L]", "b.jpg")))
+    }
+
+    @Test
+    fun semAnoESemPosterSoJuntaSeAmbasNaoTemPoster() {
+        assertTrue(Normalize.sameMovie(movie("Filme", null), movie("Filme [L]", null)))
+        assertFalse(Normalize.sameMovie(movie("101 Dálmatas", null), movie("101 Dálmatas [L]", "yvNj.jpg")))
+    }
+
+    @Test
+    fun mesmoPosterEmTamanhosDiferentesViraUmItemSo() {
+        val a = Entry(name = "101 Dálmatas", url = "u1", type = ContentType.MOVIE, logo = "https://image.tmdb.org/t/p/w300/yvNj.jpg", norm = "101dalmatas")
+        val b = Entry(name = "101 Dálmatas", url = "u2", type = ContentType.MOVIE, logo = "http://dafonte.uk/images/capa/12230_yvNj.jpg", norm = "101dalmatas")
+        val c = Entry(name = "101 Dálmatas", url = "u3", type = ContentType.MOVIE, logo = "https://image.tmdb.org/t/p/w600/aq0M.jpg", norm = "101dalmatas")
+        assertEquals(Normalize.mergeKey(a), Normalize.mergeKey(b))
+        assertNotEquals(Normalize.mergeKey(a), Normalize.mergeKey(c))
     }
 }
