@@ -76,7 +76,7 @@ class MainActivity : ComponentActivity() {
         // voltou do player: devolve o foco ao item que estava selecionado
         if (resumedOnce) FocusMemory.restore.intValue++
         resumedOnce = true
-        Repository.refreshIfStale()
+        Repository.refreshIfChanged()
         checkUpdate(force = false)
     }
 
@@ -153,12 +153,6 @@ fun AppRoot(onLoaded: () -> Unit) {
         if (!loading) {
             onLoaded()
             runCatching { firstTab.requestFocus() }
-        }
-    }
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(30 * 60_000L)
-            Repository.refreshIfStale()
         }
     }
 

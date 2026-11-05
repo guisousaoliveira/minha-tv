@@ -35,7 +35,13 @@ import java.util.zip.GZIPInputStream
 object Repository {
 
     const val DEFAULT_UA = "VLC/3.0.20 LibVLC/3.0.20"
-    val INTERVAL_OPTIONS = listOf(3, 6, 12, 24)
+    /**
+     * Sem atualização periódica: ao abrir (ou voltar para) o app, ele pergunta se as listas mudaram.
+     * Servidor Xtream e lista com ETag/Last-Modified respondem isso sem baixar nada: confere no máximo a cada 10 min.
+     */
+    private const val CHECK_QUICK_MS = 10 * 60_000L
+    /** Lista que não diz se mudou (teria que ser baixada inteira) e páginas com playlists: no máximo a cada 6 horas. */
+    private const val CHECK_FULL_MS = 6 * 3_600_000L
     private const val BUILTIN_EPG_URL = "https://raw.githubusercontent.com/marcoshimselfxd/EPG-Scrapper-BR/main/epg.xml"
     private const val BUILTIN_EPG_FILE = "epg_builtin.json"
     /** Fontes no máximo por canal/filme (contando a primeira). */
@@ -283,10 +289,6 @@ object Repository {
     suspend fun awaitLoaded() = loaded.await()
 
     // ---------- Configurações ----------
-
-    var refreshHours: Int
-        get() = prefs.getInt("refresh_hours", 12)
-        set(v) { prefs.edit().putInt("refresh_hours", v).apply() }
 
     fun toggleFavorite(url: String): Boolean {
         val now = _favorites.value.toMutableSet()
@@ -584,12 +586,20 @@ object Repository {
 
     fun refreshOneAsync(id: String) { scope.launch { awaitLoaded(); refreshPlaylists(listOf(id)) } }
 
-    /** Atualiza só se a última atualização for mais velha que o intervalo escolhido. */
-    fun refreshIfStale() {
+    /** A lista sabe dizer se mudou sem ser baixada (servidor Xtream, ETag ou Last-Modified)? */
+    private fun quickCheck(p: Playlist) =
+        p.isXtream || prefs.getString("etag_${p.id}", null) != null || prefs.getString("lastmod_${p.id}", null) != null
+
+    private fun due(p: Playlist, now: Long) = p.lastUpdated < now - (if (quickCheck(p)) CHECK_QUICK_MS else CHECK_FULL_MS)
+
+    private fun due(s: Source, now: Long) = s.lastChecked < now - CHECK_FULL_MS
+
+    /** Ao abrir (ou voltar para) o app: confere se as listas mudaram e baixa só o que mudou. */
+    fun refreshIfChanged() {
         scope.launch {
             awaitLoaded()
-            val limit = System.currentTimeMillis() - refreshHours * 3_600_000L
-            if (_playlists.value.any { it.lastUpdated < limit } || _sources.value.any { it.lastChecked < limit }) refreshAll(onlyStale = true)
+            val now = System.currentTimeMillis()
+            if (_playlists.value.any { due(it, now) } || _sources.value.any { due(it, now) }) refreshAll(onlyStale = true)
             else if (builtinEpgStale()) { refreshBuiltinEpg(); loadEpg() }
         }
     }
@@ -597,8 +607,8 @@ object Repository {
     private val refreshLock = Mutex()
 
     /**
-     * Atualiza páginas e playlists. Com [onlyStale], pula as que foram atualizadas há pouco:
-     * se o sistema interromper no meio, a próxima rodada continua de onde parou.
+     * Atualiza páginas e playlists. Com [onlyStale], só as que não foram conferidas há pouco
+     * (ver [CHECK_QUICK_MS] e [CHECK_FULL_MS]).
      */
     suspend fun refreshAll(onlyStale: Boolean = false) {
         awaitLoaded()
@@ -606,10 +616,10 @@ object Repository {
         if (refreshLock.isLocked) return
         refreshLock.withLock {
             try {
-                val limit = System.currentTimeMillis() - (refreshHours * 3_600_000L - 3_600_000L).coerceAtLeast(3_600_000L)
+                val now = System.currentTimeMillis()
                 runCatching { refreshRules() }
-                _sources.value.filter { !onlyStale || it.lastChecked < limit }.forEach { scanSource(it) }
-                val ids = _playlists.value.filter { !onlyStale || it.lastUpdated < limit }.map { it.id }
+                _sources.value.filter { !onlyStale || due(it, now) }.forEach { scanSource(it) }
+                val ids = _playlists.value.filter { !onlyStale || due(it, now) }.map { it.id }
                 if (ids.isNotEmpty()) refreshPlaylists(ids, locked = true)
             } finally {
                 _status.value = null
@@ -623,10 +633,13 @@ object Repository {
             refreshLock.withLock { }
         }
         val total = ids.size
+        var anyChanged = false
         ids.forEachIndexed { i, id ->
             val p = _playlists.value.firstOrNull { it.id == id } ?: return@forEachIndexed
-            _status.value = if (total > 1) "Atualizando ${i + 1}/$total: ${p.name}" else "Atualizando ${p.name}…"
+            _status.value = if (total > 1) "Conferindo ${i + 1}/$total: ${p.name}" else "Conferindo ${p.name}…"
+            unchangedIds.remove(id)
             val updated = refreshOne(p)
+            if (id !in unchangedIds) anyChanged = true
             mutex.withLock {
                 _playlists.value = _playlists.value.map { if (it.id == id) updated else it }
                 savePlaylists()
@@ -637,6 +650,12 @@ object Repository {
         }
         // guias das listas que ficaram para depois (primeira importação: o conteúdo aparece antes)
         val epgs = synchronized(pendingEpg) { pendingEpg.toMap().also { pendingEpg.clear() } }
+        // nada mudou nas listas: não reorganiza nada (só o guia, se estiver velho)
+        if (!anyChanged && epgs.isEmpty()) {
+            if (builtinEpgStale()) { _status.value = "Baixando guia de programação…"; refreshBuiltinEpg(); loadEpg() }
+            _status.value = null
+            return
+        }
         if (epgs.isNotEmpty()) {
             _status.value = "Baixando guia de programação…"
             withContext(background) { epgs.forEach { (id, url) -> runCatching { downloadEpg(id, url) } } }
@@ -677,6 +696,7 @@ object Repository {
             val hasData = p.lastError == null && p.liveCount + p.movieCount + p.seriesCount > 0
             // lista igual à da última vez: não baixa nem reorganiza nada
             if (!p.isXtream && hasData && unchanged(p)) {
+                unchangedIds += p.id
                 return@withContext p.copy(lastUpdated = System.currentTimeMillis())
             }
             var detectedEpg: String? = null
@@ -685,29 +705,55 @@ object Repository {
             var listVersion: String? = null
             if (p.isXtream) {
                 val x = xtream(p)
-                listVersion = x.login()
-                // o servidor diz que as listas não mudaram desde a última importação: não baixa tudo de novo
-                if (listVersion != null && hasData && prefs.getString("listver_${p.id}", null) == listVersion && db.hasPlaylist(p.id)) {
+                val info = x.login()
+                listVersion = info.version
+                val stored = hasData && db.hasPlaylist(p.id)
+                // o servidor diz que as listas não mudaram desde a última importação: não baixa nada
+                if (listVersion != null && stored && prefs.getString("listver_${p.id}", null) == listVersion) {
                     android.util.Log.i("MinhaTV", "${p.name}: listas iguais às da última vez ($listVersion), nada para baixar")
+                    unchangedIds += p.id
                     val epg = p.epgUrl ?: p.detectedEpgUrl
                     if (epg != null && p.liveCount > 0 && epgStale(p.id)) runCatching { downloadEpg(p.id, epg) }
                     return@withContext p.copy(lastUpdated = System.currentTimeMillis())
                 }
-                val label = _status.value ?: "Atualizando ${p.name}"
+                // o servidor diz a versão de cada categoria: baixa só as que mudaram
+                if (stored && info.parts != null) {
+                    val changed = runCatching { updateChangedParts(p, x, info.parts) }
+                        .onFailure { android.util.Log.w("MinhaTV", "${p.name}: atualização por categoria falhou, baixando tudo", it) }
+                        .getOrNull()
+                    if (changed != null) {
+                        prefs.edit().apply { if (listVersion != null) putString("listver_${p.id}", listVersion) else remove("listver_${p.id}") }.apply()
+                        if (changed == 0) unchangedIds += p.id
+                        val c = db.countTypes(p.id)
+                        return@withContext p.copy(
+                            lastUpdated = System.currentTimeMillis(), lastError = null,
+                            liveCount = c.live, movieCount = c.movie, seriesCount = c.series,
+                        )
+                    }
+                }
+                val label = _status.value?.replace("Conferindo", "Atualizando") ?: "Atualizando ${p.name}"
                 var n = 0
+                val liveCats = x.categories("get_live_categories")
+                val vodCats = x.categories("get_vod_categories")
+                val seriesCats = x.categories("get_series_categories")
                 counts = db.replacePlaylist(p.id) { add ->
                     val each: (Entry) -> Unit = { e -> add(e); if (++n % 2000 == 0) importStatus("$label · $n itens") }
-                    x.live(each)
-                    x.movies(each)
-                    x.seriesCovers(p.id, each)
+                    x.live(cats = liveCats, emit = each)
+                    x.movies(cats = vodCats, emit = each)
+                    x.seriesCovers(p.id, cats = seriesCats, emit = each)
                 }
+                val names = HashMap<String, String>()
+                liveCats.forEach { (id, nome) -> names["live:$id"] = nome }
+                vodCats.forEach { (id, nome) -> names["vod:$id"] = nome }
+                seriesCats.forEach { (id, nome) -> names["series:$id"] = nome }
+                saveParts(p.id, info.parts, names)
                 detectedEpg = "${p.url}/xmltv.php?username=${java.net.URLEncoder.encode(x.user, "UTF-8")}&password=${java.net.URLEncoder.encode(x.pass, "UTF-8")}"
             } else if (M3uParser.isHlsStream(fetchHead(p.url).also { head = it })) {
                 // o link é um único canal (stream HLS), não uma lista
                 counts = db.replacePlaylist(p.id) { add -> add(Entry(name = p.name, url = p.url, group = p.name, playlistId = p.id)) }
             } else {
                 if (!M3uParser.isChannelPlaylist(head)) throw IOException("não parece uma playlist M3U")
-                val label = _status.value ?: "Atualizando ${p.name}"
+                val label = _status.value?.replace("Conferindo", "Atualizando") ?: "Atualizando ${p.name}"
                 counts = open(p.url, onResponse = { saveValidators(p.id, it) }) { input ->
                     input.bufferedReader(Charsets.UTF_8).useLines { lines ->
                         db.replacePlaylist(p.id) { add ->
@@ -1192,6 +1238,62 @@ object Repository {
             }
         }
         throw last ?: IOException("sem conexão")
+    }
+
+    /** Listas que a última conferência achou iguais (não precisa reorganizar nada por causa delas). */
+    private val unchangedIds: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+    /** Versão de cada categoria da última importação de um servidor: chave -> (versão, nome da categoria). */
+    private fun loadParts(id: String): Map<String, Pair<String, String>>? = runCatching {
+        val o = org.json.JSONObject(prefs.getString("listparts_$id", null) ?: return null)
+        o.keys().asSequence().associateWith { k -> o.getJSONArray(k).let { it.getString(0) to it.optString(1) } }
+    }.getOrNull()
+
+    private fun saveParts(id: String, parts: Map<String, String>?, names: Map<String, String>) {
+        if (parts == null) { prefs.edit().remove("listparts_$id").apply(); return }
+        val o = org.json.JSONObject()
+        for ((k, v) in parts) o.put(k, org.json.JSONArray().put(v).put(names[k] ?: ""))
+        prefs.edit().putString("listparts_$id", o.toString()).apply()
+    }
+
+    /**
+     * Baixa do servidor só as categorias cuja versão mudou e troca só elas no banco.
+     * Devolve quantos itens mudaram, ou null se é melhor baixar tudo (primeira vez, ou mudou quase tudo).
+     */
+    private fun updateChangedParts(p: Playlist, x: Xtream, now: Map<String, String>): Int? {
+        val old = loadParts(p.id) ?: return null
+        val changed = (now.keys + old.keys).filter { now[it] != old[it]?.first }
+        val names = HashMap<String, String>()
+        old.forEach { (k, v) -> names[k] = v.second }
+        if (changed.isEmpty()) { saveParts(p.id, now, names); return 0 }
+        // mudou mais da metade: baixar tudo de uma vez sai mais rápido que categoria por categoria
+        if (changed.size * 2 > now.size) return null
+        android.util.Log.i("MinhaTV", "${p.name}: ${changed.size} de ${now.size} categorias mudaram: $changed")
+        var total = 0
+        for ((kind, action, type) in listOf(
+            Triple("live", "get_live_categories", ContentType.LIVE),
+            Triple("vod", "get_vod_categories", ContentType.MOVIE),
+            Triple("series", "get_series_categories", ContentType.SERIES),
+        )) {
+            val mine = changed.filter { it.startsWith("$kind:") }
+            if (mine.isEmpty()) continue
+            val cats = x.categories(action)
+            cats.forEach { (id, nome) -> names["$kind:$id"] = nome }
+            // categorias juntadas pelas regras viram uma só no banco: se uma mudou, recarrega todas as que caem nela
+            val groups = mine.mapNotNull { k -> (cats[k.substringAfter(':')] ?: old[k]?.second)?.let { db.groupLabel(it) } }.toSet()
+            val ids = cats.filterValues { db.groupLabel(it) in groups }.keys
+            _status.value = "Atualizando ${p.name}: ${groups.size} categoria(s)…"
+            total += db.updateGroups(p.id, type, groups) { add ->
+                for (id in ids) when (type) {
+                    ContentType.LIVE -> x.live(id, cats, add)
+                    ContentType.MOVIE -> x.movies(id, cats, add)
+                    ContentType.SERIES -> x.seriesCovers(p.id, id, cats, add)
+                }
+            }
+        }
+        saveParts(p.id, now, names)
+        android.util.Log.i("MinhaTV", "${p.name}: $total itens mudaram")
+        return total
     }
 
     /** Pergunta ao servidor se a lista mudou desde a última vez (ETag / Last-Modified). */

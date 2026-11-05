@@ -113,6 +113,84 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
         if (type == ContentType.SERIES) null
         else Normalize.mergeKey(Entry(name = title, url = url, logo = logo, type = type, norm = norm))
 
+    /** Nome da categoria como fica no banco ("FILMES | AÇÃO ✨" -> "Filmes · Ação", e categorias juntadas pelas regras). */
+    fun groupLabel(raw: String): String {
+        val label = Normalize.label(raw).ifBlank { "Outros" }
+        return if (cleanOnImport) CleanRules.current.group(label) else label
+    }
+
+    /** Grava itens de uma playlist com as regras da importação (limpeza, categoria, nome limpo, chave de repetido). */
+    private inner class Importer(db: SQLiteDatabase, private val playlistId: String, val counts: Counts) {
+        private val st = db.compileStatement(
+            "INSERT INTO entries(playlist,name,url,grp,logo,tvg_id,type,ua,ref,show_key,series,season,episode,norm,title,tag,hide,mkey,added) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+        )
+        private val rules = CleanRules.current
+        private val clean = cleanOnImport
+        // listas grandes repetem a mesma categoria e a mesma série em milhares de linhas seguidas: calcula uma vez
+        private val groupCache = HashMap<String, String>()
+        private var lastSeries: String? = null
+        private var lastSeriesClean = ""
+        private var lastSeriesKey = ""
+        /** resumo das séries gravadas (para o resumo por lista) */
+        val shows = HashMap<String, ShowAgg>()
+
+        fun group(raw: String): String = groupCache.getOrPut(raw) {
+            val label = Normalize.label(raw).ifBlank { "Outros" }
+            if (clean) rules.group(label) else label
+        }
+
+        fun add(e: Entry) {
+            val group = group(e.group)
+            // episódio: o nome limpo fica para quando a série for aberta (são centenas de milhares e a tela só mostra os da série)
+            val episode = e.type == ContentType.SERIES
+            val d = if (episode) null else Normalize.display(e.name)
+            val hide = if (clean) rules.classify(e.name + " " + (d?.title ?: ""), group, e.tvgId, e.type) else 0
+            if (hide and CleanRules.JUNK != 0) { counts.dropped++; return }
+            if (hide != 0) counts.hidden++
+            st.clearBindings()
+            st.bindString(1, playlistId)
+            st.bindString(2, Normalize.clean(e.name))
+            st.bindString(3, e.url)
+            st.bindString(4, group)
+            e.logo?.let { st.bindString(5, it) }
+            e.tvgId?.let { st.bindString(6, it) }
+            st.bindLong(7, e.type.ordinal.toLong())
+            e.userAgent?.let { st.bindString(8, it) }
+            e.referrer?.let { st.bindString(9, it) }
+            if (episode) {
+                val raw = e.seriesName ?: e.name
+                if (raw != lastSeries) {
+                    lastSeries = raw
+                    lastSeriesClean = Normalize.clean(raw)
+                    lastSeriesKey = Normalize.showKey(lastSeriesClean)
+                }
+                st.bindString(10, lastSeriesKey)
+                st.bindString(11, lastSeriesClean)
+            }
+            e.season?.let { st.bindLong(12, it.toLong()) }
+            e.episode?.let { st.bindLong(13, it.toLong()) }
+            if (d != null) {
+                val norm = Normalize.key(d.title)
+                st.bindString(14, norm)
+                st.bindString(15, d.title)
+                d.tag?.let { st.bindString(16, it) }
+                mergeKey(e.type, d.title, norm, e.logo, e.url)?.let { st.bindString(18, it) }
+            }
+            st.bindLong(17, hide.toLong())
+            e.added?.let { st.bindLong(19, it) }
+            val id = st.executeInsert()
+            if (episode) {
+                val a = shows[lastSeriesKey] ?: ShowAgg(lastSeriesClean, group, id, id).also { shows[lastSeriesKey] = it }
+                a.add(id, lastSeriesClean, group, e.logo, e.season?.toLong(), e.episode?.toLong(), counted = !Xtream.isStub(e.url))
+            }
+            when (e.type) {
+                ContentType.LIVE -> counts.live++
+                ContentType.MOVIE -> counts.movie++
+                ContentType.SERIES -> counts.series++
+            }
+        }
+    }
+
     /** Troca todos os itens de uma playlist numa transação só (os antigos continuam até terminar). */
     fun replacePlaylist(playlistId: String, fill: ((Entry) -> Unit) -> Unit): Counts {
         val db = writableDatabase
@@ -120,77 +198,105 @@ class Db(context: Context) : SQLiteOpenHelper(context, "minhatv.db", null, 2) {
         db.beginTransaction()
         try {
             db.delete("entries", "playlist = ?", arrayOf(playlistId))
-            val st = db.compileStatement(
-                "INSERT INTO entries(playlist,name,url,grp,logo,tvg_id,type,ua,ref,show_key,series,season,episode,norm,title,tag,hide,mkey,added) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
-            )
-            val rules = CleanRules.current
-            val clean = cleanOnImport
-            // listas grandes repetem a mesma categoria e a mesma série em milhares de linhas seguidas: calcula uma vez
-            val groupCache = HashMap<String, String>()
-            var lastSeries: String? = null
-            var lastSeriesClean = ""
-            var lastSeriesKey = ""
-            val shows = HashMap<String, ShowAgg>()
-            fill { e ->
-                val group = groupCache.getOrPut(e.group) {
-                    val label = Normalize.label(e.group).ifBlank { "Outros" }
-                    if (clean) rules.group(label) else label
-                }
-                // episódio: o nome limpo fica para quando a série for aberta (são centenas de milhares e a tela só mostra os da série)
-                val episode = e.type == ContentType.SERIES
-                val d = if (episode) null else Normalize.display(e.name)
-                val hide = if (clean) rules.classify(e.name + " " + (d?.title ?: ""), group, e.tvgId, e.type) else 0
-                if (hide and CleanRules.JUNK != 0) { counts.dropped++; return@fill }
-                if (hide != 0) counts.hidden++
-                st.clearBindings()
-                st.bindString(1, playlistId)
-                val cleanName = Normalize.clean(e.name)
-                st.bindString(2, cleanName)
-                st.bindString(3, e.url)
-                st.bindString(4, group)
-                e.logo?.let { st.bindString(5, it) }
-                e.tvgId?.let { st.bindString(6, it) }
-                st.bindLong(7, e.type.ordinal.toLong())
-                e.userAgent?.let { st.bindString(8, it) }
-                e.referrer?.let { st.bindString(9, it) }
-                if (episode) {
-                    val raw = e.seriesName ?: e.name
-                    if (raw != lastSeries) {
-                        lastSeries = raw
-                        lastSeriesClean = Normalize.clean(raw)
-                        lastSeriesKey = Normalize.showKey(lastSeriesClean)
-                    }
-                    st.bindString(10, lastSeriesKey)
-                    st.bindString(11, lastSeriesClean)
-                }
-                e.season?.let { st.bindLong(12, it.toLong()) }
-                e.episode?.let { st.bindLong(13, it.toLong()) }
-                if (d != null) {
-                    val norm = Normalize.key(d.title)
-                    st.bindString(14, norm)
-                    st.bindString(15, d.title)
-                    d.tag?.let { st.bindString(16, it) }
-                    mergeKey(e.type, d.title, norm, e.logo, e.url)?.let { st.bindString(18, it) }
-                }
-                st.bindLong(17, hide.toLong())
-                e.added?.let { st.bindLong(19, it) }
-                val id = st.executeInsert()
-                if (episode) {
-                    val a = shows[lastSeriesKey] ?: ShowAgg(lastSeriesClean, group, id, id).also { shows[lastSeriesKey] = it }
-                    a.add(id, lastSeriesClean, group, e.logo, e.season?.toLong(), e.episode?.toLong(), counted = !Xtream.isStub(e.url))
-                }
-                when (e.type) {
-                    ContentType.LIVE -> counts.live++
-                    ContentType.MOVIE -> counts.movie++
-                    ContentType.SERIES -> counts.series++
-                }
-            }
-            writeParts(db, playlistId, shows)
+            val imp = Importer(db, playlistId, counts)
+            fill { e -> imp.add(e) }
+            writeParts(db, playlistId, imp.shows)
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
         }
         return counts
+    }
+
+    private class OldRow(val id: Long, val name: String, val logo: String?, val added: Long?, val showKey: String?)
+
+    /**
+     * Troca só as categorias [groups] do tipo [type] de uma playlist pelo que [fill] mandar; o resto fica
+     * como está. Compara item por item: o que não mudou fica com o mesmo id (a ordem das categorias na tela
+     * não muda), o que sumiu sai e o que é novo entra. Série com last_modified diferente (guardado em
+     * "added") perde os episódios guardados, que são buscados de novo quando ela for aberta.
+     * Devolve quantos itens mudaram.
+     */
+    fun updateGroups(playlistId: String, type: ContentType, groups: Set<String>, fill: ((Entry) -> Unit) -> Unit): Int {
+        if (groups.isEmpty()) return 0
+        val db = writableDatabase
+        val series = type == ContentType.SERIES
+        var changed: Int
+        db.beginTransaction()
+        try {
+            val old = HashMap<String, OldRow>() // categoria + "\n" + endereço -> linha
+            val marks = groups.joinToString(",") { "?" }
+            val onlyCovers = if (series) " AND url LIKE 'xtream-series://%'" else ""
+            db.rawQuery(
+                "SELECT id, url, grp, name, logo, added, show_key FROM entries WHERE playlist = ? AND type = ? AND grp IN ($marks)$onlyCovers",
+                arrayOf(playlistId, type.ordinal.toString(), *groups.toTypedArray()),
+            ).use { c ->
+                while (c.moveToNext()) {
+                    old[c.getString(2) + "\n" + c.getString(1)] =
+                        OldRow(c.getLong(0), c.getString(3), c.getStringOrNull(4), if (c.isNull(5)) null else c.getLong(5), c.getStringOrNull(6))
+                }
+            }
+            val imp = Importer(db, playlistId, Counts())
+            val keep = HashSet<Long>()
+            val novos = ArrayList<Entry>()
+            fill { e ->
+                val g = imp.group(e.group)
+                if (g !in groups) return@fill // categoria que não foi carregada aqui: fica para a importação completa
+                val o = old[g + "\n" + e.url]
+                if (o != null && o.id !in keep && o.name == Normalize.clean(e.name) && o.logo == e.logo && o.added == e.added) keep += o.id
+                else novos += e
+            }
+            val gone = old.values.filter { it.id !in keep }
+            val del = db.compileStatement("DELETE FROM entries WHERE id = ?")
+            val showsGone = HashSet<String>()
+            for (o in gone) {
+                del.bindLong(1, o.id); del.executeUpdateDelete()
+                if (series) o.showKey?.let { showsGone += it }
+            }
+            for (k in showsGone) {
+                db.execSQL("DELETE FROM entries WHERE playlist = ? AND +type = 2 AND show_key = ? AND url NOT LIKE 'xtream-series://%'", arrayOf(playlistId, k))
+            }
+            novos.forEach { imp.add(it) }
+            changed = gone.size + novos.size
+            if (series && changed > 0) rebuildParts(db, playlistId)
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+        return changed
+    }
+
+    /** Refaz o resumo das séries de uma playlist lendo o banco (depois de trocar só algumas categorias). */
+    private fun rebuildParts(db: SQLiteDatabase, playlistId: String) {
+        val shows = HashMap<String, ShowAgg>()
+        db.rawQuery(
+            "SELECT id, show_key, series, grp, logo, season, episode, url FROM entries WHERE playlist = ? AND +type = 2 AND show_key IS NOT NULL ORDER BY id",
+            arrayOf(playlistId),
+        ).use { c ->
+            while (c.moveToNext()) {
+                val id = c.getLong(0)
+                val key = c.getString(1)
+                val series = c.getStringOrNull(2)
+                val grp = c.getString(3)
+                val a = shows[key] ?: ShowAgg(series, grp, id, id).also { shows[key] = it }
+                a.add(id, series, grp, c.getStringOrNull(4), if (c.isNull(5)) null else c.getLong(5), if (c.isNull(6)) null else c.getLong(6), counted = !Xtream.isStub(c.getString(7)))
+            }
+        }
+        writeParts(db, playlistId, shows)
+    }
+
+    /** Quantos canais, filmes e séries (as capas: os episódios guardados não contam) um servidor Xtream tem no banco. */
+    fun countTypes(playlistId: String): Counts {
+        val out = Counts()
+        readableDatabase.rawQuery(
+            "SELECT type, COUNT(*) FROM entries WHERE playlist = ? AND (type != 2 OR url LIKE 'xtream-series://%') GROUP BY type",
+            arrayOf(playlistId),
+        ).use { c ->
+            while (c.moveToNext()) when (c.getInt(0)) {
+                ContentType.LIVE.ordinal -> out.live = c.getInt(1)
+                ContentType.MOVIE.ordinal -> out.movie = c.getInt(1)
+                ContentType.SERIES.ordinal -> out.series = c.getInt(1)
+            }
+        }
+        return out
     }
 
     private fun writeParts(db: SQLiteDatabase, playlistId: String, shows: Map<String, ShowAgg>) {

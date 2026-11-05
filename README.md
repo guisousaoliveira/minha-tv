@@ -10,7 +10,7 @@ Player de IPTV para **Android TV** (funciona também em TV Box e celular), feito
 - **Guia de programação (EPG)**: lê o XMLTV da lista (`x-tvg-url`) ou um link informado, e mostra "agora / a seguir".
 - **Importar de página**: cole o link de uma página (ex.: um README do GitHub) e o app encontra **todas** as playlists `.m3u/.m3u8` dentro dela. A página fica salva e, a cada atualização, listas novas que aparecerem nela entram sozinhas.
 - **Configuração pelo celular**: o app mostra um endereço tipo `http://192.168.0.10:8765`. Abra no navegador do celular (mesmo Wi-Fi), cole o link e pronto, sem digitar no controle remoto.
-- **Atualização automática** a cada 3, 6, 12 ou 24 horas (mesmo com o app fechado) e ao abrir o app.
+- **Atualização sem intervalo**: ao abrir o app, ele pergunta se as listas mudaram e baixa só o que mudou (num servidor Xtream que informa a versão de cada categoria, como o badwolf, só as categorias que mudaram). Nada roda em segundo plano.
 - **Favoritos**: segure OK num canal/filme, ou aperte MENU durante o vídeo.
 - **Zapping**: durante um canal ao vivo, ▲/▼ (ou CH+/CH−) troca de canal. ◀/▶ mostra o que está passando.
 - **Continuar de onde parou** em filmes/episódios e próximo episódio automático.
@@ -41,9 +41,9 @@ Opção mais fácil, pelo app **Downloader** (da Play Store da TV):
 
 1. Na primeira abertura, abra no celular o endereço mostrado na TV e cole o link (playlist ou página com várias playlists).
 2. Espere carregar (aparece "Atualizando…" no topo).
-3. Pronto: **Ao vivo / Filmes / Séries**. Depois disso não precisa mexer em nada, ele atualiza sozinho.
+3. Pronto: **Ao vivo / Filmes / Séries**. Depois disso não precisa mexer em nada: ao abrir, ele confere se a lista mudou.
 
-Em **Ajustes** dá para adicionar mais links, mudar o intervalo de atualização, remover listas e ligar "abrir no último canal".
+Em **Ajustes** dá para adicionar mais links, atualizar na hora, remover listas e ligar "abrir no último canal".
 
 ## Compilar localmente (opcional)
 
@@ -63,7 +63,6 @@ app/src/main/java/dev/guisousa/minhatv/
   data/EpgParser.kt        guia XMLTV (só as próximas 24h dos canais da lista)
   data/Repository.kt       download, cache em disco, atualização, favoritos
   data/PhoneSetupServer.kt página para configurar pelo celular
-  work/RefreshWorker.kt    atualização periódica em segundo plano
   ui/                      telas em Compose para controle remoto
   player/PlayerActivity.kt player (ExoPlayer) com zapping
 ```
