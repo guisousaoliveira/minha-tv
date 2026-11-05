@@ -29,6 +29,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -281,11 +283,14 @@ fun RowsScreen(lib: Library, type: ContentType, nav: Nav) {
         return
     }
     CinemaLayout(header, lib.version, if (type == ContentType.SERIES) "Séries" else "Filmes", "${groups.size} categorias") {
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 48.dp)) {
+        val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+        // o atalho do topo some quando a lista rola (senão sobra só a beiradinha dele em cima de Lançamentos)
+        val atTop by remember { derivedStateOf { listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0 } }
+        LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(bottom = 48.dp)) {
             // igual ao Saimo: Lançamentos, uma fileira por gênero e no fim "Todos de A a Z"
             // atalho logo no topo para a grade com tudo de A a Z
             item("all-top") {
-                Row(Modifier.padding(start = 48.dp, top = 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(Modifier.graphicsLayer { alpha = if (atTop) 1f else 0f }.padding(start = 48.dp, top = 4.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     TvButton("Todos de A a Z  ·  ${groups.sumOf { it.count }}", onClick = { nav.openCategory(type, ALL_GROUP) }, focusKey = "all:$type")
                 }
             }

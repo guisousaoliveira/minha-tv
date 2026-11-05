@@ -42,6 +42,11 @@ object LivePreview {
     fun stop() { current?.let { it.stop(); it.clearMediaItems() } }
     /** Servidores que não deram a versão HLS: a prévia vai direto no .ts deles. */
     internal val noHls = java.util.Collections.synchronizedSet(HashSet<String>())
+    /** Endereço que já tocou para cada canal: na próxima vez ele é o primeiro a tentar. */
+    internal val lastOk = java.util.concurrent.ConcurrentHashMap<String, String>()
+    /** Servidores que já tocaram / que já travaram: os bons vão para a frente da fila, os ruins para o fim. */
+    internal val goodHosts = java.util.Collections.synchronizedSet(HashSet<String>())
+    internal val badHosts = java.util.Collections.synchronizedSet(HashSet<String>())
 }
 
 /** http://host/live/user/pass/123.ts ou http://host/user/pass/123 -> http://host/live/user/pass/123.m3u8 (servidor Xtream). */
@@ -66,7 +71,7 @@ internal fun xtreamHls(url: String): String? {
  */
 @OptIn(UnstableApi::class)
 @Composable
-fun LivePreviewVideo(entry: Entry?, active: Boolean, modifier: Modifier = Modifier, dwellMs: Long = 1200, onShowing: (Boolean) -> Unit = {}) {
+fun LivePreviewVideo(entry: Entry?, active: Boolean, modifier: Modifier = Modifier, dwellMs: Long = 800, onShowing: (Boolean) -> Unit = {}) {
     val context = LocalContext.current
     val player = remember {
         // pouco buffer: a prévia começa rápido e não segura banda à toa
@@ -105,12 +110,27 @@ fun LivePreviewVideo(entry: Entry?, active: Boolean, modifier: Modifier = Modifi
         delay(dwellMs)
         val sources = runCatching { Repository.sources(entry) }.getOrDefault(emptyList())
             .filter { !it.url.startsWith("v2:") }.ifEmpty { if (entry.url.startsWith("v2:")) emptyList() else listOf(entry) }
+        fun hostOf(u: String) = android.net.Uri.parse(u).host.orEmpty()
+        // primeiro os servidores que já tocaram, por último os que já travaram
+        val ordered = sources.take(8).sortedBy { s ->
+            val h = hostOf(s.url)
+            when (h) { in LivePreview.goodHosts -> 0; in LivePreview.badHosts -> 2; else -> 1 }
+        }
+        val key = entry.name.lowercase()
+        val remembered = LivePreview.lastOk[key]
+        // o endereço que tocou da última vez vai na frente de tudo
+        val attempts = buildList {
+            ordered.forEach { src ->
+                val host = hostOf(src.url)
+                val hls = if (!SourceHealth.tsOnly(src.url) && host !in LivePreview.noHls) xtreamHls(src.url) else null
+                listOfNotNull(hls, src.url).distinct().forEach { add(Triple(src, it, hls)) }
+            }
+        }.sortedBy { if (it.second == remembered) 0 else 1 }
         // as fontes que falham voltam em menos de 1 s: dá para tentar várias (o player de tela cheia faz igual)
-        for (src in sources.take(8)) {
-            val host = android.net.Uri.parse(src.url).host.orEmpty()
-            val hls = if (!SourceHealth.tsOnly(src.url) && host !in LivePreview.noHls) xtreamHls(src.url) else null
-            val urls = listOfNotNull(hls, src.url).distinct()
-            for (url in urls) {
+        for ((src, url, hls) in attempts) {
+            val host = hostOf(url)
+            if (url == hls && host in LivePreview.noHls) continue
+            run {
                 firstFrame = false; failed = false
                 val http = OkHttpDataSource.Factory(PlayerHttp.client)
                     .setUserAgent(src.userAgent ?: PlayerHttp.SAFARI_UA)
@@ -121,8 +141,10 @@ fun LivePreviewVideo(entry: Entry?, active: Boolean, modifier: Modifier = Modifi
                     .build()
                 player.setMediaSource(factory.createMediaSource(item))
                 player.prepare()
-                val ok = withTimeoutOrNull(10_000) { snapshotFlow { firstFrame || failed }.first { it } } == true && firstFrame
+                // servidor que não responde em 8 s: passa para o próximo (alguns levam ~4 s só para responder)
+                val ok = withTimeoutOrNull(8_000) { snapshotFlow { firstFrame || failed }.first { it } } == true && firstFrame
                 if (ok) {
+                    LivePreview.lastOk[key] = url; LivePreview.goodHosts += host; LivePreview.badHosts -= host
                     onShowing(true)
                     // se cair depois, só esconde o vídeo (a logo volta a aparecer)
                     snapshotFlow { failed }.first { it }
@@ -130,6 +152,8 @@ fun LivePreviewVideo(entry: Entry?, active: Boolean, modifier: Modifier = Modifi
                     return@LaunchedEffect
                 }
                 if (url == hls && failed) LivePreview.noHls += host
+                else if (host !in LivePreview.goodHosts) LivePreview.badHosts += host
+                if (LivePreview.lastOk[key] == url) LivePreview.lastOk.remove(key)
                 player.stop()
             }
         }
