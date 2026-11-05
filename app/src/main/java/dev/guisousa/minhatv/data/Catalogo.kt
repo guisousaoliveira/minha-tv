@@ -70,6 +70,10 @@ class LinhaItem(val tipo: String, val id: Long)
 @Serializable
 class Linha(val t: String, val tipo: String, val itens: List<LinhaItem>? = null, val ids: List<Long>? = null)
 
+/** Ids que sumiram (cópias juntadas pelo TMDB no servidor) -> id atual. "f" filmes, "s" séries. */
+@Serializable
+class Apelidos(val f: Map<String, Long> = emptyMap(), val s: Map<String, Long> = emptyMap())
+
 @Serializable
 class Manifesto(val formato: Int = 0, val versao: String = "", val fichas: Int = 256, val partes: Map<String, String> = emptyMap())
 
@@ -92,7 +96,11 @@ class Catalogo(private val dir: File, private val http: OkHttpClient, private va
 
         /** "fichas/f_007" para o filme/série com esse id. */
         fun fichaParte(serie: Boolean, id: Long, n: Int): String =
-            "fichas/" + (if (serie) "s_" else "f_") + "%03d".format(Math.floorMod(id, n.toLong()))
+            "fichas/" + (if (serie) "s_" else "f_") + String.format(java.util.Locale.ROOT, "%03d", Math.floorMod(id, n.toLong()))
+
+        /** Partes que o app usa (o servidor publica outras, como tmdb.json, que o app não lê). */
+        private val PARTES_DO_APP = setOf("categorias", "canais", "inicio", "guia", "apelidos")
+        fun usada(parte: String) = parte in PARTES_DO_APP || parte.startsWith("filmes/") || parte.startsWith("series/")
 
         fun episodios(f: Ficha): List<Episodio> = f.eps.orEmpty().mapNotNull { a ->
             runCatching {
@@ -107,9 +115,9 @@ class Catalogo(private val dir: File, private val http: OkHttpClient, private va
     private val hashSer = MapSerializer(String.serializer(), String.serializer())
 
     /** Parte -> hash do arquivo que está no disco. */
-    private val hashes: MutableMap<String, String> = runCatching {
-        hashesFile.inputStream().use { json.decodeFromStream(hashSer, it) }.toMutableMap()
-    }.getOrDefault(HashMap())
+    private val hashes: MutableMap<String, String> = java.util.concurrent.ConcurrentHashMap(runCatching {
+        hashesFile.inputStream().use { json.decodeFromStream(hashSer, it) }
+    }.getOrDefault(emptyMap()))
 
     @Volatile var manifesto: Manifesto = runCatching {
         File(dir, "manifesto.json").inputStream().use { json.decodeFromStream(Manifesto.serializer(), it) }
@@ -151,7 +159,7 @@ class Catalogo(private val dir: File, private val http: OkHttpClient, private va
         val bytes = get("manifesto.json")
         val novo = json.decodeFromString(Manifesto.serializer(), bytes.decodeToString())
         if (novo.formato != 2) throw IOException("formato ${novo.formato} desconhecido")
-        val faltando = novo.partes.filter { (p, h) -> !p.startsWith("fichas/") && (hashes[p] != h || !file(p).exists()) }
+        val faltando = novo.partes.filter { (p, h) -> usada(p) && (hashes[p] != h || !file(p).exists()) }
         val limite = Semaphore(4)
         coroutineScope {
             faltando.map { (p, h) -> async { limite.withPermit { download(p, h) } } }.awaitAll()
@@ -166,8 +174,11 @@ class Catalogo(private val dir: File, private val http: OkHttpClient, private va
                 }
             }
         }
+        if (fichasMudaram) clearFichaCache()
         saveHashes()
-        val mudou = faltando.isNotEmpty() || fichasMudaram || novo.versao != manifesto.versao
+        // Só recarrega o catálogo (telas) se mudou alguma parte que aparece na tela. Ficha que mudou (links)
+        // já foi apagada acima e é baixada de novo quando abrir: não precisa reler 16 MB de JSON por isso.
+        val mudou = faltando.isNotEmpty()
         File(dir, "manifesto.json").writeBytes(bytes)
         manifesto = novo
         mudou
@@ -206,6 +217,7 @@ class Catalogo(private val dir: File, private val http: OkHttpClient, private va
     fun filmes(cat: String) = read("filmes/$cat", ListSerializer(CardFilme.serializer()))
     fun series(cat: String) = read("series/$cat", ListSerializer(CardSerie.serializer()))
     fun inicio() = read("inicio", ListSerializer(Linha.serializer()))
+    fun apelidos() = read("apelidos", Apelidos.serializer())
 
     /** Guia: id do canal -> programas (horários em ms). */
     fun guia(): Map<String, List<Programme>> {

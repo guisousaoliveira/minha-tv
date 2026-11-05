@@ -82,10 +82,13 @@ object Repository {
         val canais = catalogo.canais().orEmpty()
         val nomeCat = HashMap<String, String>()
         (cats.canais + cats.filmes + cats.series).forEach { nomeCat[it.id] = nomeCurto(it.nome) }
+        // o mesmo filme aparece em várias categorias (em média 2): guarda um objeto só por id
+        val umFilme = HashMap<Long, CardFilme>()
         val filmesPorCat = LinkedHashMap<String, List<CardFilme>>()
-        cats.filmes.forEach { c -> filmesPorCat[c.id] = catalogo.filmes(c.id).orEmpty() }
+        cats.filmes.forEach { c -> filmesPorCat[c.id] = catalogo.filmes(c.id).orEmpty().map { umFilme.getOrPut(it.id) { it } } }
+        val umaSerie = HashMap<Long, CardSerie>()
         val seriesPorCat = LinkedHashMap<String, List<CardSerie>>()
-        cats.series.forEach { c -> seriesPorCat[c.id] = catalogo.series(c.id).orEmpty() }
+        cats.series.forEach { c -> seriesPorCat[c.id] = catalogo.series(c.id).orEmpty().map { umaSerie.getOrPut(it.id) { it } } }
         // categoria de cada título: a primeira de gênero/serviço (Lançamentos e Em Alta por último)
         val filmePorId = HashMap<Long, Pair<CardFilme, String>>()
         (cats.filmes.drop(1) + cats.filmes.take(1)).forEach { c -> filmesPorCat[c.id]?.forEach { filmePorId.putIfAbsent(it.id, it to c.id) } }
@@ -112,6 +115,7 @@ object Repository {
             todasSeries = todasSeries,
         )
         dados = d
+        runCatching { migrarApelidos() }.onFailure { android.util.Log.w("MinhaTV", "apelidos: não migrou", it) }
         searchIndex = null
         favCache = null
         catalogo.clearFichaCache()
@@ -504,6 +508,64 @@ object Repository {
         val pos = getResume(url)
         val dur = prefs.getLong("dur_" + url.hashCode(), 0)
         return if (pos <= 0 || dur <= 0) null else pos.toFloat() / dur
+    }
+
+    // ---------- Ids trocados pelo servidor ----------
+
+    /**
+     * Quando o servidor junta cópias do mesmo título (TMDB), um id some e passa a valer outro (apelidos.json).
+     * Leva Minha lista, recentes, onde parou e "visto" do id antigo para o novo. Roda uma vez por versão dos apelidos.
+     */
+    private fun migrarApelidos() {
+        val ap = catalogo.apelidos() ?: return
+        if (ap.f.isEmpty() && ap.s.isEmpty()) return
+        val assinatura = (ap.f.hashCode() * 31 + ap.s.hashCode()).toString()
+        if (prefs.getString("apelidos_sig", null) == assinatura) return
+        fun novaUrl(url: String): String? = when {
+            url.startsWith(F) -> ap.f[url.removePrefix(F)]?.let { F + it }
+            url.startsWith(E) -> {
+                val sid = url.removePrefix(E).substringBefore(':')
+                ap.s[sid]?.let { E + it + url.removePrefix(E + sid) }
+            }
+            else -> null
+        }
+        val ed = prefs.edit()
+        val vistos = _watched.value.toMutableSet()
+        var trocas = 0
+        fun mover(velha: String, nova: String) {
+            val hv = velha.hashCode()
+            val hn = nova.hashCode()
+            if (prefs.contains("resume_$hv")) { ed.putLong("resume_$hn", prefs.getLong("resume_$hv", 0)).remove("resume_$hv"); trocas++ }
+            if (prefs.contains("dur_$hv")) { ed.putLong("dur_$hn", prefs.getLong("dur_$hv", 0)).remove("dur_$hv") }
+            if (vistos.remove(hv.toString())) { vistos += hn.toString(); trocas++ }
+        }
+        // Minha lista
+        val favs = _favorites.value.map { u -> novaUrl(u)?.also { mover(u, it); trocas++ } ?: u }.toSet()
+        // recentes
+        for (key in listOf("v2_recent_vod", "v2_recent_live")) {
+            val lista = readRecent(key)
+            val nova = lista.map { e -> novaUrl(e.url)?.also { mover(e.url, it) }?.let { e.copy(url = it) } ?: e }.distinctBy { it.url }
+            if (nova != lista) ed.putString(key, json.encodeToString(ListSerializer(Entry.serializer()), nova))
+        }
+        // filmes: onde parou e visto ficam na url do filme
+        for ((velho, novo) in ap.f) mover(F + velho, F + novo)
+        // séries: cada episódio tem a sua url ("v2:e:id:T:E"). Só olha as chaves que existem de fato
+        // (onde parou / visto), em vez de tentar todas as temporadas e episódios possíveis
+        if (ap.s.isNotEmpty()) {
+            val comResume = prefs.all.keys.asSequence().filter { it.startsWith("resume_") }.mapNotNull { it.removePrefix("resume_").toIntOrNull() }.toHashSet()
+            val vistosHash = vistos.mapNotNull { it.toIntOrNull() }.toHashSet()
+            if (comResume.isNotEmpty() || vistosHash.isNotEmpty()) {
+                for ((velho, novo) in ap.s) for (t in 0..30) for (e in 0..300) {
+                    val h = "$E$velho:$t:$e".hashCode()
+                    if (h in comResume || h in vistosHash) mover("$E$velho:$t:$e", "$E$novo:$t:$e")
+                }
+            }
+        }
+        _favorites.value = favs
+        _watched.value = vistos
+        ed.putStringSet(FAV_KEY, favs).putStringSet("watched", vistos).putString("apelidos_sig", assinatura).apply()
+        favCache = null
+        if (trocas > 0) android.util.Log.i("MinhaTV", "apelidos: $trocas itens levados para o id novo")
     }
 
     // ---------- Recentes ----------

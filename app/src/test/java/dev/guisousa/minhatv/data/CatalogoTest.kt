@@ -69,8 +69,10 @@ class CatalogoTest {
         val idsCanais = canais.map { it.id.toString() }.toSet()
         assertTrue(guia.keys.any { it in idsCanais })
 
-        // segunda vez: nada mudou
-        assertTrue(!c.sync() || true)
+        // segunda vez, logo em seguida: nada mudou (o servidor não gerou de novo no meio do teste)
+        val manifestoAntes = c.manifesto.versao
+        val mudou = c.sync()
+        if (c.manifesto.versao == manifestoAntes) assertTrue("sem mudança no servidor, nada para recarregar", !mudou)
         println("catálogo ${c.manifesto.versao}: ${canais.size} canais, ${cats.filmes.size} cat. filmes, ${cats.series.size} cat. séries, guia ${guia.size}")
         println("filme: ${filmes[0].t} -> ${v.dub.size} dub, ${v.leg.size} leg; série: ${series[0].t} -> ${eps.size} episódios")
         dir.deleteRecursively()
