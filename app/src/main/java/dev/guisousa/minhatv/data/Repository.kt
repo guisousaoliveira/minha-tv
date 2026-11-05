@@ -131,6 +131,7 @@ object Repository {
         if (::app.isInitialized) return
         app = context.applicationContext
         prefs = app.getSharedPreferences("minhatv", Context.MODE_PRIVATE)
+        SourceHealth.init(app)
         catalogo = Catalogo(File(app.filesDir, "v2"), Catalogo.defaultHttp())
         _favorites.value = prefs.getStringSet(FAV_KEY, emptySet())!!.toSet()
         cleanupOld()
@@ -340,13 +341,13 @@ object Repository {
     )
 
     private fun porVersao(e: Entry, v: Versoes): List<Entry> {
-        val dub = v.dub.map { fonteEntry(e, it, DUB) }
-        val leg = v.leg.map { fonteEntry(e, it, LEG) }
+        val dub = SourceHealth.order(v.dub.map { fonteEntry(e, it, DUB) }) { it.url }
+        val leg = SourceHealth.order(v.leg.map { fonteEntry(e, it, LEG) }) { it.url }
         return if (versionFor(e) == LEG) leg + dub else dub + leg
     }
 
     /**
-     * Links para tocar o item, já em ordem: canal na ordem do servidor; filme/episódio com a versão
+     * Links para tocar o item, já em ordem: canal na ordem do servidor (com a que já tocou aqui primeiro e as que falharam no fim); filme/episódio com a versão
      * escolhida (Dublado/Legendado) primeiro e a outra depois.
      */
     suspend fun sources(e: Entry): List<Entry> {
@@ -354,7 +355,7 @@ object Repository {
         return when {
             e.url.startsWith(C) -> {
                 val c = idOf(e.url, C)?.let { d?.canalPorId?.get(it) } ?: return emptyList()
-                c.f.map { fonteEntry(e, it, null) }
+                SourceHealth.order(c.f.map { fonteEntry(e, it, null) }) { it.url }
             }
             e.url.startsWith(F) -> {
                 val f = catalogo.ficha(false, idOf(e.url, F) ?: return emptyList()) ?: return emptyList()

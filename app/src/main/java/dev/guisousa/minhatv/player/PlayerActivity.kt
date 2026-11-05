@@ -44,6 +44,7 @@ import androidx.media3.ui.TrackSelectionDialogBuilder
 import dev.guisousa.minhatv.data.ContentType
 import dev.guisousa.minhatv.data.Entry
 import dev.guisousa.minhatv.data.Repository
+import dev.guisousa.minhatv.data.SourceHealth
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
@@ -153,6 +154,7 @@ class PlayerActivity : ComponentActivity() {
     private var readyOnce = false
     /** Alguma fonte deste canal já mostrou imagem (então erro depois é sessão vencida, não canal morto). */
     private var sourcePlayed = false
+    private var markedWorking: String? = null
     private var reopenFails = 0
     private var wraps = 0
     @Volatile private var lastReopenAt = 0L
@@ -375,6 +377,7 @@ class PlayerActivity : ComponentActivity() {
                         limitRetried = false
                         readyOnce = true
                         sourcePlayed = true
+                        playing?.url?.let { if (it != markedWorking) { markedWorking = it; SourceHealth.markWorking(it); if (!usingHlsVariant && it in hlsFailed) SourceHealth.markTsOnly(it) } }
                         reopenFails = 0
                         wraps = 0
                         sameReopens = 0
@@ -383,6 +386,7 @@ class PlayerActivity : ComponentActivity() {
                         hideLoading()
                     }
                     Player.STATE_ENDED -> {
+                        if (exo.mediaItemCount == 0) return
                         if (isLive) {
                             // o servidor encerrou a transmissão: ao vivo não tem fim, então reconecta na hora
                             android.util.Log.w("MinhaTV", "player: transmissão ao vivo encerrada pelo servidor, reconectando")
@@ -639,7 +643,7 @@ class PlayerActivity : ComponentActivity() {
             })
         // ao vivo de servidor Xtream: toca a versão HLS (.m3u8) do mesmo canal, como os apps de IPTV.
         // O .ts direto é cortado pelo servidor a cada poucos segundos; se o HLS não abrir, volta para o .ts.
-        val hls = if (isLive && !hlsFailed.contains(src.url)) hlsVariant(src.url) else null
+        val hls = if (isLive && !hlsFailed.contains(src.url) && !SourceHealth.tsOnly(src.url)) hlsVariant(src.url) else null
         usingHlsVariant = hls != null
         val url = hls ?: src.url
         val path = url.lowercase().substringBefore('?')
@@ -841,6 +845,8 @@ class PlayerActivity : ComponentActivity() {
 
     /** Pula para a próxima fonte do mesmo item. Devolve false se não houver mais. */
     private fun nextSource(frozen: Boolean = false): Boolean {
+        // a fonte saiu sem nunca mostrar imagem: vai para o fim da fila nas próximas vezes
+        sources.getOrNull(sourceIndex)?.url?.let { if (it != markedWorking && !it.startsWith("v2:")) SourceHealth.markFailed(it) }
         if (sourceIndex >= sources.size - 1) return false
         vodReprepares = 0
         handler.post { updateButtons() }
@@ -1331,7 +1337,8 @@ class PlayerActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         Repository.playbackActive = true
-        player?.let { if (it.playbackState == Player.STATE_IDLE) it.prepare(); it.playWhenReady = true }
+        // sem vídeo ainda (fontes do catálogo carregando): prepare() vazio daria "fim do vídeo" e fecharia o player
+        player?.let { if (it.mediaItemCount == 0) return; if (it.playbackState == Player.STATE_IDLE) it.prepare(); it.playWhenReady = true }
     }
 
     override fun onStop() {
