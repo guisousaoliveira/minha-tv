@@ -370,6 +370,13 @@ object Repository {
         }
     }
 
+    /**
+     * Versão de um filme/episódio contando a cópia sem marca como Dublado: as listas brasileiras só marcam
+     * o legendado ("[L]", "Legendado"), e o dublado vem sem nada. Sem isso, um filme que só tem dublado
+     * parecia "versão desconhecida" e o app deixava trocar para Legendado, tocando o dublado calado.
+     */
+    fun versionOrDub(e: Entry): String = versionOf(e) ?: DUB
+
     fun versionName(v: String) = if (v == LEG) "Legendado" else "Dublado"
 
     var hideAdult: Boolean
@@ -931,7 +938,16 @@ object Repository {
         }
         val health = runCatching { db.health(list.map { it.url }) }.getOrDefault(emptyMap())
         val (dead, alive) = list.partition { health[it.url]?.dead == true }
-        val best = alive.sortedBy { rank(health[it.url]) }.take(MAX_SOURCES - 1)
+        val ranked = alive.sortedBy { rank(health[it.url]) }
+        var best = ranked.take(MAX_SOURCES - 1)
+        // filme/série com as duas versões: a outra versão sempre entra nas fontes, mesmo com muitas cópias
+        // mais rápidas da mesma versão (senão "Legendado" ficava de fora e tocava o dublado)
+        if (e.type != ContentType.LIVE) {
+            val have = (best + e).map { versionOrDub(it) }.toSet()
+            ranked.firstOrNull { versionOrDub(it) !in have }?.let { other ->
+                best = (if (best.size >= MAX_SOURCES - 1) best.dropLast(1) else best) + other
+            }
+        }
         // se não sobrou nenhuma boa, deixa uma morta como última tentativa (o teste pode ter errado)
         if (best.isEmpty()) dead.sortedByDescending { health[it.url]?.checked ?: 0 }.take(1) else best
     }
@@ -1145,7 +1161,7 @@ object Repository {
             }
             if (fetched) list = db.episodes(show.key).filterNot { Xtream.isStub(it.url) }
             // versões de todas as cópias (a lista abaixo mostra só uma por episódio)
-            versions = list.mapNotNull { versionOf(it) }.toSet()
+            versions = list.map { versionOrDub(it) }.toSet()
             list.uniqueEpisodes()
         }.getOrDefault(emptyList())
         Episodes(list, if (list.isEmpty()) error else null, versions)
@@ -1166,7 +1182,7 @@ object Repository {
         }
         // a versão escolhida para a série (Dublado/Legendado) vem primeiro; depois a fonte que respondeu melhor
         val want = versionFor(first())
-        fun vrank(e: Entry) = when (versionOf(e)) { want -> 0; null -> 1; else -> 2 }
+        fun vrank(e: Entry) = if (versionOrDub(e) == want) 0 else 1
         return groups.values.map { list -> list.minWith(compareBy<Entry>({ vrank(it) }, { rank(health[it.url]) })) }
     }
 

@@ -102,6 +102,7 @@ class PlayerActivity : ComponentActivity() {
     private lateinit var controls: PlayerControls
     private var btnPlay: TextView? = null
     private var btnSource: TextView? = null
+    private var btnVersion: TextView? = null
     private var btnFav: TextView? = null
     private var firstButton: View? = null
 
@@ -547,8 +548,8 @@ class PlayerActivity : ComponentActivity() {
                 sourceIndex = sources.indexOfFirst { it.url == playing?.url }.coerceAtLeast(0)
                 // filme/série: se a versão preferida (ex.: Dublado) está em outra fonte, já abre nela
                 // (mesmo se já começou: tocando a versão errada, troca mantendo a posição)
-                val wrongVersion = !isLive && playing?.let { Repository.versionOf(it) } != Repository.versionOf(sources[0]) &&
-                    Repository.versionOf(sources[0]) == Repository.versionFor(e)
+                val wrongVersion = !isLive && playing?.let { Repository.versionOrDub(it) } != Repository.versionOrDub(sources[0]) &&
+                    Repository.versionOrDub(sources[0]) == Repository.versionFor(e)
                 if (!isLive && (!readyOnce || wrongVersion) && sources[0].url != playing?.url) switchSource(0)
                 // não remonta a barra (tirava o foco de quem estava navegando): só atualiza os textos
                 updateButtons()
@@ -558,8 +559,8 @@ class PlayerActivity : ComponentActivity() {
             if (index == wanted && !isLive) {
                 val all = if (alts.isNotEmpty()) sources else listOf(e)
                 val want = Repository.versionFor(e)
-                val have = all.mapNotNull { Repository.versionOf(it) }.toSet()
-                if (have.isNotEmpty() && want !in have) {
+                val have = all.map { Repository.versionOrDub(it) }.toSet()
+                if (want !in have) {
                     notice("Não tem a versão ${Repository.versionName(want)} deste título. Está tocando ${Repository.versionName(have.first())}.", 7000)
                 }
             }
@@ -792,7 +793,7 @@ class PlayerActivity : ComponentActivity() {
 
     /** Fontes da versão escolhida primeiro, depois as que não dizem, por último a outra versão. */
     private fun byVersion(list: List<Entry>, v: String): List<Entry> =
-        list.sortedBy { when (Repository.versionOf(it)) { v -> 0; null -> 1; else -> 2 } }
+        list.sortedBy { if (Repository.versionOrDub(it) == v) 0 else 1 }
 
     /** Troca de fonte mantendo a posição (e a pausa, se a pergunta de continuar estiver aberta). */
     private fun switchSource(i: Int) {
@@ -809,9 +810,11 @@ class PlayerActivity : ComponentActivity() {
 
     private fun versionPanel() {
         // As listas só marcam o legendado: fonte sem marca conta como dublada
-        fun ver(e: Entry) = Repository.versionOf(e) ?: Repository.DUB
+        fun ver(e: Entry) = Repository.versionOrDub(e)
         val have = sources.map { ver(it) }.toSet()
-        val now = Repository.versionOf(playing ?: current) ?: Repository.versionFor(current)
+        val now = ver(playing ?: current)
+        // só uma versão: não tem o que escolher (antes abria a lista e deixava "trocar" para a que não existe)
+        if (have.size < 2) { notice("Este título só tem a versão ${Repository.versionName(have.firstOrNull() ?: now)}."); return }
         val options = listOf(Repository.DUB, Repository.LEG)
         controls.showPanel("Versão", options.map { v ->
             PlayerControls.Choice(Repository.versionName(v), if (v in have) null else "Não achei nesta lista", selected = v == now)
@@ -988,7 +991,8 @@ class PlayerActivity : ComponentActivity() {
         val right = mutableListOf<View>()
         right += c.textButton("Legendas") { pickTrack(C.TRACK_TYPE_TEXT) }
         right += c.textButton("Áudio") { pickTrack(C.TRACK_TYPE_AUDIO) }
-        if (!isLive) right += c.textButton("Versão") { versionPanel() }
+        // "Versão" só aparece quando o título tem Dublado e Legendado (ver updateButtons)
+        btnVersion = if (isLive) null else c.textButton("Versão") { versionPanel() }.also { right += it }
         btnSource = c.textButton("Fonte") { sourceDialog() }.also { right += it }
         right += c.textButton("Tela") { resizePanel() }
         if (!isLive) right += c.textButton("Velocidade") { speedDialog() }
@@ -1013,6 +1017,11 @@ class PlayerActivity : ComponentActivity() {
             b.contentDescription = if (playing) "Pausar" else "Continuar"
         }
         btnSource?.text = (if (sources.size > 1) "Fonte ${sourceIndex + 1}/${sources.size}" else "Fonte") + " · " + formatName()
+        btnVersion?.let { b ->
+            val both = sources.map { Repository.versionOrDub(it) }.toSet().size > 1
+            b.visibility = if (both) View.VISIBLE else View.GONE
+            if (both) b.text = "Versão · " + Repository.versionName(Repository.versionOrDub(playing ?: current))
+        }
         btnFav?.text = if (items.isNotEmpty() && current.url in Repository.favorites.value) "Na Minha lista" else "+ Minha lista"
         val e = items.getOrNull(index) ?: return
         controls.kicker.text = if (isLive) "${index + 1}  ·  ${e.group}" else e.group

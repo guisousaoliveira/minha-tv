@@ -123,21 +123,25 @@ private fun DetailTop(kind: String, title: String, poster: String?, info: List<S
     }
 }
 
-/** Botão "Versão": alterna Dublado/Legendado só para este título. */
+/**
+ * Botão "Versão": alterna Dublado/Legendado só para este título. Só aparece quando o título tem as duas
+ * versões; com uma só, a versão aparece na linha de informações (ver [versionInfo]) e não há o que trocar.
+ */
 @Composable
 private fun VersionButton(e: Entry, available: Set<String>, onChange: () -> Unit = {}) {
-    val context = LocalContext.current
+    if (available.size < 2) return
     var v by remember(e.url) { mutableStateOf(Repository.versionFor(e)) }
     BigButton("Versão: ${Repository.versionName(v)}") {
         val next = if (v == Repository.DUB) Repository.LEG else Repository.DUB
         v = next
         Repository.setVersionFor(e, next)
         onChange()
-        if (available.isNotEmpty() && next !in available) {
-            android.widget.Toast.makeText(context, "Não achei ${Repository.versionName(next)} nesta lista; vai tocar o que tiver.", android.widget.Toast.LENGTH_SHORT).show()
-        }
     }
 }
+
+/** "Dublado" ou "Legendado" na linha de informações quando o título só tem uma versão (null enquanto carrega). */
+private fun versionInfo(available: Set<String>?): String? =
+    available?.singleOrNull()?.let { Repository.versionName(it) }
 
 // ======================= Filme =======================
 
@@ -146,7 +150,7 @@ fun MovieDetailScreen(e: Entry, nav: Nav) {
     val context = LocalContext.current
     val favs by Repository.favorites.collectAsState()
     val watched by Repository.watched.collectAsState()
-    val versions = load(e.url) { (listOf(e) + Repository.alternates(e)).mapNotNull { Repository.versionOf(it) }.toSet() }
+    val versions = load(e.url) { (listOf(e) + Repository.alternates(e)).map { Repository.versionOrDub(it) }.toSet() }
     val resume = Repository.getResume(e.url)
     // capa, fundo e sinopse oficiais (TMDB), quando houver
     // procura pelo nome limpo (sem FHD, [L], Dublado...), senão o TMDB não acha e só sobra a capa esticada
@@ -161,7 +165,12 @@ fun MovieDetailScreen(e: Entry, nav: Nav) {
             item("top") {
                 DetailTop(
                     "Filme", e.name, e.logo ?: tmdb?.poster,
-                    listOfNotNull(e.group, e.quality, if (e.url.hashCode().toString() in watched) "Visto" else null),
+                    listOfNotNull(
+                        e.group,
+                        // "Legendado" já pode vir na etiqueta (e.quality): não repete
+                        e.quality, versionInfo(versions)?.takeIf { v -> e.quality?.contains(v, ignoreCase = true) != true },
+                        if (e.url.hashCode().toString() in watched) "Visto" else null,
+                    ),
                     overview = tmdb?.overview,
                 ) {
                     BigButton(if (resume > 0) "Continuar de ${clock(resume)}" else "Assistir", remember { FocusRequester() }, key = "main:${e.url}", icon = androidx.compose.material.icons.Icons.Filled.PlayArrow) { PlaybackQueue.start(context, listOf(e), 0) }
@@ -246,6 +255,7 @@ fun SeriesDetailScreen(show: Show) {
                         if (seasonCount > 0) "$seasonCount temporada${if (seasonCount > 1) "s" else ""}" else null,
                         episodesLabel(all.size),
                         show.group,
+                        versionInfo(versions),
                     ),
                     overview = tmdb?.overview,
                 ) {
