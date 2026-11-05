@@ -51,7 +51,6 @@ import dev.guisousa.minhatv.data.Library
 import dev.guisousa.minhatv.data.Repository
 import dev.guisousa.minhatv.data.Show
 import dev.guisousa.minhatv.player.PlaybackQueue
-import dev.guisousa.minhatv.work.RefreshWorker
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -555,7 +554,6 @@ fun SettingsScreen() {
     val playlists by Repository.playlists.collectAsState()
     val sources by Repository.sources.collectAsState()
     val status by Repository.status.collectAsState()
-    var hours by remember { mutableStateOf(Repository.refreshHours) }
     var autoplay by remember { mutableStateOf(Repository.autoplayLast) }
     val prefsFocus = remember { FocusRequester() }
     val address = rememberPhoneSetupServer()
@@ -609,18 +607,6 @@ fun SettingsScreen() {
                         modifier = if (v == Repository.DUB) Modifier.focusRequester(prefsFocus) else Modifier,
                         onClick = { version = v; Repository.preferredVersion = v },
                     )
-                }
-            }
-        }
-        item {
-            Text("Atualizar as listas a cada", fontSize = 15.sp, color = Palette.TextDim, modifier = Modifier.padding(start = 16.dp, bottom = 6.dp))
-            Row(Modifier.padding(start = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Repository.INTERVAL_OPTIONS.forEach { h ->
-                    TvButton("$h horas", selected = h == hours, onClick = {
-                        hours = h
-                        Repository.refreshHours = h
-                        RefreshWorker.schedule(context, h)
-                    })
                 }
             }
         }

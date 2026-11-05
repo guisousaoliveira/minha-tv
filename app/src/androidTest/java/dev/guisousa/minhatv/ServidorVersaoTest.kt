@@ -86,5 +86,27 @@ class ServidorVersaoTest {
         log("RESULTADO FILMES: ${found.size} achados")
     }
 
+    /** O servidor diz a versão de cada categoria, e pedir uma categoria traz só os itens dela. */
+    @Test
+    fun versaoPorCategoria() {
+        val args = InstrumentationRegistry.getArguments()
+        val server = args.getString("server").orEmpty().trimEnd('/')
+        assumeTrue("sem servidor", server.isNotEmpty())
+        val user = args.getString("user").orEmpty()
+        val pass = args.getString("pass").orEmpty().ifEmpty { user }
+        val x = Xtream(server, user, pass, ua) { u, b -> open(u, b) }
+        val info = x.login()
+        val parts = info.parts
+        log("VERSÕES: lista ${info.version} · ${parts?.size ?: 0} categorias")
+        assumeTrue("servidor não manda versão por categoria", parts != null)
+        val cats = x.categories("get_vod_categories")
+        val (catId, catName) = cats.entries.first { parts!!.containsKey("vod:${it.key}") }
+        var n = 0
+        var fora = 0
+        x.movies(catId, cats) { e -> n++; if (e.group != catName) fora++ }
+        log("CATEGORIA \"$catName\" ($catId): $n filmes, $fora de outra categoria")
+        assertTrue(n > 0 && fora == 0)
+    }
+
     private fun log(s: String) { Log.i("MinhaTVTeste", s); println(s) }
 }

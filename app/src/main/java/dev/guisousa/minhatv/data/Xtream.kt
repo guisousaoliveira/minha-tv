@@ -23,17 +23,26 @@ class Xtream(
     private val u = enc(user)
     private val p = enc(pass)
 
+    private fun catParam(categoryId: String?) = categoryId?.let { "&category_id=${enc(it)}" } ?: ""
+
     private fun api(action: String? = null, extra: String = "") =
         "$base/player_api.php?username=$u&password=$p" + (action?.let { "&action=$it" } ?: "") + extra
 
     /**
-     * Confere usuário e senha (o servidor responde auth = 0 quando estão errados).
-     * Devolve a versão das listas (server_info.list_version), quando o servidor informa:
-     * se for igual à da última importação, não precisa baixar tudo de novo.
+     * O que o servidor diz sobre as listas no login (extras fora do padrão Xtream, quando ele informa):
+     * [version] da lista inteira e [parts], a versão de cada categoria ("live:3", "vod:105", "series:204").
      */
-    fun login(): String? {
+    class ListInfo(val version: String?, val parts: Map<String, String>?)
+
+    /**
+     * Confere usuário e senha (o servidor responde auth = 0 quando estão errados).
+     * Devolve as versões das listas: se forem iguais às da última importação, não precisa baixar nada;
+     * se só algumas categorias mudaram, baixa só elas.
+     */
+    fun login(): ListInfo {
         var auth: String? = null
         var version: String? = null
+        var parts: HashMap<String, String>? = null
         open(api()) { input ->
             reader(input).use { r ->
                 if (r.peek() != JsonToken.BEGIN_OBJECT) throw IOException("o servidor não respondeu como um servidor Xtream")
@@ -47,6 +56,13 @@ class Xtream(
                             when {
                                 section == "user_info" && key == "auth" -> auth = r.value()
                                 section == "server_info" && key == "list_version" -> version = r.value()
+                                section == "server_info" && key == "list_parts" && r.peek() == JsonToken.BEGIN_OBJECT -> {
+                                    val m = HashMap<String, String>()
+                                    r.beginObject()
+                                    while (r.hasNext()) { val k = r.nextName(); r.value()?.let { m[k] = it } }
+                                    r.endObject()
+                                    parts = m
+                                }
                                 else -> r.skipValue()
                             }
                         }
@@ -57,7 +73,7 @@ class Xtream(
             null
         }
         if (auth == "0") throw IOException("usuário ou senha não aceitos pelo servidor")
-        return version?.trim()?.ifBlank { null }
+        return ListInfo(version?.trim()?.ifBlank { null }, parts?.takeIf { it.isNotEmpty() })
     }
 
     /** category_id -> nome da categoria. */
@@ -67,9 +83,9 @@ class Xtream(
         return out
     }
 
-    fun live(emit: (Entry) -> Unit) {
-        val cats = categories("get_live_categories")
-        eachObject(api("get_live_streams")) { o ->
+    /** Canais (todos, ou só os da categoria [categoryId]; [cats] = nomes das categorias, se já buscados). */
+    fun live(categoryId: String? = null, cats: Map<String, String> = categories("get_live_categories"), emit: (Entry) -> Unit) {
+        eachObject(api("get_live_streams", catParam(categoryId))) { o ->
             val id = o["stream_id"] ?: return@eachObject
             emit(Entry(
                 name = o["name"] ?: return@eachObject,
@@ -83,9 +99,9 @@ class Xtream(
         }
     }
 
-    fun movies(emit: (Entry) -> Unit) {
-        val cats = categories("get_vod_categories")
-        eachObject(api("get_vod_streams")) { o ->
+    /** Filmes (todos, ou só os da categoria [categoryId]). */
+    fun movies(categoryId: String? = null, cats: Map<String, String> = categories("get_vod_categories"), emit: (Entry) -> Unit) {
+        eachObject(api("get_vod_streams", catParam(categoryId))) { o ->
             val id = o["stream_id"] ?: return@eachObject
             val ext = o["container_extension"].orNullIfBlank() ?: "mp4"
             val rawName = o["name"] ?: return@eachObject
@@ -105,9 +121,8 @@ class Xtream(
     }
 
     /** Uma linha por série (sem episódios): o endereço guarda o id para buscar os episódios depois. */
-    fun seriesCovers(playlistId: String, emit: (Entry) -> Unit) {
-        val cats = categories("get_series_categories")
-        eachObject(api("get_series")) { o ->
+    fun seriesCovers(playlistId: String, categoryId: String? = null, cats: Map<String, String> = categories("get_series_categories"), emit: (Entry) -> Unit) {
+        eachObject(api("get_series", catParam(categoryId))) { o ->
             val id = o["series_id"] ?: return@eachObject
             val name = o["name"] ?: return@eachObject
             emit(Entry(
@@ -117,6 +132,8 @@ class Xtream(
                 logo = o["cover"].orNullIfBlank(),
                 type = ContentType.SERIES,
                 seriesName = name,
+                // muda quando a série ganha ou perde episódio: os guardados dela são buscados de novo
+                added = o["last_modified"]?.trim()?.toLongOrNull(),
             ))
         }
     }
