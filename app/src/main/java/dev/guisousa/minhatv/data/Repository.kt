@@ -68,6 +68,8 @@ object Repository {
         val catSerie: Map<String, String>,
         val todosFilmes: List<CardFilme>,
         val todasSeries: List<CardSerie>,
+        /** Nome da lista pronta do ao vivo ("Principais"), se o catálogo tiver uma. */
+        val principais: String?,
     )
 
     @Volatile private var dados: Dados? = null
@@ -80,6 +82,11 @@ object Repository {
     private fun carregar(): Boolean {
         val cats = catalogo.categorias() ?: return false
         val canais = catalogo.canais().orEmpty()
+        // ao vivo: "Principais" (lista pronta de ids) primeiro; os canais dela continuam na categoria normal também
+        val catsCanais = ordemAoVivo(cats.canais)
+        val canalPorId = canais.associateBy { it.id }
+        val canaisPorCat = canais.groupBy { it.c }.toMutableMap()
+        catsCanais.forEach { c -> c.ids?.let { canaisPorCat[c.id] = canaisPorIds(it, canalPorId) } }
         val nomeCat = HashMap<String, String>()
         (cats.canais + cats.filmes + cats.series).forEach { nomeCat[it.id] = nomeCurto(it.nome) }
         // o mesmo filme aparece em várias categorias (em média 2): guarda um objeto só por id
@@ -100,8 +107,8 @@ object Repository {
         val todasSeries = seriesPorCat.values.flatten().filter { vistosS.add(it.id) }
         val d = Dados(
             canais = canais,
-            canalPorId = canais.associateBy { it.id },
-            canaisPorCat = canais.groupBy { it.c },
+            canalPorId = canalPorId,
+            canaisPorCat = canaisPorCat,
             filmesPorCat = filmesPorCat,
             filmePorId = filmePorId,
             seriesPorCat = seriesPorCat,
@@ -113,6 +120,7 @@ object Repository {
             catSerie = cats.series.associate { nomeCurto(it.nome) to it.id },
             todosFilmes = todosFilmes,
             todasSeries = todasSeries,
+            principais = catsCanais.firstOrNull { it.ids != null && canaisPorCat[it.id].orEmpty().isNotEmpty() }?.let { nomeCurto(it.nome) },
         )
         dados = d
         runCatching { migrarApelidos() }.onFailure { android.util.Log.w("MinhaTV", "apelidos: não migrou", it) }
@@ -122,9 +130,10 @@ object Repository {
         _epg.value = EpgData(catalogo.guia())
         _library.value = Library(
             ++libVersion,
-            cats.canais.map { GroupInfo(nomeCurto(it.nome), d.canaisPorCat[it.id]?.size ?: 0) }.filter { it.count > 0 },
+            catsCanais.map { GroupInfo(nomeCurto(it.nome), d.canaisPorCat[it.id]?.size ?: 0) }.filter { it.count > 0 },
             cats.filmes.map { GroupInfo(nomeCurto(it.nome), filmesPorCat[it.id]?.size ?: 0) }.filter { it.count > 0 },
             cats.series.map { GroupInfo(nomeCurto(it.nome), seriesPorCat[it.id]?.size ?: 0) }.filter { it.count > 0 },
+            liveTotal = catsCanais.filter { it.ids == null }.sumOf { d.canaisPorCat[it.id]?.size ?: 0 },
         )
         android.util.Log.i("MinhaTV", "catálogo ${catalogo.manifesto.versao}: ${canais.size} canais, ${todosFilmes.size} filmes, ${todasSeries.size} séries")
         return true
@@ -636,4 +645,17 @@ object Repository {
     var lastChannelUrl: String?
         get() = prefs.getString("last_channel", null)
         set(v) { prefs.edit().putString("last_channel", v).apply() }
+
+    /** No canal ao vivo, ▲▼ trocam de canal (desligado: só mostram o que está passando). */
+    var arrowsZap: Boolean
+        get() = prefs.getBoolean("arrows_zap", true)
+        set(v) { prefs.edit().putBoolean("arrows_zap", v).apply() }
+
+    /** Última categoria aberta no Ao vivo ("" = Todos, null = nunca escolheu). */
+    var lastLiveGroup: String?
+        get() = prefs.getString("last_live_group", null)
+        set(v) { prefs.edit().putString("last_live_group", v).apply() }
+
+    /** Nome da lista "Principais" do ao vivo, se o catálogo tiver. */
+    fun principaisGroup(): String? = dados?.principais
 }

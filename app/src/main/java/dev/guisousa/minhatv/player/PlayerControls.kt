@@ -96,6 +96,8 @@ class PlayerControls(private val context: Context, root: FrameLayout) {
     val position: TextView
     val duration: TextView
     val progress: ProgressBar
+    /** "Ir para 1:02:30", em cima da barra de tempo enquanto ◀▶ escolhem o ponto. */
+    val seekLabel: TextView
     val buttons: LinearLayout
 
     var visible = false
@@ -120,7 +122,22 @@ class PlayerControls(private val context: Context, root: FrameLayout) {
             setPadding(dp(48), dp(64), dp(48), dp(32))
             visibility = View.GONE
         }
-        timeRow = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        seekLabel = label(16f, Color.BLACK, bold = true).apply {
+            background = GradientDrawable().apply { setColor(Color.WHITE); cornerRadius = dp(4).toFloat() }
+            setPadding(dp(10), dp(4), dp(10), dp(4))
+            visibility = View.INVISIBLE
+        }
+        bottom.addView(seekLabel, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(6) })
+        // a barra de tempo recebe foco (filme/episódio): ◀▶ escolhem o ponto e OK pula
+        timeRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            background = StateListDrawable().apply {
+                addState(intArrayOf(android.R.attr.state_focused), GradientDrawable().apply { setColor(0x33FFFFFF); cornerRadius = dp(6).toFloat() })
+                addState(intArrayOf(), GradientDrawable().apply { setColor(0x00000000) })
+            }
+        }
         position = label(13f, 0xFFA3A3A3.toInt())
         duration = label(13f, 0xFFA3A3A3.toInt())
         progress = ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal).apply {
@@ -131,7 +148,13 @@ class PlayerControls(private val context: Context, root: FrameLayout) {
         timeRow.addView(position)
         timeRow.addView(progress, LinearLayout.LayoutParams(0, dp(6), 1f).apply { setMargins(dp(14), 0, dp(14), 0) })
         timeRow.addView(duration)
-        bottom.addView(timeRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(16) })
+        // em foco: barra mais grossa e tempo em branco, para ver que dá para mexer
+        timeRow.setOnFocusChangeListener { _, has ->
+            progress.layoutParams = (progress.layoutParams as LinearLayout.LayoutParams).apply { height = if (has) dp(10) else dp(6) }
+            position.setTextColor(if (has) Color.WHITE else 0xFFA3A3A3.toInt())
+            duration.setTextColor(if (has) Color.WHITE else 0xFFA3A3A3.toInt())
+        }
+        bottom.addView(timeRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(8) })
 
         buttons = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         bottom.addView(buttons)
@@ -194,6 +217,20 @@ class PlayerControls(private val context: Context, root: FrameLayout) {
         left.forEach { buttons.addView(it, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(12) }) }
         buttons.addView(View(context), LinearLayout.LayoutParams(0, 1, 1f))
         right.forEach { buttons.addView(it, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(10) }) }
+    }
+
+    /** Mostra "Ir para ..." em cima do ponto [frac] (0..1) da barra. */
+    fun showSeekLabel(text: String, frac: Float) {
+        seekLabel.text = text
+        seekLabel.visibility = View.VISIBLE
+        seekLabel.post {
+            val x = progress.left + frac.coerceIn(0f, 1f) * progress.width - seekLabel.width / 2f
+            seekLabel.translationX = x.coerceIn(0f, (timeRow.width - seekLabel.width).toFloat().coerceAtLeast(0f))
+        }
+    }
+
+    fun hideSeekLabel() {
+        if (seekLabel.visibility == View.VISIBLE) seekLabel.visibility = View.INVISIBLE
     }
 
     fun show(focus: View?) {

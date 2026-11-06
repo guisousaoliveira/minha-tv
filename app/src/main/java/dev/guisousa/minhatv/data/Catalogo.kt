@@ -47,8 +47,15 @@ class CardSerie(
     val b: String? = null, val g: List<String>? = null,
 )
 
+/** Categoria. No ao vivo, uma com [ids] (ex.: "Principais") é uma lista pronta de canais, nessa ordem. */
 @Serializable
-class Cat(val id: String, val nome: String)
+class Cat(val id: String, val nome: String, val ids: List<Long>? = null)
+
+/** Ao vivo: as categorias com lista pronta de canais (Principais) vêm primeiro, as outras na ordem do servidor. */
+fun ordemAoVivo(cats: List<Cat>): List<Cat> = cats.filter { it.ids != null } + cats.filter { it.ids == null }
+
+/** Canais de uma lista pronta, na ordem dos ids, sem os que não existem e sem repetir. */
+fun <T> canaisPorIds(ids: List<Long>, porId: Map<Long, T>): List<T> = ids.distinct().mapNotNull { porId[it] }
 
 @Serializable
 class Categorias(val canais: List<Cat> = emptyList(), val filmes: List<Cat> = emptyList(), val series: List<Cat> = emptyList())

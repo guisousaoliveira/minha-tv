@@ -359,7 +359,7 @@ fun LiveScreen(lib: Library) {
         Box(Modifier.padding(top = 64.dp)) { Message("Nenhum canal ao vivo", "As listas adicionadas não têm canais ao vivo (ou ainda estão carregando).") }
         return
     }
-    var group by rememberSaveable(lib.version) { mutableStateOf(defaultGroup(lib.liveGroups, lib.liveTotal)) }
+    var group by rememberSaveable(lib.version) { mutableStateOf(startLiveGroup(lib)) }
     val channels = load(lib.version, group) { Repository.entries(ContentType.LIVE, group) }
     var focused by remember(group) { mutableStateOf<Entry?>(null) }
     // brilho de fundo na cor da categoria (Globo azul, Record vermelho...), sumindo no preto
@@ -373,13 +373,22 @@ fun LiveScreen(lib: Library) {
         ),
     ) {
         Row(Modifier.fillMaxSize().padding(top = 72.dp)) {
-            GroupColumn(lib.liveGroups, lib.liveTotal, group) { group = it }
+            GroupColumn(lib.liveGroups, lib.liveTotal, group) { group = it; Repository.lastLiveGroup = it ?: "" }
             Box(Modifier.weight(1f)) {
-                if (channels == null) Loading() else ChannelList(channels, onFocused = { focused = it })
+                if (channels == null) Loading() else ChannelList(channels, groupName = group ?: "Todos", onFocused = { focused = it })
             }
             ChannelPreview(focused)
         }
     }
+}
+
+/** Categoria em que o Ao vivo abre: a última usada; na primeira vez, "Principais" (se houver). */
+private fun startLiveGroup(lib: Library): String? {
+    val saved = Repository.lastLiveGroup
+    if (saved == "" && lib.liveTotal <= Library.ALL_LIMIT) return null
+    if (saved != null && lib.liveGroups.any { it.name == saved }) return saved
+    Repository.principaisGroup()?.let { p -> if (lib.liveGroups.any { it.name == p }) return p }
+    return defaultGroup(lib.liveGroups, lib.liveTotal)
 }
 
 /** Cor de fundo de cada categoria de canais (escura: só um brilho atrás da tela). */
@@ -466,7 +475,7 @@ private fun ChannelPreview(e: Entry?) {
 }
 
 @Composable
-fun ChannelList(channels: List<Entry>, modifier: Modifier = Modifier, onFocused: ((Entry) -> Unit)? = null) {
+fun ChannelList(channels: List<Entry>, modifier: Modifier = Modifier, groupName: String? = null, onFocused: ((Entry) -> Unit)? = null) {
     val context = LocalContext.current
     val epg by Repository.epg.collectAsState()
     val favorites by Repository.favorites.collectAsState()
@@ -479,7 +488,8 @@ fun ChannelList(channels: List<Entry>, modifier: Modifier = Modifier, onFocused:
     ) {
         itemsIndexed(channels) { i, e ->
             FocusBox(
-                onClick = { PlaybackQueue.start(context, channels, i) },
+                // a fila do player é esta lista: ▲▼ no player andam nela
+                onClick = { PlaybackQueue.start(context, channels, i, groupName) },
                 onLongClick = { toggleFav(context, e) },
                 onFocused = onFocused?.let { cb -> { cb(e) } },
                 modifier = Modifier.fillMaxWidth(),
@@ -704,6 +714,7 @@ fun SettingsScreen() {
     val status by Repository.status.collectAsState()
     val lib by Repository.library.collectAsState()
     var autoplay by remember { mutableStateOf(Repository.autoplayLast) }
+    var arrowsZap by remember { mutableStateOf(Repository.arrowsZap) }
     val prefsFocus = remember { FocusRequester() }
 
     LazyColumn(
@@ -746,6 +757,11 @@ fun SettingsScreen() {
         item {
             ToggleRow("Abrir no último canal", "Ao abrir o app, já começa a tocar o último canal assistido", autoplay) {
                 autoplay = !autoplay; Repository.autoplayLast = autoplay
+            }
+        }
+        item {
+            ToggleRow("Setas ▲▼ trocam de canal", "No canal ao vivo, ▲ volta um canal e ▼ passa para o próximo", arrowsZap) {
+                arrowsZap = !arrowsZap; Repository.arrowsZap = arrowsZap
             }
         }
 

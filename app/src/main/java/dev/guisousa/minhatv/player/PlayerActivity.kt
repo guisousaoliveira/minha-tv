@@ -41,6 +41,7 @@ import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.SubtitleView
 import androidx.media3.ui.TrackSelectionDialogBuilder
+import coil.load
 import dev.guisousa.minhatv.data.ContentType
 import dev.guisousa.minhatv.data.Entry
 import dev.guisousa.minhatv.data.Repository
@@ -59,13 +60,17 @@ object PlaybackQueue {
     /** Muda quando a lista é trocada por uma mais completa enquanto o player já está aberto. */
     var version: Int = 0
         private set
+    /** Nome da lista de onde o canal foi aberto (ex.: "Principais"); null = a categoria do próprio canal. */
+    var groupName: String? = null
+        private set
 
-    fun start(context: Context, items: List<Entry>, index: Int) {
+    fun start(context: Context, items: List<Entry>, index: Int, groupName: String? = null) {
         if (items.isEmpty()) return
         // fecha a prévia do ao vivo antes (o servidor conta cada conexão como uma tela)
         LivePreview.stop()
         this.items = items
         this.index = index.coerceIn(0, items.size - 1)
+        this.groupName = groupName
         version++
         context.startActivity(Intent(context, PlayerActivity::class.java))
     }
@@ -93,6 +98,7 @@ class PlayerActivity : ComponentActivity() {
     private var player: ExoPlayer? = null
     private lateinit var playerView: PlayerView
     private lateinit var infoPanel: LinearLayout
+    private lateinit var infoLogo: android.widget.ImageView
     private lateinit var infoNumber: TextView
     private lateinit var infoTitle: TextView
     private lateinit var infoNow: TextView
@@ -110,7 +116,7 @@ class PlayerActivity : ComponentActivity() {
     private var firstButton: View? = null
 
     private val handler = Handler(Looper.getMainLooper())
-    private val hideInfo = Runnable { infoPanel.visibility = View.GONE }
+    private val hideInfo = Runnable { if (zapIndex < 0) infoPanel.visibility = View.GONE }
     private val hideToast = Runnable { toast.visibility = View.GONE }
     // com um painel aberto (ex.: "Continuar de..."), o aviso de carregando não aparece por cima do título dele
     private val showLoading = Runnable { if (!controls.panelVisible) loadingBox.visibility = View.VISIBLE }
@@ -219,17 +225,17 @@ class PlayerActivity : ComponentActivity() {
 
     /** Filme/série: acabaram as fontes sem erro claro. Tenta todas mais uma vez, com mais paciência, antes de desistir. */
     private fun vodRetryOrGiveUp(message: String) {
-        if (vodRounds >= 1 || sources.isEmpty()) { hideLoading(); notice(message, 8000); return }
+        if (vodRounds >= 1 || sources.isEmpty()) { android.util.Log.w("MinhaTV", "player: $message"); showErrorCard(); return }
         vodRounds++
         android.util.Log.w("MinhaTV", "player: nenhuma fonte abriu, tentando todas de novo com mais tempo")
-        loadingText.text = "Nenhuma fonte respondeu a tempo. Tentando de novo com mais calma…"
+        loadingText.text = "O servidor está lento. Tentando de novo…"
         loadingBox.visibility = View.VISIBLE
         val mine = index
         handler.postDelayed({
             if (index != mine || isFinishing) return@postDelayed
             sourceIndex = -1
             retries = 0
-            if (!nextSource()) { hideLoading(); notice(message, 8000) }
+            if (!nextSource()) showErrorCard()
         }, 2_000L)
     }
     /** Filme/série: quantas vezes já reabriu na mesma posição depois de ter tocado (máx. 3). */
@@ -271,9 +277,8 @@ class PlayerActivity : ComponentActivity() {
         sameReopens = 0
         if (nextSource(frozen)) return
         if (rounds >= 6) {
-            hideLoading()
-            player?.stop()
-            notice("Este canal não abriu em nenhuma fonte. Aperte OK e escolha outro em Canais.", 15_000)
+            android.util.Log.w("MinhaTV", "player: canal não abriu em nenhuma fonte")
+            showErrorCard()
             return
         }
         rounds++
@@ -313,6 +318,8 @@ class PlayerActivity : ComponentActivity() {
     private var items: List<Entry> = emptyList()
     private var index = 0
     private var queueVersion = 0
+    /** Nome da lista que ▲▼ percorrem (ver PlaybackQueue.groupName). */
+    private var groupName: String? = null
 
     /** Fonte tocando agora: o próprio item ou uma alternativa (mesmo nome em outra lista). */
     private var playing: Entry? = null
@@ -332,6 +339,7 @@ class PlayerActivity : ComponentActivity() {
         items = PlaybackQueue.items
         index = PlaybackQueue.index
         queueVersion = PlaybackQueue.version
+        groupName = PlaybackQueue.groupName
         if (items.isEmpty()) { finish(); return }
         buildViews()
 
@@ -431,6 +439,7 @@ class PlayerActivity : ComponentActivity() {
                         rounds = 0
                         lastPlayingAt = System.currentTimeMillis()
                         hideLoading()
+                        hideErrorCard()
                     }
                     Player.STATE_ENDED -> {
                         if (exo.mediaItemCount == 0) return
@@ -477,16 +486,26 @@ class PlayerActivity : ComponentActivity() {
             setPadding(dp(56), dp(80), dp(56), dp(40))
             visibility = View.GONE
         }
+        // faixa do canal: logo à esquerda, número, nome, "Agora" e "A seguir" (também usada ao trocar com ▲▼)
+        val infoRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        infoLogo = android.widget.ImageView(this).apply {
+            scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+            visibility = View.GONE
+        }
+        infoRow.addView(infoLogo, LinearLayout.LayoutParams(dp(150), dp(84)).apply { marginEnd = dp(24) })
+        val infoTexts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         infoNumber = text(14f, 0xFFA3A3A3.toInt())
         infoTitle = text(30f, Color.WHITE, bold = true)
         infoNow = text(17f, Color.WHITE)
         infoNext = text(15f, 0xFFA3A3A3.toInt())
-        listOf(infoNumber, infoTitle, infoNow, infoNext).forEach { infoPanel.addView(it) }
+        listOf(infoNumber, infoTitle, infoNow, infoNext).forEach { infoTexts.addView(it) }
+        infoRow.addView(infoTexts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        infoPanel.addView(infoRow)
         root.addView(infoPanel, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
 
         controls = PlayerControls(this, root)
 
-        // "Carregando…" no meio da tela, com a fonte que está sendo aberta embaixo
+        // "Abrindo <título>…" no meio da tela (domínio e formato só no painel da Fonte)
         loadingBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -507,6 +526,7 @@ class PlayerActivity : ComponentActivity() {
             setSingleLine(true)
             gravity = Gravity.CENTER
             setPadding(0, dp(6), 0, 0)
+            visibility = View.GONE
         }
         loadingBox.addView(loadingText, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         loadingBox.addView(loadingSource, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -523,6 +543,7 @@ class PlayerActivity : ComponentActivity() {
             setMargins(dp(320), dp(88), dp(40), 0)
         })
         buildNextCard(root)
+        buildErrorCard(root)
         setContentView(root)
     }
 
@@ -535,22 +556,31 @@ class PlayerActivity : ComponentActivity() {
 
     private fun match() = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
 
-    private fun showInfo(ms: Long = 5000) {
-        val e = current
+    /** A faixa do canal foi aberta por uma tecla (VOLTAR só esconde ela); false = a que aparece sozinha ao abrir o canal. */
+    private var infoManual = false
+
+    /** Nome da lista do canal: a de onde foi aberto (ex.: "Principais") ou a categoria dele. */
+    private fun listName(e: Entry) = groupName ?: e.group
+
+    /** Faixa do canal [e] (posição [pos] na lista): logo, número, nome, "Agora" e "A seguir". */
+    private fun showInfo(ms: Long = 5000, e: Entry = current, pos: Int = index, manual: Boolean = true) {
+        infoManual = manual
         val now = System.currentTimeMillis()
         val epg = Repository.epg.value
-        infoNumber.text = if (isLive) "${index + 1}  ·  ${e.group}" else e.group
+        val live = e.type == ContentType.LIVE
+        infoNumber.text = if (live) "${pos + 1}  ·  ${listName(e)}" else e.group
         infoTitle.text = e.name
-        val cur = if (isLive) epg.current(e, now) else null
-        val next = if (isLive) epg.next(e, now) else null
-        infoNow.text = cur?.let { "Agora   ${timeFmt.format(Date(it.start))} – ${timeFmt.format(Date(it.stop))}   ${it.title}" } ?: ""
+        val cur = if (live) epg.current(e, now) else null
+        val next = if (live) epg.next(e, now) else null
+        infoNow.text = cur?.let { "Agora:  ${it.title}   (${timeFmt.format(Date(it.start))} – ${timeFmt.format(Date(it.stop))})" } ?: ""
         infoNow.visibility = if (cur != null) View.VISIBLE else View.GONE
         val extra = mutableListOf<String>()
-        next?.let { extra += "Depois   ${timeFmt.format(Date(it.start))}   ${it.title}" }
-        extra += (if (sources.size > 1) "Fonte ${sourceIndex + 1} de ${sources.size}" else "Fonte única") + " · " + formatName()
+        next?.let { extra += "A seguir:  ${timeFmt.format(Date(it.start))}  ${it.title}" }
         if (e.url in Repository.favorites.value) extra += "Na Minha lista"
         infoNext.text = extra.joinToString("\n")
         infoNext.visibility = if (extra.isEmpty()) View.GONE else View.VISIBLE
+        val logo = e.logo?.takeIf { it.isNotBlank() && live }
+        if (logo != null) { infoLogo.load(logo); infoLogo.visibility = View.VISIBLE } else { infoLogo.setImageDrawable(null); infoLogo.visibility = View.GONE }
         infoPanel.visibility = View.VISIBLE
         handler.removeCallbacks(hideInfo)
         handler.postDelayed(hideInfo, ms)
@@ -567,7 +597,8 @@ class PlayerActivity : ComponentActivity() {
         handler.removeCallbacks(showLoading)
         handler.removeCallbacks(stallCheck)
         loadingBox.visibility = View.GONE
-        loadingText.text = "Carregando…"
+        // antes de tocar: "Abrindo <título>…"; depois, um carregando no meio do vídeo
+        loadingText.text = if (readyOnce) "Carregando…" else "Abrindo ${items.getOrNull(index)?.name ?: ""}…"
     }
 
     // ---------------- Reprodução ----------------
@@ -578,12 +609,17 @@ class PlayerActivity : ComponentActivity() {
         index = ((i % items.size) + items.size) % items.size
         retries = 0
         sourcePlayed = false; reopenFails = 0; wraps = 0; sameReopens = 0; rounds = 0; lastPlayingAt = 0L; vodReprepares = 0; vodRounds = 0
+        readyOnce = false
+        handler.removeCallbacks(zapTune); zapIndex = -1
+        cancelSeekTarget()
         hideNextCard()
+        hideErrorCard()
         val e = current
         Repository.addRecent(e)
         if (isLive) Repository.lastChannelUrl = e.url
         sourcesJob?.cancel()
         player?.stop()
+        loadingText.text = "Abrindo ${e.name}…"
         if (!e.url.startsWith("v2:")) {
             sources = listOf(e)
             sourceIndex = 0
@@ -593,26 +629,24 @@ class PlayerActivity : ComponentActivity() {
             sources = emptyList()
             sourceIndex = 0
             playing = null
-            loadingText.text = "Carregando…"
             loadingBox.visibility = View.VISIBLE
         }
         setupControls()
-        if (isLive) showInfo() else { infoPanel.visibility = View.GONE; showControls() }
+        if (isLive) showInfo(manual = false) else { infoPanel.visibility = View.GONE; showControls() }
         if (!e.url.startsWith("v2:")) return
         val wanted = index
         sourcesJob = lifecycleScope.launch {
             val list = runCatching { Repository.sources(e) }.getOrDefault(emptyList())
             if (index != wanted) return@launch
             if (list.isEmpty()) {
-                hideLoading()
-                notice("Não achei fonte para este item (sem internet ou saiu do catálogo).", 8000)
+                android.util.Log.w("MinhaTV", "player: sem fonte para ${e.url} (sem internet ou saiu do catálogo)")
+                showErrorCard()
                 return@launch
             }
             sources = list
             sourceIndex = 0
             playSource(list[0], resume = true)
             updateButtons()
-            loadingSource.text = sourceLine()
             // filme/série: a versão escolhida (Dublado/Legendado) não existe: avisa em vez de trocar calado
             if (!isLive) {
                 val want = Repository.versionFor(e)
@@ -624,17 +658,7 @@ class PlayerActivity : ComponentActivity() {
         }
     }
 
-    /** "Fonte 2 de 5 · FHD · HLS · servidor.com" (embaixo do Carregando). */
-    private fun sourceLine(): String {
-        val src = playing ?: return ""
-        val parts = mutableListOf(if (sources.size > 1) "Fonte ${sourceIndex + 1} de ${sources.size}" else "Fonte única")
-        src.quality?.takeIf { it.isNotBlank() }?.let { parts += it }
-        parts += formatName()
-        runCatching { android.net.Uri.parse(src.url).host }.getOrNull()?.removePrefix("www.")?.let { parts += it }
-        return parts.joinToString(" · ")
-    }
-
-    /** Formato que está tocando agora, para mostrar no botão da fonte. */
+    /** Formato que está tocando agora (só no painel da Fonte, nunca na mensagem principal). */
     private fun formatName(): String {
         if (usingHlsVariant) return "HLS"
         val p = (playing?.url ?: "").lowercase().substringBefore('?')
@@ -738,7 +762,6 @@ class PlayerActivity : ComponentActivity() {
         }
         exo.playWhenReady = !ask
         if (ask) askResume(Repository.getResume(current.url))
-        loadingSource.text = sourceLine()
         handler.postDelayed(showLoading, 400)
         updateButtons()
     }
@@ -768,8 +791,7 @@ class PlayerActivity : ComponentActivity() {
                 return
             }
             if (nextSource()) return
-            hideLoading()
-            notice("Não foi possível continuar este conteúdo.", 8000)
+            showErrorCard()
             return
         }
         // ao vivo que já estava tocando e dá qualquer erro (404, playlist estranha, rede): é sessão vencida
@@ -802,8 +824,8 @@ class PlayerActivity : ComponentActivity() {
         if (dead) {
             if (nextSource()) return
             if (isLive) { retryFromStart(); return }
-            hideLoading()
-            notice("Este conteúdo está fora do ar em todas as fontes.", 8000)
+            android.util.Log.w("MinhaTV", "player: fora do ar em todas as fontes")
+            showErrorCard()
             return
         }
         if (retries < 2) {
@@ -901,7 +923,8 @@ class PlayerActivity : ComponentActivity() {
         sourceIndex++
         retries = 0
         val pos = player?.currentPosition ?: 0
-        loadingText.text = (if (frozen) "O vídeo travou, indo para outra fonte" else "Fonte fora do ar, tentando outra") + " · ${sourceIndex + 1} de ${sources.size}"
+        android.util.Log.w("MinhaTV", "player: " + (if (frozen) "vídeo travou" else "fonte fora do ar") + ", indo para a fonte ${sourceIndex + 1} de ${sources.size}")
+        loadingText.text = "Tentando outro servidor (${sourceIndex + 1} de ${sources.size})…"
         loadingBox.visibility = View.VISIBLE
         playSource(sources[sourceIndex], resume = false)
         if (!isLive && pos > 0) player?.seekTo(pos)
@@ -989,13 +1012,13 @@ class PlayerActivity : ComponentActivity() {
     }
 
     /** Canais da mesma categoria, com o que está passando agora. */
-    private fun channelsPanel() {
+    private fun channelsPanel(onClosed: (() -> Unit)? = null) {
         val epg = Repository.epg.value
         val now = System.currentTimeMillis()
         val choices = items.mapIndexed { i, e ->
             PlayerControls.Choice("${i + 1}   ${e.name}", epg.current(e, now)?.title, selected = i == index)
         }
-        controls.showPanel(current.group, choices) { i -> if (i != index) play(i) }
+        controls.showPanel(listName(current), choices, onClosed) { i -> if (i != index) play(i) }
     }
 
     private val resizeModes = listOf(
@@ -1026,12 +1049,18 @@ class PlayerActivity : ComponentActivity() {
         }
     }
 
+    /** Painel da Fonte: o único lugar com os detalhes técnicos (qualidade, formato e servidor). */
     private fun sourceDialog() {
-        if (sources.size <= 1) { notice("Não achei outra fonte para este item."); return }
-        val labels = sources.mapIndexed { i, s -> PlayerControls.Choice("Fonte ${i + 1}", s.quality ?: s.name, selected = i == sourceIndex) }
-        controls.showPanel("Trocar fonte", labels) { i ->
-            switchSource(i)
-            updateButtons()
+        if (sources.isEmpty()) { notice("Ainda procurando onde tocar este item."); return }
+        val labels = sources.mapIndexed { i, s ->
+            val host = runCatching { android.net.Uri.parse(s.url).host }.getOrNull()?.removePrefix("www.")
+            val detail = listOfNotNull(s.quality, if (i == sourceIndex) formatName() else null, host)
+                .filter { it.isNotBlank() }.joinToString(" · ").ifBlank { null }
+            val label = "Fonte ${i + 1} de ${sources.size}" + (if (i == sourceIndex) "  (tocando)" else "")
+            PlayerControls.Choice(label, detail, selected = i == sourceIndex)
+        }
+        controls.showPanel(if (sources.size > 1) "Trocar fonte" else "Fonte", labels) { i ->
+            if (i != sourceIndex) { switchSource(i); updateButtons() }
         }
     }
 
@@ -1080,6 +1109,9 @@ class PlayerActivity : ComponentActivity() {
         c.setButtons(left, right)
         firstButton = btnPlay ?: left.firstOrNull()
         c.timeRow.visibility = if (isLive) View.GONE else View.VISIBLE
+        // filme/episódio: a barra de tempo recebe foco (▲ a partir dos botões)
+        c.timeRow.isFocusable = !isLive
+        c.seekLabel.visibility = if (isLive) View.GONE else View.INVISIBLE
         updateButtons()
     }
 
@@ -1091,7 +1123,6 @@ class PlayerActivity : ComponentActivity() {
             b.setCompoundDrawables(icon, null, null, null)
             b.contentDescription = if (playing) "Pausar" else "Continuar"
         }
-        btnSource?.text = (if (sources.size > 1) "Fonte ${sourceIndex + 1}/${sources.size}" else "Fonte") + " · " + formatName()
         btnVersion?.let { b ->
             val both = sources.map { Repository.versionOrDub(it) }.toSet().size > 1
             b.visibility = if (both) View.VISIBLE else View.GONE
@@ -1099,7 +1130,7 @@ class PlayerActivity : ComponentActivity() {
         }
         btnFav?.text = if (items.isNotEmpty() && current.url in Repository.favorites.value) "Na Minha lista" else "+ Minha lista"
         val e = items.getOrNull(index) ?: return
-        controls.kicker.text = if (isLive) "${index + 1}  ·  ${e.group}" else e.group
+        controls.kicker.text = if (isLive) "${index + 1}  ·  ${listName(e)}" else e.group
         controls.title.text = e.name
         val cur = if (isLive) Repository.epg.value.current(e, System.currentTimeMillis()) else null
         controls.epgLine.text = cur?.let { "Agora · ${it.title}  (${timeFmt.format(Date(it.start))} – ${timeFmt.format(Date(it.stop))})" } ?: ""
@@ -1109,7 +1140,8 @@ class PlayerActivity : ComponentActivity() {
     private fun updateTime() {
         val exo = player ?: return
         val dur = exo.duration
-        val pos = exo.currentPosition
+        // com um ponto escolhido na barra (◀▶), mostra o ponto, não onde o vídeo está
+        val pos = if (seekTarget >= 0) seekTarget else exo.currentPosition
         controls.position.text = fmtTime(pos)
         controls.duration.text = if (dur > 0) fmtTime(dur) else "--:--"
         controls.progress.progress = if (dur > 0) (pos * 1000 / dur).toInt() else 0
@@ -1123,16 +1155,95 @@ class PlayerActivity : ComponentActivity() {
         return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%02d:%02d".format(m, sec)
     }
 
-    private fun showControls(ms: Long = 5000) {
-        // com um painel aberto (ex.: "Continuar de..."), a barra não pode roubar o foco dele
-        if (controls.panelVisible) return
+    private fun showControls(ms: Long = 5000, focus: View? = firstButton) {
+        // com um painel aberto (ex.: "Continuar de...") ou o cartão de erro, a barra não pode roubar o foco
+        if (controls.panelVisible || errorVisible) return
         infoPanel.visibility = View.GONE
         updateButtons()
         val wasVisible = controls.visible
-        controls.show(firstButton)
+        controls.show(focus)
         if (!wasVisible) { handler.removeCallbacks(tick); handler.post(tick) }
         handler.removeCallbacks(hideControlsTask)
         handler.postDelayed(hideControlsTask, ms)
+    }
+
+    /** Esconde a barra na hora (VOLTAR com a barra aberta). */
+    private fun hideControlsNow() {
+        cancelSeekTarget()
+        handler.removeCallbacks(hideControlsTask)
+        controls.hide()
+        playerView.requestFocus()
+    }
+
+    // ---------------- Barra de tempo navegável (filme/episódio) ----------------
+
+    /** Ponto escolhido com ◀▶ na barra de tempo, ainda sem pular (-1 = nenhum). */
+    private var seekTarget = -1L
+    private val commitSeek = Runnable { commitSeekTarget() }
+
+    /** ◀▶ com a barra de tempo em foco: anda o ponto (10 s; segurando, 30 s, 1 min, 5 min) sem pular ainda. */
+    private fun moveSeekTarget(dir: Int, repeat: Int) {
+        val exo = player ?: return
+        val dur = exo.duration
+        if (dur <= 0) { seekBy(dir * 10_000L); return } // sem duração conhecida: pula 10 s direto
+        val base = if (seekTarget >= 0) seekTarget else exo.currentPosition
+        seekTarget = SeekStep.target(base, dir * SeekStep.stepFor(repeat), dur)
+        controls.showSeekLabel("Ir para ${fmtTime(seekTarget)}", seekTarget.toFloat() / dur)
+        updateTime()
+        // parou de apertar por 1,2 s: pula
+        handler.removeCallbacks(commitSeek)
+        handler.postDelayed(commitSeek, 1200)
+    }
+
+    private fun commitSeekTarget() {
+        handler.removeCallbacks(commitSeek)
+        val t = seekTarget
+        seekTarget = -1L
+        controls.hideSeekLabel()
+        if (t >= 0) player?.seekTo(t)
+        updateTime()
+    }
+
+    private fun cancelSeekTarget() {
+        handler.removeCallbacks(commitSeek)
+        seekTarget = -1L
+        controls.hideSeekLabel()
+        updateTime()
+    }
+
+    // ---------------- Troca de canal com ▲▼ (ao vivo) ----------------
+
+    /** Canal escolhido com ▲▼ que ainda não foi sintonizado (-1 = nenhum). */
+    private var zapIndex = -1
+    private val zapTune = Runnable { tuneZapNow() }
+
+    /** Anda [delta] canais na lista e mostra a faixa do canal; só sintoniza depois de 700 ms sem tecla. */
+    private fun zap(delta: Int) {
+        if (controls.panelVisible || errorVisible) { play(index + delta); return }
+        if (zapIndex < 0) syncQueue()
+        if (items.size < 2) { showInfo(8000); return }
+        val base = if (zapIndex >= 0) zapIndex else index
+        zapIndex = Zap.wrap(base + delta, items.size)
+        if (controls.visible) hideControlsNow()
+        showInfo(8000, items[zapIndex], zapIndex)
+        handler.removeCallbacks(zapTune)
+        handler.postDelayed(zapTune, 700)
+    }
+
+    private fun tuneZapNow() {
+        handler.removeCallbacks(zapTune)
+        val i = zapIndex
+        zapIndex = -1
+        if (i < 0) return
+        if (i != index) play(i) else showInfo(manual = false)
+    }
+
+    /** VOLTAR durante a troca: fica no canal de agora. */
+    private fun cancelZap() {
+        handler.removeCallbacks(zapTune)
+        if (zapIndex < 0) return
+        zapIndex = -1
+        infoPanel.visibility = View.GONE
     }
 
     private fun togglePlay() {
@@ -1175,8 +1286,12 @@ class PlayerActivity : ComponentActivity() {
             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_MEDIA_PLAY, KeyEvent.KEYCODE_MEDIA_PAUSE -> { togglePlay(); showControls(); return true }
             KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> { seekBy(30_000); showControls(); return true }
             KeyEvent.KEYCODE_MEDIA_REWIND -> { seekBy(-30_000); showControls(); return true }
-            KeyEvent.KEYCODE_CHANNEL_UP -> { play(index + 1); return true }
-            KeyEvent.KEYCODE_CHANNEL_DOWN -> { play(index - 1); return true }
+            // CH±: no ao vivo, igual a ▼▲ (faixa do canal e sintoniza depois de 700 ms); no filme/série, o próximo/anterior
+            KeyEvent.KEYCODE_CHANNEL_UP -> { if (isLive) zap(1) else play(index + 1); return true }
+            KeyEvent.KEYCODE_CHANNEL_DOWN -> { if (isLive) zap(-1) else play(index - 1); return true }
+            // PAGE±: alguns controles mandam isso no lugar de CH± (só no ao vivo; nos painéis rola a lista)
+            KeyEvent.KEYCODE_PAGE_UP -> if (isLive && !controls.panelVisible) { zap(1); return true }
+            KeyEvent.KEYCODE_PAGE_DOWN -> if (isLive && !controls.panelVisible) { zap(-1); return true }
             KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_SETTINGS -> { showOptions(); return true }
             KeyEvent.KEYCODE_CAPTIONS -> { pickTrack(C.TRACK_TYPE_TEXT); return true }
             KeyEvent.KEYCODE_INFO, KeyEvent.KEYCODE_GUIDE -> { showControls(8000); return true }
@@ -1201,15 +1316,63 @@ class PlayerActivity : ComponentActivity() {
             return super.dispatchKeyEvent(event)
         }
 
-        if (controls.visible) {
-            // com a barra aberta, as setas andam entre os botões e o OK aperta
+        // nada abriu: o cartão de erro fica com o foco (setas andam entre os botões); VOLTAR fecha o player
+        if (errorVisible) {
             if (code == KeyEvent.KEYCODE_BACK) {
-                // um VOLTAR só sai do vídeo (ao soltar a tecla, para não fechar a tela de trás também)
-                if (!down) { controls.hide(); saveResume(); finish() }
+                if (!down) { saveResume(); finish() }
+                return true
+            }
+            // os botões ficam numa linha: ▲▼ não tiram o foco do cartão
+            if (code == KeyEvent.KEYCODE_DPAD_UP || code == KeyEvent.KEYCODE_DPAD_DOWN) return true
+            return super.dispatchKeyEvent(event)
+        }
+
+        // trocando de canal com ▲▼: OK sintoniza já, VOLTAR desiste e fica no canal de agora
+        if (zapIndex >= 0) {
+            if (code == KeyEvent.KEYCODE_BACK) {
+                // o soltar da tecla é engolido (backConsumed), para não fechar o player
+                if (down) { cancelZap(); backConsumed = true }
+                return true
+            }
+            if (center) {
+                if (down) tuneZapNow()
+                return true
+            }
+            if (code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT) return true
+        }
+
+        if (controls.visible) {
+            // VOLTAR com a barra aberta só esconde a barra (e desiste do ponto escolhido na barra de tempo)
+            if (code == KeyEvent.KEYCODE_BACK) {
+                if (!down) { if (seekTarget >= 0) cancelSeekTarget() else hideControlsNow() }
                 return true
             }
             if (down) { handler.removeCallbacks(hideControlsTask); handler.postDelayed(hideControlsTask, 5000) }
-            if (code == KeyEvent.KEYCODE_DPAD_UP || code == KeyEvent.KEYCODE_DPAD_DOWN) return true
+            // barra de tempo em foco: ◀▶ escolhem o ponto, OK pula (sem ponto escolhido, pausa/continua)
+            if (controls.timeRow.isFocused) {
+                when (code) {
+                    KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                        if (down) moveSeekTarget(if (code == KeyEvent.KEYCODE_DPAD_RIGHT) 1 else -1, event.repeatCount)
+                        return true
+                    }
+                    KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
+                        if (down && event.repeatCount == 0) { if (seekTarget >= 0) commitSeekTarget() else togglePlay() }
+                        return true
+                    }
+                    KeyEvent.KEYCODE_DPAD_DOWN -> {
+                        if (down) { commitSeekTarget(); firstButton?.requestFocus() }
+                        return true
+                    }
+                    KeyEvent.KEYCODE_DPAD_UP -> return true
+                }
+                return super.dispatchKeyEvent(event)
+            }
+            // nos botões: ▲ sobe para a barra de tempo (filme/episódio); ▼ não faz nada
+            if (code == KeyEvent.KEYCODE_DPAD_UP) {
+                if (down && !isLive && controls.timeRow.visibility == View.VISIBLE) controls.timeRow.requestFocus()
+                return true
+            }
+            if (code == KeyEvent.KEYCODE_DPAD_DOWN) return true
             return super.dispatchKeyEvent(event)
         }
 
@@ -1221,20 +1384,35 @@ class PlayerActivity : ComponentActivity() {
         }
         when (code) {
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> { showControls(); return true }
-            // ▲ ▼ nunca trocam de canal: só mostram o que está passando (ou a barra, no filme)
-            KeyEvent.KEYCODE_DPAD_UP -> { if (isLive) showInfo(8000) else showControls(); return true }
-            // ▼ na série abre a lista de episódios (como no Saimo); nunca troca de canal
-            KeyEvent.KEYCODE_DPAD_DOWN -> {
+            KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> {
+                val up = code == KeyEvent.KEYCODE_DPAD_UP
                 when {
+                    // ao vivo: ▲ canal anterior, ▼ próximo (desligável em Ajustes: aí só mostram o que está passando)
+                    isLive && Repository.arrowsZap -> zap(if (up) -1 else 1)
                     isLive -> showInfo(8000)
-                    current.type == ContentType.SERIES && items.size > 1 -> episodesPanel()
+                    // ▼ na série abre a lista de episódios (como no Saimo)
+                    !up && current.type == ContentType.SERIES && items.size > 1 -> episodesPanel()
                     else -> showControls()
                 }
                 return true
             }
-            // setas nunca avançam nem voltam sozinhas: só abrem a barra (no filme) ou o "agora passando" (ao vivo)
-            KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> { if (isLive) showInfo() else showControls(); return true }
+            KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                // filme: ◀▶ voltam/avançam 10 s direto e mostram a barra com o foco no tempo; ao vivo: o que está passando
+                if (isLive) showInfo()
+                else {
+                    seekBy(if (code == KeyEvent.KEYCODE_DPAD_RIGHT) 10_000L else -10_000L)
+                    showControls(3000, focus = controls.timeRow)
+                }
+                return true
+            }
             KeyEvent.KEYCODE_BACK -> {
+                // faixa do canal aberta por uma tecla: VOLTAR só esconde ela
+                if (infoPanel.visibility == View.VISIBLE && infoManual) {
+                    handler.removeCallbacks(hideInfo)
+                    infoPanel.visibility = View.GONE
+                    backConsumed = true
+                    return true
+                }
                 infoPanel.visibility = View.GONE
                 // um VOLTAR só sai do vídeo; sai ao SOLTAR a tecla (se saísse ao apertar, o soltar
                 // chegava na tela de trás e fechava ela também)
@@ -1373,6 +1551,61 @@ class PlayerActivity : ComponentActivity() {
         })
     }
 
+    // ---------------- Cartão de erro (nada abriu) ----------------
+
+    private lateinit var errorCard: LinearLayout
+    private lateinit var errorButtons: LinearLayout
+    private val errorVisible get() = ::errorCard.isInitialized && errorCard.visibility == View.VISIBLE
+
+    private fun buildErrorCard(root: FrameLayout) {
+        errorCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            background = GradientDrawable().apply { setColor(0xF2141414.toInt()); setStroke(dp(1), 0x26FFFFFF); cornerRadius = dp(16).toFloat() }
+            setPadding(dp(44), dp(32), dp(44), dp(28))
+            visibility = View.GONE
+        }
+        errorCard.addView(text(24f, Color.WHITE, bold = true).apply { text = "Este conteúdo não está abrindo agora"; gravity = Gravity.CENTER })
+        errorCard.addView(text(17f, 0xFFD0D0D0.toInt()).apply { text = "Tente de novo ou escolha outro."; gravity = Gravity.CENTER; setPadding(0, dp(8), 0, 0) })
+        errorButtons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER; setPadding(0, dp(24), 0, 0) }
+        errorCard.addView(errorButtons)
+        root.addView(errorCard, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+    }
+
+    /** Nenhuma fonte abriu: para de tentar e mostra o cartão com saída. Foco em [Tentar de novo]. */
+    private fun showErrorCard() {
+        if (isFinishing) return
+        handler.removeCallbacks(firstFrameWatch)
+        handler.removeCallbacks(stallCheck)
+        handler.removeCallbacks(hideControlsTask)
+        hideLoading()
+        player?.stop()
+        cancelZap()
+        cancelSeekTarget()
+        controls.hide()
+        infoPanel.visibility = View.GONE
+        errorButtons.removeAllViews()
+        val buttons = mutableListOf<View>()
+        // recomeça da 1ª fonte
+        val retry = controls.textButton("Tentar de novo") { hideErrorCard(); play(index) }
+        buttons += retry
+        if (isLive && items.size > 1) {
+            // VOLTAR na lista de canais traz o cartão de volta
+            buttons += controls.textButton("Outro canal") { hideErrorCard(); channelsPanel(onClosed = { showErrorCard() }) }
+        }
+        if (nextEpisodeIndex() != null) buttons += controls.textButton("Próximo episódio") { hideErrorCard(); playNext(auto = false) }
+        buttons += controls.textButton("Voltar") { saveResume(); finish() }
+        buttons.forEachIndexed { i, b ->
+            errorButtons.addView(b, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { if (i > 0) marginStart = dp(12) })
+        }
+        errorCard.visibility = View.VISIBLE
+        retry.requestFocus()
+    }
+
+    private fun hideErrorCard() {
+        if (::errorCard.isInitialized) errorCard.visibility = View.GONE
+    }
+
     /** Episódios da série dentro do player. */
     private fun episodesPanel() {
         val choices = items.mapIndexed { i, e ->
@@ -1403,6 +1636,7 @@ class PlayerActivity : ComponentActivity() {
     override fun onStop() {
         super.onStop()
         Repository.playbackActive = false
+        cancelZap()
         saveResume()
         player?.pause()
     }

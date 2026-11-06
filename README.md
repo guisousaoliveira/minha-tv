@@ -12,7 +12,7 @@ Player de IPTV para **Android TV** (funciona também em TV Box e celular), feito
 - **Configuração pelo celular**: o app mostra um endereço tipo `http://192.168.0.10:8765`. Abra no navegador do celular (mesmo Wi-Fi), cole o link e pronto, sem digitar no controle remoto.
 - **Atualização sem intervalo**: ao abrir o app, ele pergunta se as listas mudaram e baixa só o que mudou (num servidor Xtream que informa a versão de cada categoria, como o badwolf, só as categorias que mudaram). Nada roda em segundo plano.
 - **Favoritos**: segure OK num canal/filme, ou aperte MENU durante o vídeo.
-- **Zapping**: durante um canal ao vivo, ▲/▼ (ou CH+/CH−) troca de canal. ◀/▶ mostra o que está passando.
+- **Zapping**: durante um canal ao vivo, ▲/▼ (ou CH+/CH−) troca de canal, mostrando a faixa do canal antes de sintonizar (dá para desligar as setas em Ajustes). ◀/▶ mostra o que está passando.
 - **Continuar de onde parou** em filmes/episódios e próximo episódio automático.
 - Opção para **abrir direto no último canal** (bom para quem só quer ligar e assistir).
 - Suporta HLS (`.m3u8`), MPEG-TS, MP4/MKV, DASH, `#EXTVLCOPT` e `url|User-Agent=...&Referer=...`.
