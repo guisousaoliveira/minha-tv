@@ -38,6 +38,8 @@ class Canal(val id: Long, val n: String, val c: String = "", val l: String? = nu
 class CardFilme(
     val id: Long, val t: String, val a: Int? = null, val p: String? = null, val v: String = "d", val ad: Long? = null,
     val b: String? = null, val g: List<String>? = null, val k: String? = null,
+    /** Id da categoria principal (serviço ou gênero), quando o servidor manda. */
+    val c: String? = null,
 )
 
 @Serializable
@@ -45,6 +47,8 @@ class CardSerie(
     val id: Long, val t: String, val a: Int? = null, val p: String? = null, val v: String = "d",
     val nt: Int = 0, val ne: Int = 0, val m: Long? = null,
     val b: String? = null, val g: List<String>? = null,
+    /** Id da categoria principal (serviço ou gênero), quando o servidor manda. */
+    val c: String? = null,
 )
 
 @Serializable

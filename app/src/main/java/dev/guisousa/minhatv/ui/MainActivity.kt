@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -34,6 +35,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -42,6 +44,13 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
@@ -131,7 +140,7 @@ private fun StatusText() {
         ) {
             Spinner(12.dp)
             Spacer(Modifier.width(8.dp))
-            Text(status.orEmpty(), fontSize = 12.sp, color = Palette.TextDim, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 280.dp))
+            Text(status.orEmpty(), fontSize = 14.sp, color = Palette.TextDim, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 280.dp))
         }
     }
 }
@@ -147,21 +156,62 @@ fun AppRoot(onLoaded: () -> Unit) {
     val stack = rememberSaveable(saver = detailSaver) { mutableStateListOf<Detail>() }
     val tabRequesters = remember { Tab.entries.map { FocusRequester() } }
     val firstTab = tabRequesters[0]
+    val scope = rememberCoroutineScope()
+    val focusManager = LocalFocusManager.current
+    // o foco está no menu do topo? (VOLTAR nas fileiras sobe para o menu; no menu, sai)
+    var topFocused by remember { mutableStateOf(false) }
+    // aba com o foco agora (trocar de tela depois de parar um pouco nela)
+    var focusedTab by remember { mutableStateOf<Int?>(null) }
+
+    /** Abre a aba [i] (OK, foco parado ou ▼): fecha as telas por cima e esquece o cartão de antes. */
+    fun openTab(i: Int) {
+        if (tab != i) FocusMemory.last = null
+        // já mexeu nas abas: o Início não puxa mais o foco para o primeiro cartão
+        HomeFocus.done = true
+        tab = i; stack.clear(); FocusMemory.clear()
+    }
+    /** Cada aba do menu: guarda quem está com o foco e trata o ▼. */
+    fun tabModifier(i: Int): Modifier = Modifier.focusRequester(tabRequesters[i])
+        .onFocusChanged { if (it.isFocused) focusedTab = i else if (focusedTab == i) focusedTab = null }
+        // ▼ numa aba que ainda não abriu: abre na hora e desce para o conteúdo DELA
+        // (sem isso o foco desceria para a tela antiga, que some em seguida)
+        .onPreviewKeyEvent { ev ->
+            if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionDown && tab != i) {
+                openTab(i)
+                scope.launch {
+                    delay(120) // espera a tela nova aparecer
+                    focusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Down)
+                }
+                true
+            } else false
+        }
+    // se o Início não tiver cartão para focar, o foco fica na aba
+    androidx.compose.runtime.SideEffect { HomeFocus.fallback = { runCatching { tabRequesters[Tab.HOME.ordinal].requestFocus() } } }
 
     LaunchedEffect(loading) {
         if (!loading) {
             onLoaded()
-            runCatching { firstTab.requestFocus() }
+            // o Início pega o foco no primeiro cartão (HomeScreen); nas outras abas, ou sem catálogo, fica na aba
+            if (Tab.entries[tab] != Tab.HOME || Repository.library.value.isEmpty || HomeFocus.done) runCatching { tabRequesters[tab].requestFocus() }
         }
     }
 
+    // focou uma aba e ficou ~300 ms parado nela: troca a tela (sem precisar de OK)
+    LaunchedEffect(focusedTab) {
+        val f = focusedTab ?: return@LaunchedEffect
+        if (f == tab) return@LaunchedEffect
+        delay(300)
+        if (focusedTab == f && f != tab) openTab(f)
+    }
+
     BackHandler(enabled = stack.isNotEmpty()) { stack.removeAt(stack.lastIndex); FocusMemory.pop() }
-    // nas abas: VOLTAR vai para o Início; no Início, precisa apertar de novo para sair do app
+    // dentro da tela: VOLTAR sobe para a aba aberta; no menu: vai para o Início e, no Início, precisa apertar de novo para sair
     var lastBack by remember { mutableStateOf(0L) }
     BackHandler(enabled = stack.isEmpty()) {
         val now = System.currentTimeMillis()
         when {
-            tab != Tab.HOME.ordinal -> { tab = Tab.HOME.ordinal; runCatching { firstTab.requestFocus() } }
+            !topFocused -> runCatching { tabRequesters[tab].requestFocus() }
+            tab != Tab.HOME.ordinal -> { openTab(Tab.HOME.ordinal); runCatching { firstTab.requestFocus() } }
             now - lastBack < 4000 -> (context as? android.app.Activity)?.finish()
             else -> {
                 lastBack = now
@@ -241,6 +291,7 @@ fun AppRoot(onLoaded: () -> Unit) {
                 .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(androidx.compose.ui.graphics.Color(0xE6000000), androidx.compose.ui.graphics.Color.Transparent)))
                 // subindo da tela para o menu, o foco cai na aba aberta (e não sempre no Início)
                 .focusProperties { enter = { tabRequesters[tab] } }
+                .onFocusChanged { topFocused = it.hasFocus }
                 .focusGroup()
                 .padding(start = 48.dp, end = 48.dp, top = 18.dp, bottom = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -253,16 +304,16 @@ fun AppRoot(onLoaded: () -> Unit) {
                 NavItem(
                     t.title,
                     selected = tab == i,
-                    onClick = { tab = i; stack.clear(); FocusMemory.clear() },
-                    modifier = Modifier.focusRequester(tabRequesters[i]),
+                    onClick = { openTab(i) },
+                    modifier = tabModifier(i),
                 )
             }
             Spacer(Modifier.weight(1f))
             StatusText()
             Spacer(Modifier.width(12.dp))
             // busca (lupa) e ajustes (engrenagem) como ícones, à direita
-            IconNav(androidx.compose.material.icons.Icons.Filled.Search, "Buscar", selected = Tab.entries[tab] == Tab.SEARCH, modifier = Modifier.focusRequester(tabRequesters[Tab.SEARCH.ordinal])) { tab = Tab.SEARCH.ordinal; stack.clear(); FocusMemory.clear() }
-            IconNav(androidx.compose.material.icons.Icons.Filled.Settings, "Ajustes", selected = Tab.entries[tab] == Tab.SETTINGS, modifier = Modifier.focusRequester(tabRequesters[Tab.SETTINGS.ordinal])) { tab = Tab.SETTINGS.ordinal; stack.clear(); FocusMemory.clear() }
+            IconNav(androidx.compose.material.icons.Icons.Filled.Search, "Buscar", selected = Tab.entries[tab] == Tab.SEARCH, modifier = tabModifier(Tab.SEARCH.ordinal)) { openTab(Tab.SEARCH.ordinal) }
+            IconNav(androidx.compose.material.icons.Icons.Filled.Settings, "Ajustes", selected = Tab.entries[tab] == Tab.SETTINGS, modifier = tabModifier(Tab.SETTINGS.ordinal)) { openTab(Tab.SETTINGS.ordinal) }
         }
 
     }
@@ -329,19 +380,24 @@ private fun IconNav(icon: androidx.compose.ui.graphics.vector.ImageVector, descr
     }
 }
 
+/**
+ * Aba do menu. Aberta: texto branco + traço ciano com a largura do texto. Com o foco: pílula branca, texto escuro.
+ * As outras: cinza claro.
+ */
 @Composable
 private fun NavItem(title: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    FocusBox(onClick = onClick, modifier = modifier, focusScale = 1f, background = androidx.compose.ui.graphics.Color.Transparent, shape = RoundedCornerShape(4.dp)) { focused ->
-        Column(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+    FocusBox(onClick = onClick, modifier = modifier, focusScale = 1f, background = androidx.compose.ui.graphics.Color.Transparent, shape = RoundedCornerShape(50)) { focused ->
+        Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 7.dp, bottom = 5.dp).width(IntrinsicSize.Max)) {
             Text(
                 title,
-                fontSize = 15.sp,
+                fontSize = 16.sp,
+                maxLines = 1,
                 fontWeight = if (selected || focused) FontWeight.SemiBold else FontWeight.Normal,
                 color = if (focused) Palette.OnFocus else if (selected) Palette.Text else Palette.TextDim,
             )
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(3.dp))
             Box(
-                Modifier.width(18.dp).height(2.dp).background(
+                Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)).background(
                     if (selected && !focused) Palette.Brand else androidx.compose.ui.graphics.Color.Transparent,
                 ),
             )

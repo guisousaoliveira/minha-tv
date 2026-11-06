@@ -81,10 +81,10 @@ internal fun ReleasesRow(lib: Library, type: ContentType, nav: Nav, header: Head
         // enquanto carrega, guarda o espaço da fileira: assim as de baixo não "pulam" quando ela aparece
         val items = load(lib.version, "rel-m") { Repository.recentMovies() } ?: run { Box(Modifier.height(290.dp)); return }
         if (items.isEmpty()) return
-        SectionTitle("Lançamentos", trailing = "${items.size}")
+        SectionTitle("Lançamentos")
         MediaRow(items, POSTER_SAIMO_W) { _, e ->
             PosterCard(
-                e.name, e.logo, key = "rel:${e.url}", progress = Repository.progress(e.url),
+                e.name, e.logo, key = "rel:${e.url}", progress = Repository.progress(e.url), year = e.year,
                 onFocused = { header.show(e, "Filme · ${e.group}") },
                 onClick = { nav.openMovie(e) }, onLongClick = { toggleFav(context, e) },
             )
@@ -92,9 +92,9 @@ internal fun ReleasesRow(lib: Library, type: ContentType, nav: Nav, header: Head
     } else {
         val shows = load(lib.version, "rel-s") { Repository.recentShows() } ?: run { Box(Modifier.height(290.dp)); return }
         if (shows.isEmpty()) return
-        SectionTitle("Lançamentos", trailing = "${shows.size}")
+        SectionTitle("Lançamentos")
         MediaRow(shows, POSTER_SAIMO_W) { _, s ->
-            PosterCard(s.name, s.logo, key = "rel:${s.key}", tmdbTitle = s.name, tv = true, onFocused = { header.show(s, "Série · ${s.group}") }, onClick = { nav.openShow(s) })
+            PosterCard(s.name, s.logo, key = "rel:${s.key}", tmdbTitle = s.name, tv = true, year = s.year, onFocused = { header.show(s, "Série · ${s.group}") }, onClick = { nav.openShow(s) }, onLongClick = { toggleFavRef(context, Repository.showRef(s)) })
         }
     }
 }
@@ -105,10 +105,10 @@ internal fun PopularRow(lib: Library, nav: Nav, header: HeaderState) {
     val context = LocalContext.current
     val items = load(lib.version, "pop-m") { Repository.popularMovies() } ?: run { Box(Modifier.height(290.dp)); return }
     if (items.isEmpty()) return
-    SectionTitle("Em alta no Brasil", trailing = "${items.size}")
+    SectionTitle("Em alta no Brasil")
     MediaRow(items, POSTER_SAIMO_W) { _, e ->
         PosterCard(
-            e.name, e.logo, key = "pop:${e.url}", progress = Repository.progress(e.url),
+            e.name, e.logo, key = "pop:${e.url}", progress = Repository.progress(e.url), year = e.year,
             onFocused = { header.show(e, "Filme · ${e.group}") },
             onClick = { nav.openMovie(e) }, onLongClick = { toggleFav(context, e) },
         )
@@ -123,7 +123,7 @@ fun AllAzRow(type: ContentType, total: Int, nav: Nav) {
         FocusBox(onClick = { nav.openCategory(type, ALL_GROUP) }, frame = true, focusScale = 1.04f, modifier = Modifier.width(264.dp).height(140.dp)) {
             Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("Todos de A a Z", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Palette.Text)
-                Text("$total ${if (type == ContentType.SERIES) "séries" else "filmes"}", fontSize = 13.sp, color = Palette.TextDim)
+                Text("$total ${if (type == ContentType.SERIES) "séries" else "filmes"}", fontSize = 15.sp, color = Palette.TextDim)
             }
         }
     }
@@ -151,7 +151,7 @@ fun VodGridScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
             val list = if (type == ContentType.SERIES) {
                 val shows = if (paged) Repository.showsPage(genre, if (newest) null else letter) else Repository.shows(genre)
-                shows.mapIndexed { i, s -> GridItem(s.key, s.name, s.logo?.ifBlank { null }, "Série · ${s.group}", yearRe.find(s.name)?.value?.toInt() ?: 0, i, { nav.openShow(s) }, null, Repository.showRef(s)) }
+                shows.mapIndexed { i, s -> GridItem(s.key, s.name, s.logo?.ifBlank { null }, "Série · ${s.group}", s.year ?: yearRe.find(s.name)?.value?.toInt() ?: 0, i, { nav.openShow(s) }, { toggleFavRef(context, Repository.showRef(s)) }, Repository.showRef(s)) }
             } else {
                 val movies = if (paged) Repository.moviesPage(genre, if (newest) null else letter) else Repository.entries(ContentType.MOVIE, genre, 3000)
                 movies.mapIndexed { i, e -> GridItem(e.url, e.name, e.logo?.ifBlank { null }, "Filme · ${e.group}", e.year ?: yearRe.find(e.name)?.value?.toInt() ?: 0, i, { nav.openMovie(e) }, { toggleFav(context, e) }, e.url) }
@@ -208,7 +208,7 @@ fun VodGridScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
                     items == null -> "Carregando…"
                     paged && !newest -> "${items.size} com $letter"
                     else -> "${items.size} títulos"
-                }, fontSize = 15.sp, color = Palette.TextDim, modifier = Modifier.width(130.dp))
+                }, fontSize = 16.sp, color = Palette.TextDim, modifier = Modifier.width(130.dp))
             TvButton("Gênero: ${genre ?: "Todos"}", selected = picking, onClick = { picking = !picking })
             TvButton("A–Z", selected = !newest, onClick = { newest = false; scope.launch { gridState.scrollToItem(0) } })
             TvButton("Mais novos", selected = newest, onClick = { newest = true; scope.launch { gridState.scrollToItem(0) } })
@@ -233,7 +233,7 @@ fun VodGridScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
                         ) { focused ->
                             Text(
                                 c.toString(), Modifier.align(Alignment.Center), textAlign = TextAlign.Center,
-                                fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = if (focused) Palette.OnFocus else Palette.TextDim,
+                                fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = if (focused) Palette.OnFocus else Palette.TextDim,
                             )
                         }
                     }
@@ -264,7 +264,9 @@ fun VodGridScreen(lib: Library, type: ContentType, group: String, nav: Nav) {
             ) {
                 itemsIndexed(items, key = { i, it -> "$i:${it.title}" }) { i, it ->
                     PosterCard(
-                        it.title, it.image, key = "grid:${it.id}", tmdbTitle = if (type == ContentType.SERIES) it.title else null, tv = true, onFocused = { header.show(it.title, it.subtitle, it.image, it.ref); gridLetter = initialOf(it.title) }, onClick = it.open, onLongClick = it.fav,
+                        it.title, it.image, key = "grid:${it.id}", tmdbTitle = if (type == ContentType.SERIES) it.title else null, tv = true,
+                        // na grade, o nome (e o ano) aparece embaixo da capa
+                        year = it.year.takeIf { y -> y > 0 }, showTitle = true, onFocused = { header.show(it.title, it.subtitle, it.image, it.ref); gridLetter = initialOf(it.title) }, onClick = it.open, onLongClick = it.fav,
                         requester = if (i == 0) firstPoster else null,
                     )
                 }
