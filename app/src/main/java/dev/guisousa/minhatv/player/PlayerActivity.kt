@@ -106,7 +106,6 @@ class PlayerActivity : ComponentActivity() {
     private lateinit var loadingBox: LinearLayout
     private lateinit var loadingText: TextView
     /** Linha de baixo do "Carregando": qual fonte está sendo aberta. */
-    private lateinit var loadingSource: TextView
     private lateinit var toast: TextView
     private lateinit var controls: PlayerControls
     private var btnPlay: TextView? = null
@@ -120,6 +119,9 @@ class PlayerActivity : ComponentActivity() {
     private val hideToast = Runnable { toast.visibility = View.GONE }
     // com um painel aberto (ex.: "Continuar de..."), o aviso de carregando não aparece por cima do título dele
     private val showLoading = Runnable { if (!controls.panelVisible) loadingBox.visibility = View.VISIBLE }
+    /** Carregando no meio do vídeo (depois de um pulo, ou o servidor segurou um pouco): só um círculo pequeno. */
+    private lateinit var miniSpinner: View
+    private val showMiniSpinner = Runnable { if (!controls.panelVisible) miniSpinner.visibility = View.VISIBLE }
     private val stallCheck = Runnable { onStall() }
 
     /**
@@ -213,7 +215,7 @@ class PlayerActivity : ComponentActivity() {
             val limit = if (vodRounds > 0) 60_000L else 45_000L
             if (arriving && waited < limit) {
                 android.util.Log.w("MinhaTV", "player: filme ${waited / 1000} s sem imagem, mas o vídeo está chegando: espera mais")
-                loadingText.text = "Servidor lento, esperando o vídeo… ${waited / 1000} s"
+                loadingText.text = "Ainda carregando…"
                 loadingBox.visibility = View.VISIBLE
                 handler.postDelayed(firstFrameWatch, 5_000L)
                 return@Runnable
@@ -228,7 +230,7 @@ class PlayerActivity : ComponentActivity() {
         if (vodRounds >= 1 || sources.isEmpty()) { android.util.Log.w("MinhaTV", "player: $message"); showErrorCard(); return }
         vodRounds++
         android.util.Log.w("MinhaTV", "player: nenhuma fonte abriu, tentando todas de novo com mais tempo")
-        loadingText.text = "O servidor está lento. Tentando de novo…"
+        loadingText.text = "Carregando…"
         loadingBox.visibility = View.VISIBLE
         val mine = index
         handler.postDelayed({
@@ -414,6 +416,10 @@ class PlayerActivity : ComponentActivity() {
         exo.addListener(object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) = handleError(error)
 
+            override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                updateTrackButtons()
+            }
+
             override fun onRenderedFirstFrame() {
                 firstFrame = true
                 handler.removeCallbacks(firstFrameWatch)
@@ -422,7 +428,9 @@ class PlayerActivity : ComponentActivity() {
             override fun onPlaybackStateChanged(state: Int) {
                 when (state) {
                     Player.STATE_BUFFERING -> {
-                        handler.postDelayed(showLoading, 400)
+                        // já estava tocando esta fonte (pulo, buffer no meio): círculo discreto, sem caixa nem texto.
+                        // A caixa "Abrindo…" só aparece antes da 1ª imagem ou ao trocar de fonte.
+                        if (readyOnce) handler.postDelayed(showMiniSpinner, 300) else handler.postDelayed(showLoading, 400)
                         handler.removeCallbacks(stallCheck)
                         if (!isLive) { stallBytes = bytesIn.get(); handler.postDelayed(stallCheck, 12_000) }
                     }
@@ -521,16 +529,11 @@ class PlayerActivity : ComponentActivity() {
             setPadding(0, dp(14), 0, 0)
             text = "Carregando…"
         }
-        loadingSource = text(14f, 0xFFB3B3B3.toInt()).apply {
-            maxLines = 1
-            setSingleLine(true)
-            gravity = Gravity.CENTER
-            setPadding(0, dp(6), 0, 0)
-            visibility = View.GONE
-        }
         loadingBox.addView(loadingText, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        loadingBox.addView(loadingSource, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         root.addView(loadingBox, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+        // círculo pequeno, sem fundo nem texto: carregando depois de um pulo ou no meio do vídeo
+        miniSpinner = SpinnerView(this).apply { visibility = View.GONE; alpha = 0.85f }
+        root.addView(miniSpinner, FrameLayout.LayoutParams(dp(40), dp(40), Gravity.CENTER))
 
         // avisos curtos (canto superior)
         toast = text(15f, Color.WHITE).apply {
@@ -595,8 +598,10 @@ class PlayerActivity : ComponentActivity() {
 
     private fun hideLoading() {
         handler.removeCallbacks(showLoading)
+        handler.removeCallbacks(showMiniSpinner)
         handler.removeCallbacks(stallCheck)
         loadingBox.visibility = View.GONE
+        miniSpinner.visibility = View.GONE
         // antes de tocar: "Abrindo <título>…"; depois, um carregando no meio do vídeo
         loadingText.text = if (readyOnce) "Carregando…" else "Abrindo ${items.getOrNull(index)?.name ?: ""}…"
     }
@@ -924,7 +929,7 @@ class PlayerActivity : ComponentActivity() {
         retries = 0
         val pos = player?.currentPosition ?: 0
         android.util.Log.w("MinhaTV", "player: " + (if (frozen) "vídeo travou" else "fonte fora do ar") + ", indo para a fonte ${sourceIndex + 1} de ${sources.size}")
-        loadingText.text = "Tentando outro servidor (${sourceIndex + 1} de ${sources.size})…"
+        loadingText.text = "Carregando…"
         loadingBox.visibility = View.VISIBLE
         playSource(sources[sourceIndex], resume = false)
         if (!isLive && pos > 0) player?.seekTo(pos)
@@ -1093,8 +1098,10 @@ class PlayerActivity : ComponentActivity() {
             left += c.iconButton(IconDrawable.Kind.FWD10, "Avançar 10 segundos") { seekBy(10_000) }
         }
         val right = mutableListOf<View>()
-        right += c.textButton("Legendas") { pickTrack(C.TRACK_TYPE_TEXT) }
-        right += c.textButton("Áudio") { pickTrack(C.TRACK_TYPE_AUDIO) }
+        // só aparecem quando há o que escolher (ver updateTrackButtons)
+        btnLegendas = c.textButton("Legendas") { pickTrack(C.TRACK_TYPE_TEXT) }.also { right += it }
+        btnAudio = c.textButton("Áudio") { pickTrack(C.TRACK_TYPE_AUDIO) }.also { right += it }
+        updateTrackButtons()
         // "Versão" só aparece quando o título tem Dublado e Legendado (ver updateButtons)
         btnVersion = if (isLive) null else c.textButton("Versão") { versionPanel() }.also { right += it }
         btnSource = c.textButton("Fonte") { sourceDialog() }.also { right += it }
@@ -1182,12 +1189,16 @@ class PlayerActivity : ComponentActivity() {
     private val commitSeek = Runnable { commitSeekTarget() }
 
     /** ◀▶ com a barra de tempo em foco: anda o ponto (10 s; segurando, 30 s, 1 min, 5 min) sem pular ainda. */
+    private var seekHoldStart = 0L
+
     private fun moveSeekTarget(dir: Int, repeat: Int) {
         val exo = player ?: return
         val dur = exo.duration
         if (dur <= 0) { seekBy(dir * 10_000L); return } // sem duração conhecida: pula 10 s direto
+        val agora = android.os.SystemClock.uptimeMillis()
+        if (repeat == 0) seekHoldStart = agora
         val base = if (seekTarget >= 0) seekTarget else exo.currentPosition
-        seekTarget = SeekStep.target(base, dir * SeekStep.stepFor(repeat), dur)
+        seekTarget = SeekStep.target(base, dir * SeekStep.stepForHeld(agora - seekHoldStart), dur)
         controls.showSeekLabel("Ir para ${fmtTime(seekTarget)}", seekTarget.toFloat() / dur)
         updateTime()
         // parou de apertar por 1,2 s: pula
@@ -1253,14 +1264,29 @@ class PlayerActivity : ComponentActivity() {
         if (exo.playWhenReady && controls.visible) { handler.removeCallbacks(hideControlsTask); handler.postDelayed(hideControlsTask, 5000) }
     }
 
+    /** ±10 s (e ⏪⏩): apertos seguidos somam e o vídeo pula UMA vez, 600 ms depois do último (sem recarregar a cada aperto). */
     private fun seekBy(delta: Long) {
         val exo = player ?: return
         if (isLive) return
         val dur = exo.duration
-        var target = exo.currentPosition + delta
-        if (dur > 0) target = target.coerceAtMost(dur - 1000)
-        exo.seekTo(target.coerceAtLeast(0))
+        val base = if (seekTarget >= 0) seekTarget else exo.currentPosition
+        seekTarget = SeekStep.target(base, delta, dur)
+        if (dur > 0) controls.showSeekLabel("Ir para ${fmtTime(seekTarget)}", seekTarget.toFloat() / dur)
         updateTime()
+        handler.removeCallbacks(commitSeek)
+        handler.postDelayed(commitSeek, 600)
+    }
+
+    private var btnLegendas: TextView? = null
+    private var btnAudio: TextView? = null
+
+    /** Legendas: aparece se o vídeo tem alguma legenda. Áudio: se tem mais de uma faixa de áudio. */
+    private fun updateTrackButtons() {
+        val groups = player?.currentTracks?.groups.orEmpty()
+        val legendas = groups.any { it.type == C.TRACK_TYPE_TEXT && it.length > 0 }
+        val audios = groups.filter { it.type == C.TRACK_TYPE_AUDIO }.sumOf { it.length }
+        btnLegendas?.visibility = if (legendas) View.VISIBLE else View.GONE
+        btnAudio?.visibility = if (audios > 1) View.VISIBLE else View.GONE
     }
 
     private fun pickTrack(type: Int) {

@@ -435,7 +435,7 @@ fun LiveScreen(lib: Library) {
         ),
     ) {
         Row(Modifier.fillMaxSize().padding(top = 72.dp)) {
-            GroupColumn(lib.liveGroups, lib.liveTotal, group) { group = it; Repository.lastLiveGroup = it ?: "" }
+            GroupColumn(lib.liveGroups, lib.liveTotal, group, pinned = Repository.principaisGroup()) { group = it; Repository.lastLiveGroup = it ?: "" }
             Box(Modifier.weight(1f)) {
                 if (channels == null) Loading() else ChannelList(channels, groupName = group ?: "Todos", onFocused = { focused = it })
             }

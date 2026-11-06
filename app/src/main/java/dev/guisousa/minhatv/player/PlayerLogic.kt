@@ -12,6 +12,17 @@ object SeekStep {
         else -> 300_000L
     }
 
+    /**
+     * Passo pelo TEMPO com a tecla segurada (cada controle repete a tecla numa velocidade, então contar repetições
+     * dava resultados diferentes): até 1,5 s anda 10 s; até 3 s, 30 s; até 5 s, 1 min; depois, 5 min.
+     */
+    fun stepForHeld(heldMs: Long): Long = when {
+        heldMs < 1_500 -> 10_000L
+        heldMs < 3_000 -> 30_000L
+        heldMs < 5_000 -> 60_000L
+        else -> 300_000L
+    }
+
     /** Novo alvo a partir de [base], sem passar do começo nem do fim (para 1 s antes do fim). */
     fun target(base: Long, delta: Long, duration: Long): Long {
         var t = base + delta

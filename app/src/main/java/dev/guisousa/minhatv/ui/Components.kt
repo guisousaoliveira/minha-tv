@@ -514,10 +514,17 @@ fun FocusHeader(
 
 /** Coluna de categorias à esquerda (Ao vivo e grades). "Todos" só aparece se [total] não for gigante. */
 @Composable
-fun GroupColumn(groups: List<GroupInfo>, total: Int, selected: String?, alwaysAll: Boolean = false, onSelect: (String?) -> Unit) {
-    val rows = remember(groups, total) {
+fun GroupColumn(
+    groups: List<GroupInfo>, total: Int, selected: String?, alwaysAll: Boolean = false,
+    /** Categoria que fica ACIMA de "Todos" (ao vivo: "Principais"). */
+    pinned: String? = null,
+    onSelect: (String?) -> Unit,
+) {
+    val rows = remember(groups, total, pinned) {
         val list = groups.map<GroupInfo, Pair<String?, Int>> { it.name to it.count }
-        if (alwaysAll || total <= Library.ALL_LIMIT) listOf<Pair<String?, Int>>(null to total) + list else list
+        val (topo, resto) = list.partition { pinned != null && it.first == pinned }
+        val todos = if (alwaysAll || total <= Library.ALL_LIMIT) listOf<Pair<String?, Int>>(null to total) else emptyList()
+        topo + todos + resto
     }
     LazyColumn(
         Modifier.width(290.dp).fillMaxHeight(),

@@ -19,6 +19,21 @@ class PlayerLogicTest {
     }
 
     @Test
+    fun passo_peloTempoSegurando_igualEmQualquerControle() {
+        assertEquals(10_000L, SeekStep.stepForHeld(0))
+        assertEquals(10_000L, SeekStep.stepForHeld(1_499))
+        assertEquals(30_000L, SeekStep.stepForHeld(1_500))
+        assertEquals(60_000L, SeekStep.stepForHeld(3_000))
+        assertEquals(300_000L, SeekStep.stepForHeld(5_000))
+        var antes = 0L
+        for (ms in 0L..10_000L step 100) {
+            val p = SeekStep.stepForHeld(ms)
+            assertTrue(p >= antes)
+            antes = p
+        }
+    }
+
+    @Test
     fun passo_nuncaDiminuiEnquantoSegura() {
         var antes = 0L
         for (r in 0..100) {
