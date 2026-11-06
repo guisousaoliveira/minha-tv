@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -69,7 +70,10 @@ object Palette {
     val SurfaceHigh = Color(0xFF232323)
     val Text = Color(0xFFFFFFFF)
     val TextDim = Color(0xFFA3A3A3)
-    val TextFaint = Color(0xFF6B6B6B)
+    /** Texto apagado (contadores, horários): #9A9A9A ainda se lê bem a 3 m. */
+    val TextFaint = Color(0xFF9A9A9A)
+    /** Sinopses: um pouco abaixo do branco, para não cansar. */
+    val TextBody = Color(0xFFD0D0D0)
     val Focus = Color(0xFFFFFFFF)
     val OnFocus = Color(0xFF000000)
     val Live = Color(0xFFE24B4A)
@@ -83,8 +87,11 @@ object Palette {
 fun MinhaTvTheme(content: @Composable () -> Unit) {
     // A tela inteira mede sempre 1280 "pontos" de largura, como na prévia aprovada.
     // Assim o tamanho não muda de TV para TV e nada fica com cara de zoom.
-    val metrics = androidx.compose.ui.platform.LocalContext.current.resources.displayMetrics
-    val density = androidx.compose.ui.unit.Density(maxOf(metrics.widthPixels, metrics.heightPixels) / 1280f, 1f)
+    // O tamanho de fonte escolhido na TV vale (até 1,3x, para não quebrar os cartões).
+    val res = androidx.compose.ui.platform.LocalContext.current.resources
+    val metrics = res.displayMetrics
+    val fontScale = res.configuration.fontScale.coerceIn(1f, 1.3f)
+    val density = androidx.compose.ui.unit.Density(maxOf(metrics.widthPixels, metrics.heightPixels) / 1280f, fontScale)
     androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides density) {
         ThemeColors(content)
     }
@@ -194,16 +201,38 @@ fun textOn(focused: Boolean, dim: Boolean = false) = when {
     else -> Palette.Text
 }
 
+/**
+ * Botão comum. Com [selected] (true/false) vira uma opção de escolha (temporada, Dublado/Legendado, A–Z):
+ * a escolhida tem "✓", texto ciano e um traço embaixo; as outras ficam em cinza.
+ */
 @Composable
-fun TvButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, selected: Boolean = false, focusKey: String? = null) {
-    FocusBox(onClick = onClick, modifier = modifier, selected = selected, shape = RoundedCornerShape(4.dp), focusKey = focusKey) { focused ->
-        Text(
-            text,
-            modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
-            fontSize = 15.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = textOn(focused),
-        )
+fun TvButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, selected: Boolean? = null, focusKey: String? = null) {
+    FocusBox(onClick = onClick, modifier = modifier, shape = RoundedCornerShape(4.dp), focusKey = focusKey) { focused ->
+        if (selected == null) {
+            Text(
+                text,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = textOn(focused),
+            )
+        } else {
+            Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 5.dp).width(IntrinsicSize.Max)) {
+                Text(
+                    if (selected) "✓ $text" else text,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    color = when {
+                        focused -> Palette.OnFocus
+                        selected -> Palette.Brand
+                        else -> Palette.TextDim
+                    },
+                )
+                Spacer(Modifier.height(2.dp))
+                Box(Modifier.fillMaxWidth().height(3.dp).background(if (selected && !focused) Palette.Brand else Color.Transparent))
+            }
+        }
     }
 }
 
@@ -213,8 +242,8 @@ fun ToggleRow(title: String, subtitle: String?, checked: Boolean, onToggle: () -
     FocusBox(onClick = onToggle, modifier = Modifier.fillMaxWidth(), focusScale = 1.01f, background = Color.Transparent) { focused ->
         Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text(title, fontSize = 16.sp, color = textOn(focused))
-                if (subtitle != null) Text(subtitle, fontSize = 13.sp, color = if (focused) Palette.OnFocus.copy(alpha = 0.7f) else Palette.TextDim)
+                Text(title, fontSize = 17.sp, color = textOn(focused))
+                if (subtitle != null) Text(subtitle, fontSize = 15.sp, color = if (focused) Palette.OnFocus.copy(alpha = 0.7f) else Palette.TextDim)
             }
             Switch(checked, focused)
         }
@@ -250,14 +279,46 @@ fun Logo(url: String?, modifier: Modifier = Modifier, fallback: String = "", cro
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(6.dp),
         )
-        if (!url.isNullOrBlank()) {
+        // link que já falhou nesta sessão: nem tenta baixar de novo
+        if (!url.isNullOrBlank() && !BrokenImages.has(url)) {
             AsyncImage(
                 model = url,
                 contentDescription = null,
                 contentScale = if (crop) ContentScale.Crop else ContentScale.Fit,
                 modifier = Modifier.fillMaxSize().padding(if (crop) 0.dp else 6.dp),
-                onError = { onError?.invoke() },
+                onError = { BrokenImages.add(url); onError?.invoke() },
             )
+        }
+    }
+}
+
+/** Links de imagem que falharam nesta sessão do app (não baixa de novo cada vez que o cartão volta à tela). */
+object BrokenImages {
+    private val set: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+    fun has(url: String?): Boolean = url != null && url in set
+    fun add(url: String) { if (set.size < 5000) set.add(url) }
+}
+
+/**
+ * Capa de texto para quando não há capa (ou ela não abre): degradê escolhido pelo título,
+ * o título em negrito e o ano embaixo.
+ */
+@Composable
+fun TextCover(title: String, year: Int?, modifier: Modifier = Modifier) {
+    val cores = remember(title) { CapaTexto.cores(title) }
+    Box(
+        modifier.background(Brush.linearGradient(listOf(Color(cores.first), Color(cores.second)))).padding(10.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                title, color = Palette.Text, fontSize = 17.sp, lineHeight = 21.sp, fontWeight = FontWeight.Bold,
+                maxLines = 4, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
+            )
+            if (year != null && year > 0) {
+                Spacer(Modifier.height(6.dp))
+                Text("$year", color = Palette.Text.copy(alpha = 0.75f), fontSize = 14.sp)
+            }
         }
     }
 }
@@ -269,10 +330,10 @@ private fun initials(s: String): String =
 @Composable
 fun SectionTitle(text: String, modifier: Modifier = Modifier, trailing: String? = null) {
     Row(modifier.padding(start = 48.dp, end = 48.dp, top = 18.dp, bottom = 8.dp), verticalAlignment = Alignment.Bottom) {
-        Text(text, fontSize = 19.sp, fontWeight = FontWeight.SemiBold, color = Palette.Text)
+        Text(text, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = Palette.Text)
         if (trailing != null) {
             Spacer(Modifier.width(10.dp))
-            Text(trailing, fontSize = 13.sp, color = Palette.TextFaint)
+            Text(trailing, fontSize = 15.sp, color = Palette.TextFaint)
         }
     }
 }
@@ -318,6 +379,9 @@ fun PosterCard(
     key: String = title,
     tmdbTitle: String? = null,
     tv: Boolean = false,
+    year: Int? = null,
+    /** Grades: título (e ano) embaixo do cartão. */
+    showTitle: Boolean = false,
 ) {
     Column {
         FocusBox(
@@ -326,34 +390,39 @@ fun PosterCard(
             modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f).then(if (requester != null) Modifier.focusRequester(requester) else Modifier),
             focusKey = "p:$key",
         ) {
-            // capa que não abre (link quebrado) vira o mesmo cartão com o nome, e não um quadrado cinza vazio
-            var broken by remember(image) { mutableStateOf(false) }
-            Logo(image, Modifier.fillMaxSize(), fallback = "", crop = true, onError = { broken = true })
+            // capa que não abre (link quebrado) vira a capa de texto, e não um quadrado cinza vazio
+            var broken by remember(image) { mutableStateOf(BrokenImages.has(image)) }
             if (image.isNullOrBlank() || broken) {
-                // sem capa: inicial grande, como no Saimo
-                Text(
-                    title.trimStart { !it.isLetterOrDigit() }.take(1).uppercase(), Modifier.align(Alignment.Center),
-                    fontSize = 52.sp, fontWeight = FontWeight.Black, color = Palette.TextFaint,
-                )
-                Text(
-                    title, color = Palette.TextDim, fontSize = 13.sp, maxLines = 4, overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Center, modifier = Modifier.align(Alignment.BottomCenter).padding(10.dp),
-                )
+                TextCover(title, year, Modifier.fillMaxSize())
+            } else {
+                Logo(image, Modifier.fillMaxSize(), fallback = "", crop = true, onError = { broken = true })
             }
             if (progress != null) ProgressLine(progress, Modifier.align(Alignment.BottomStart))
+        }
+        if (showTitle) {
+            // espaço para o zoom do foco não cobrir o nome
+            Text(
+                title, Modifier.padding(top = 12.dp), fontSize = 14.sp, lineHeight = 18.sp, color = Palette.Text,
+                maxLines = 2, overflow = TextOverflow.Ellipsis,
+            )
+            if (year != null && year > 0) Text("$year", fontSize = 14.sp, color = Palette.TextFaint, maxLines = 1)
         }
     }
 }
 
 /** Cartão horizontal (canais). */
 @Composable
-fun ChannelCard(title: String, logo: String?, subtitle: String?, onFocused: (() -> Unit)? = null, key: String = title, onClick: () -> Unit) {
+fun ChannelCard(title: String, logo: String?, subtitle: String?, onFocused: (() -> Unit)? = null, key: String = title, requester: FocusRequester? = null, onClick: () -> Unit) {
     Column {
-        FocusBox(onClick = onClick, onFocused = onFocused, frame = true, focusScale = 1.06f, modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f), focusKey = "c:$key") {
+        FocusBox(
+            onClick = onClick, onFocused = onFocused, frame = true, focusScale = 1.06f,
+            modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).then(if (requester != null) Modifier.focusRequester(requester) else Modifier),
+            focusKey = "c:$key",
+        ) {
             Logo(logo, Modifier.fillMaxSize().padding(12.dp), fallback = title)
         }
-        Text(title, Modifier.padding(top = 8.dp), fontSize = 13.sp, color = Palette.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        if (subtitle != null) Text(subtitle, fontSize = 12.sp, color = Palette.TextFaint, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(title, Modifier.padding(top = 8.dp), fontSize = 15.sp, color = Palette.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (subtitle != null) Text(subtitle, fontSize = 14.sp, color = Palette.TextFaint, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -362,8 +431,8 @@ fun ChannelCard(title: String, logo: String?, subtitle: String?, onFocused: (() 
 fun SeeAllCard(count: Int, aspect: Float, onClick: () -> Unit) {
     FocusBox(onClick = onClick, frame = true, focusScale = 1.07f, modifier = Modifier.fillMaxWidth().aspectRatio(aspect), background = Palette.Surface) {
         Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("Ver tudo", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Palette.Text)
-            Text("$count", fontSize = 13.sp, color = Palette.TextDim)
+            Text("Ver tudo", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = Palette.Text)
+            Text("$count", fontSize = 14.sp, color = Palette.TextDim)
         }
     }
 }
@@ -410,7 +479,7 @@ fun FocusHeader(
             Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.Bottom) {
                 if (!subtitle.isNullOrBlank()) {
                     Text(
-                        subtitle.uppercase(), fontSize = 12.sp, letterSpacing = 2.sp, fontWeight = FontWeight.SemiBold,
+                        subtitle.uppercase(), fontSize = 14.sp, letterSpacing = 2.sp, fontWeight = FontWeight.SemiBold,
                         color = Palette.TextDim, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     )
                     Spacer(Modifier.height(8.dp))
@@ -428,7 +497,7 @@ fun FocusHeader(
                 }
                 if (!detail.isNullOrBlank()) {
                     Spacer(Modifier.height(8.dp))
-                    Text(detail, fontSize = 15.sp, color = Palette.TextDim, lineHeight = 22.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(detail, fontSize = 16.sp, color = Palette.TextDim, lineHeight = 23.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
             }
             if (tall && !backdrop && !image.isNullOrBlank()) {
@@ -467,13 +536,13 @@ fun GroupColumn(groups: List<GroupInfo>, total: Int, selected: String?, alwaysAl
                         modifier = Modifier.weight(1f),
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
-                        fontSize = 15.sp,
+                        fontSize = 16.sp,
                         color = if (focused) Palette.OnFocus else if (isSel) Palette.Text else Palette.TextDim,
                         fontWeight = if (isSel || focused) FontWeight.SemiBold else FontWeight.Normal,
                     )
                     // espaço fixo: nome comprido não encosta no número
                     Spacer(Modifier.width(10.dp))
-                    Text("$count", fontSize = 12.sp, maxLines = 1, softWrap = false, color = if (focused) Palette.OnFocus.copy(alpha = 0.6f) else Palette.TextFaint)
+                    Text("$count", fontSize = 14.sp, maxLines = 1, softWrap = false, color = if (focused) Palette.OnFocus.copy(alpha = 0.6f) else Palette.TextFaint)
                 }
             }
         }
@@ -502,7 +571,7 @@ fun Message(title: String, body: String? = null, modifier: Modifier = Modifier, 
         Text(title, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, color = Palette.Text, textAlign = TextAlign.Center)
         if (body != null) {
             Spacer(Modifier.height(10.dp))
-            Text(body, fontSize = 16.sp, color = Palette.TextDim, textAlign = TextAlign.Center, lineHeight = 24.sp)
+            Text(body, fontSize = 17.sp, color = Palette.TextDim, textAlign = TextAlign.Center, lineHeight = 25.sp)
         }
         Spacer(Modifier.height(24.dp))
         content()

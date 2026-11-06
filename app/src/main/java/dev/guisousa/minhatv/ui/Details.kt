@@ -96,26 +96,30 @@ private fun BigButton(
                 androidx.compose.material3.Icon(icon, null, tint = textOn(focused), modifier = Modifier.size(22.dp))
                 Spacer(Modifier.width(10.dp))
             }
-            Text(text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = textOn(focused), maxLines = 1)
+            Text(text, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = textOn(focused), maxLines = 1)
         }
     }
 }
 
 /** Cabeçalho comum: capa, tipo, título, linha de informações e botões. */
 @Composable
-private fun DetailTop(kind: String, title: String, poster: String?, info: List<String>, overview: String? = null, buttons: @Composable () -> Unit) {
+private fun DetailTop(kind: String, title: String, poster: String?, info: List<String>, overview: String? = null, year: Int? = null, buttons: @Composable () -> Unit) {
     Row(Modifier.padding(start = 48.dp, end = 48.dp, top = 20.dp)) {
-        Logo(poster, Modifier.width(152.dp).height(228.dp).clip(RoundedCornerShape(6.dp)), fallback = title, crop = true)
+        // sem capa (ou capa quebrada): a mesma capa de texto dos cartões
+        val posterMod = Modifier.width(152.dp).height(228.dp).clip(RoundedCornerShape(6.dp))
+        var broken by remember(poster) { mutableStateOf(BrokenImages.has(poster)) }
+        if (poster.isNullOrBlank() || broken) TextCover(title, year, posterMod)
+        else Logo(poster, posterMod, fallback = title, crop = true, onError = { broken = true })
         Spacer(Modifier.width(32.dp))
         Column(Modifier.weight(1f).padding(top = 8.dp)) {
-            Text(kind.uppercase(), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Palette.TextDim, letterSpacing = 2.sp)
+            Text(kind.uppercase(), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Palette.TextDim, letterSpacing = 2.sp)
             Spacer(Modifier.height(6.dp))
             Text(title, fontSize = 32.sp, fontWeight = FontWeight.Bold, color = Palette.Text, maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 36.sp)
             Spacer(Modifier.height(8.dp))
-            Text(info.filter { it.isNotBlank() }.joinToString("  ·  "), fontSize = 15.sp, color = Palette.TextDim, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(info.filter { it.isNotBlank() }.joinToString("  ·  "), fontSize = 17.sp, color = Palette.TextDim, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (!overview.isNullOrBlank()) {
                 Spacer(Modifier.height(10.dp))
-                Text(overview, fontSize = 14.sp, color = Palette.TextDim, lineHeight = 20.sp, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth(0.8f))
+                Text(overview, fontSize = 18.sp, color = Palette.TextBody, lineHeight = 25.sp, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth(0.85f))
             }
             Spacer(Modifier.height(22.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { buttons() }
@@ -171,6 +175,7 @@ fun MovieDetailScreen(e: Entry, nav: Nav) {
                         if (e.url.hashCode().toString() in watched) "Visto" else null,
                     ),
                     overview = info?.s,
+                    year = e.year ?: info?.a,
                 ) {
                     BigButton(if (resume > 0) "Continuar de ${clock(resume)}" else "Assistir", remember { FocusRequester() }, key = "main:${e.url}", icon = androidx.compose.material.icons.Icons.Filled.PlayArrow) { PlaybackQueue.start(context, listOf(e), 0) }
                     VersionButton(e, versions)
@@ -217,7 +222,7 @@ fun SeriesDetailScreen(show: Show) {
         Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
             Text("Não consegui buscar os episódios de ${show.name}", fontSize = 20.sp, color = Palette.Text)
             Spacer(Modifier.height(8.dp))
-            Text("Motivo: $err", fontSize = 15.sp, color = Palette.TextDim)
+            Text("Motivo: $err", fontSize = 16.sp, color = Palette.TextDim)
             Spacer(Modifier.height(20.dp))
             val retry = remember { FocusRequester() }
             TvButton("Tentar de novo", modifier = Modifier.focusRequester(retry), onClick = { attempt++ })
@@ -242,6 +247,7 @@ fun SeriesDetailScreen(show: Show) {
     val versions = result.versions
     fun play(e: Entry) = PlaybackQueue.start(context, queue, queue.indexOfFirst { it.url == e.url }.coerceAtLeast(0))
     val ep = if (target.season != null && target.episode != null) " T${target.season} E${target.episode}" else ""
+    val showRef = remember(show.key) { Repository.showRef(show) }
 
     val info = result.info
     Box(Modifier.fillMaxSize()) {
@@ -258,11 +264,14 @@ fun SeriesDetailScreen(show: Show) {
                         versionInfo(versions),
                     ),
                     overview = info?.s,
+                    year = show.year ?: info?.a,
                 ) {
                     BigButton((if (Repository.progress(target.url) != null) "Continuar" else "Assistir") + ep, remember { FocusRequester() }, key = "main:${show.key}", icon = androidx.compose.material.icons.Icons.Filled.PlayArrow) { play(target) }
                     // trocou a versão: refaz a lista para os episódios virem na versão escolhida
                     VersionButton(target, versions) { attempt++ }
-                    BigButton(if (target.url in favs) "Na Minha lista" else "Minha lista", icon = if (target.url in favs) androidx.compose.material.icons.Icons.Filled.Check else androidx.compose.material.icons.Icons.Filled.Add) { toggleFav(context, target) }
+                    // Minha lista guarda a série inteira (não o episódio do botão principal)
+                    val inList = showRef in favs
+                    BigButton(if (inList) "Na Minha lista" else "Minha lista", icon = if (inList) androidx.compose.material.icons.Icons.Filled.Check else androidx.compose.material.icons.Icons.Filled.Add) { toggleFavRef(context, showRef) }
                 }
             }
             if (seasons.size > 1) item("seasons") {
@@ -305,19 +314,19 @@ private fun EpisodeCard(e: Entry, i: Int, fallbackImage: String?, seen: Boolean,
                 Text(
                     "Visto", Modifier.align(Alignment.TopEnd).padding(8.dp)
                         .background(Color(0xE6000000), RoundedCornerShape(3.dp)).padding(horizontal = 8.dp, vertical = 3.dp),
-                    fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Palette.Text,
+                    fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Palette.Text,
                 )
             }
             if (progress != null) ProgressLine(progress, Modifier.align(Alignment.BottomStart))
         }
-        Text(if (e.episode != null) "Episódio ${e.episode}" else e.name, Modifier.padding(top = 8.dp).width(300.dp), fontSize = 14.sp, color = Palette.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(if (e.episode != null) "Episódio ${e.episode}" else e.name, Modifier.padding(top = 8.dp).width(300.dp), fontSize = 16.sp, color = Palette.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text(
             listOfNotNull(
                 if (e.season != null && e.episode != null) "T${e.season} E${e.episode}" else null,
                 if (duration > 0) "${(duration / 60_000).coerceAtLeast(1)} min" else null,
                 e.quality,
             ).joinToString("  ·  "),
-            fontSize = 12.sp, color = Palette.TextFaint, maxLines = 1,
+            fontSize = 14.sp, color = Palette.TextFaint, maxLines = 1,
         )
     }
 }

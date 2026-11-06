@@ -27,6 +27,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.derivedStateOf
@@ -43,6 +44,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -54,6 +56,7 @@ import dev.guisousa.minhatv.data.Entry
 import dev.guisousa.minhatv.data.Library
 import dev.guisousa.minhatv.data.Repository
 import dev.guisousa.minhatv.data.Show
+import dev.guisousa.minhatv.data.TituloFileira
 import dev.guisousa.minhatv.player.PlaybackQueue
 import kotlinx.coroutines.delay
 import androidx.compose.animation.core.tween
@@ -96,9 +99,30 @@ internal fun Loading() {
     }
 }
 
-internal fun toggleFav(context: android.content.Context, e: Entry) {
-    val added = Repository.toggleFavorite(e.url)
+internal fun toggleFav(context: android.content.Context, e: Entry) = toggleFavRef(context, e.url)
+
+/** Liga/desliga na Minha lista pela chave (episódio conta como a série inteira). */
+internal fun toggleFavRef(context: android.content.Context, ref: String) {
+    val added = Repository.toggleFavorite(ref)
     Toast.makeText(context, if (added) "Adicionado à Minha lista" else "Removido da Minha lista", Toast.LENGTH_SHORT).show()
+}
+
+/** Item da Minha lista: série e filme abrem os detalhes; canal (ou episódio antigo) toca. */
+private fun openFav(context: android.content.Context, nav: Nav, list: List<Entry>, i: Int) {
+    val e = list[i]
+    when {
+        Repository.isShowRef(e) -> Repository.showOf(e.url)?.let { nav.openShow(it) }
+        e.type == ContentType.MOVIE -> nav.openMovie(e)
+        e.type == ContentType.LIVE -> PlaybackQueue.start(context, list, i)
+        else -> PlaybackQueue.start(context, listOf(e), 0)
+    }
+}
+
+/** Foco inicial do Início no primeiro cartão (uma vez por abertura do app, antes de mexer nas abas). */
+internal object HomeFocus {
+    @Volatile var done = false
+    /** Sem cartão para focar: devolve o foco para a aba do Início (vem do AppRoot). */
+    var fallback: (() -> Unit)? = null
 }
 
 private val timeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
@@ -148,18 +172,50 @@ fun HomeScreen(lib: Library, nav: Nav) {
     val favEntries = load(lib.version, favorites) { Repository.favoriteEntries() }.orEmpty()
     val favLive = favEntries.filter { it.type == ContentType.LIVE }
     val favVod = favEntries.filter { it.type != ContentType.LIVE }
+    val homeRows = remember(lib.version) { Repository.homeRows() }
+    // fileiras por categoria: a mesma categoria em filmes e séries vira "Filmes da Netflix" / "Séries da Netflix"
+    val movieRows = remember(lib.version) { lib.movieGroups.drop(1).take(5) }
+    val showRows = remember(lib.version) { lib.showGroups.drop(1).take(3) }
+    val movieNames = remember(movieRows) { movieRows.mapTo(HashSet()) { it.name } }
+    val showNames = remember(showRows) { showRows.mapTo(HashSet()) { it.name } }
 
     if (lib.isEmpty) {
         Message("Carregando as listas", "Os canais, filmes e séries aparecem aqui assim que a primeira lista terminar de carregar.")
         return
     }
+    // ao abrir o app, o foco começa no primeiro cartão da primeira fileira (o destaque já aparece cheio)
+    val firstCard = remember { FocusRequester() }
+    val firstRow = when {
+        cont.isNotEmpty() -> "cont"
+        recentLive.isNotEmpty() -> "recent"
+        favLive.isNotEmpty() -> "favlive"
+        favVod.isNotEmpty() -> "favvod"
+        homeRows.isNotEmpty() -> "home-0"
+        else -> null
+    }
+    var homeHasFocus by remember { mutableStateOf(false) }
+    // Início escondido atrás de uma tela (detalhes reabertos pelo Android): não mexe no foco
+    val focusEnabled = LocalFocusEnabled.current
+    LaunchedEffect(Unit) {
+        if (!focusEnabled) HomeFocus.done = true
+        if (HomeFocus.done) return@LaunchedEffect
+        // as fileiras aparecem um pouco depois da tela: tenta algumas vezes
+        repeat(15) {
+            if (homeHasFocus || HomeFocus.done) return@repeat
+            runCatching { firstCard.requestFocus() }
+            delay(100)
+        }
+        if (!homeHasFocus && !HomeFocus.done) HomeFocus.fallback?.invoke()
+        HomeFocus.done = true
+    }
+    fun req(row: String, i: Int) = if (row == firstRow && i == 0) firstCard else null
     CinemaLayout(header, lib.version, "O que vamos assistir?", "Bad Wolf TV") {
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 48.dp)) {
+        LazyColumn(Modifier.fillMaxSize().onFocusChanged { homeHasFocus = it.hasFocus }, contentPadding = PaddingValues(bottom = 48.dp)) {
             if (cont.isNotEmpty()) item("cont") {
                 SectionTitle("Continuar assistindo")
                 MediaRow(cont, POSTER_W) { i, e ->
                     PosterCard(
-                        e.name, e.logo, key = "cont:${e.url}", progress = Repository.progress(e.url) ?: 0f,
+                        e.name, e.logo, key = "cont:${e.url}", progress = Repository.progress(e.url) ?: 0f, requester = req("cont", i),
                         tmdbTitle = e.seriesName ?: e.name, tv = e.type == ContentType.SERIES,
                         onFocused = { header.show(e, "Continuar · ${e.group}") },
                         onClick = { PlaybackQueue.start(context, cont, i) },
@@ -169,7 +225,7 @@ fun HomeScreen(lib: Library, nav: Nav) {
             if (recentLive.isNotEmpty()) item("recent") {
                 SectionTitle("Assistidos recentemente")
                 MediaRow(recentLive, CHANNEL_W) { i, e ->
-                    ChannelCard(e.name, e.logo, e.group, onFocused = { header.channel(e, "Canal · ${e.group}") }, key = "rl:${e.url}") {
+                    ChannelCard(e.name, e.logo, e.group, onFocused = { header.channel(e, "Canal · ${e.group}") }, key = "rl:${e.url}", requester = req("recent", i)) {
                         PlaybackQueue.start(context, recentLive, i)
                     }
                 }
@@ -177,7 +233,7 @@ fun HomeScreen(lib: Library, nav: Nav) {
             if (favLive.isNotEmpty()) item("favlive") {
                 SectionTitle("Meus canais")
                 MediaRow(favLive, CHANNEL_W) { i, e ->
-                    ChannelCard(e.name, e.logo, e.group, onFocused = { header.channel(e, "Canal · ${e.group}") }, key = "fl:${e.url}") {
+                    ChannelCard(e.name, e.logo, e.group, onFocused = { header.channel(e, "Canal · ${e.group}") }, key = "fl:${e.url}", requester = req("favlive", i)) {
                         PlaybackQueue.start(context, favLive, i)
                     }
                 }
@@ -185,25 +241,29 @@ fun HomeScreen(lib: Library, nav: Nav) {
             if (favVod.isNotEmpty()) item("favvod") {
                 SectionTitle("Minha lista")
                 MediaRow(favVod, POSTER_W) { i, e ->
-                    PosterCard(e.name, e.logo, key = "fav:${e.url}", onFocused = { header.show(e, "${kindOf(e.type)} · ${e.group}") }, onClick = {
-                        PlaybackQueue.start(context, favVod, i)
-                    }, onLongClick = { toggleFav(context, e) })
+                    PosterCard(
+                        e.name, e.logo, key = "fav:${e.url}", year = e.year, requester = req("favvod", i),
+                        onFocused = { header.show(e, "${kindOf(e.type)} · ${e.group}") },
+                        onClick = { openFav(context, nav, favVod, i) }, onLongClick = { toggleFav(context, e) },
+                    )
                 }
             }
-            Repository.homeRows().forEachIndexed { ri, row ->
+            homeRows.forEachIndexed { ri, row ->
                 item("home-$ri") {
-                    SectionTitle(row.title, trailing = "${row.items.size}")
-                    MediaRow(row.items, POSTER_SAIMO_W) { _, it ->
+                    SectionTitle(row.title)
+                    MediaRow(row.items, POSTER_SAIMO_W) { i, it ->
                         when (it) {
                             is dev.guisousa.minhatv.data.Entry -> PosterCard(
-                                it.name, it.logo, key = "h$ri:${it.url}", progress = Repository.progress(it.url),
+                                it.name, it.logo, key = "h$ri:${it.url}", progress = Repository.progress(it.url), year = it.year,
+                                requester = req("home-$ri", i),
                                 onFocused = { header.show(it, "Filme · ${it.group}") },
                                 onClick = { nav.openMovie(it) }, onLongClick = { toggleFav(context, it) },
                             )
                             is dev.guisousa.minhatv.data.Show -> PosterCard(
-                                it.name, it.logo, key = "h$ri:s${it.key}",
+                                it.name, it.logo, key = "h$ri:s${it.key}", year = it.year,
+                                requester = req("home-$ri", i),
                                 onFocused = { header.show(it, "Série · ${it.group}") },
-                                onClick = { nav.openShow(it) },
+                                onClick = { nav.openShow(it) }, onLongClick = { toggleFavRef(context, Repository.showRef(it)) },
                             )
                         }
                     }
@@ -212,11 +272,11 @@ fun HomeScreen(lib: Library, nav: Nav) {
             lib.liveGroups.take(2).forEach { g ->
                 item("live-${g.name}") { EntryRow(lib, ContentType.LIVE, g.name, g.count, nav, header) }
             }
-            lib.movieGroups.drop(1).take(5).forEach { g ->
-                item("movie-${g.name}") { EntryRow(lib, ContentType.MOVIE, g.name, g.count, nav, header) }
+            movieRows.forEach { g ->
+                item("movie-${g.name}") { EntryRow(lib, ContentType.MOVIE, g.name, g.count, nav, header, title = TituloFileira.titulo(false, g.name, g.name in showNames)) }
             }
-            lib.showGroups.drop(1).take(3).forEach { g ->
-                item("show-${g.name}") { ShowRow(lib, g.name, g.count, nav, header) }
+            showRows.forEach { g ->
+                item("show-${g.name}") { ShowRow(lib, g.name, g.count, nav, header, title = TituloFileira.titulo(true, g.name, g.name in movieNames)) }
             }
         }
     }
@@ -224,10 +284,10 @@ fun HomeScreen(lib: Library, nav: Nav) {
 
 /** Fileira de uma categoria (canais ou filmes) com "Ver tudo" no fim. */
 @Composable
-private fun EntryRow(lib: Library, type: ContentType, group: String, count: Int, nav: Nav, header: HeaderState) {
+private fun EntryRow(lib: Library, type: ContentType, group: String, count: Int, nav: Nav, header: HeaderState, title: String = group) {
     val context = LocalContext.current
     val items = load(lib.version, type, group) { Repository.entries(type, group, ROW_ITEMS) }
-    SectionTitle(group, trailing = "$count")
+    SectionTitle(title)
     if (items == null) { LoadingRow(if (type == ContentType.LIVE) 150.dp else 250.dp, key = group); return }
     FocusMemory.handoff(group, items.firstOrNull()?.let { "$group:${it.url}" })
     val live = type == ContentType.LIVE
@@ -243,8 +303,9 @@ private fun EntryRow(lib: Library, type: ContentType, group: String, count: Int,
             }
         } else {
             PosterCard(
-                e.name, e.logo, key = "$group:${e.url}", progress = Repository.progress(e.url),
-                onFocused = { header.show(e, "Filme · $group") },
+                e.name, e.logo, key = "$group:${e.url}", progress = Repository.progress(e.url), year = e.year,
+                // categoria principal do filme (e não "Legendados" só porque a fileira é essa)
+                onFocused = { header.show(e, "Filme · ${e.group.ifBlank { group }}") },
                 onClick = { nav.openMovie(e) },
                 onLongClick = { toggleFav(context, e) },
             )
@@ -258,9 +319,10 @@ private fun openLiveGroup(context: android.content.Context, type: ContentType, g
 }
 
 @Composable
-private fun ShowRow(lib: Library, group: String, count: Int, nav: Nav, header: HeaderState) {
+private fun ShowRow(lib: Library, group: String, count: Int, nav: Nav, header: HeaderState, title: String = group) {
+    val context = LocalContext.current
     val shows = load(lib.version, group) { Repository.shows(group, ROW_ITEMS) }
-    SectionTitle(group, trailing = "$count")
+    SectionTitle(title)
     if (shows == null) { LoadingRow(250.dp, key = group); return }
     FocusMemory.handoff(group, shows.firstOrNull()?.let { "$group:${it.key}" })
     MediaRow(
@@ -268,7 +330,7 @@ private fun ShowRow(lib: Library, group: String, count: Int, nav: Nav, header: H
         seeAll = if (count > shows.size) ({ nav.openCategory(ContentType.SERIES, group) }) else null,
         seeAllCount = count,
     ) { _, s ->
-        PosterCard(s.name, s.logo, key = "$group:${s.key}", tmdbTitle = s.name, tv = true, onFocused = { header.show(s, seriesLabel(s.episodeCount)) }, onClick = { nav.openShow(s) })
+        PosterCard(s.name, s.logo, key = "$group:${s.key}", tmdbTitle = s.name, tv = true, year = s.year, onFocused = { header.show(s, seriesLabel(s.episodeCount)) }, onClick = { nav.openShow(s) }, onLongClick = { toggleFavRef(context, Repository.showRef(s)) })
     }
 }
 
@@ -551,7 +613,7 @@ fun MyListScreen(lib: Library, nav: Nav) {
         items == null -> Box(Modifier.padding(top = 64.dp)) { Loading() }
         items.isEmpty() -> Box(Modifier.padding(top = 64.dp)) { Message(
             "Sua lista está vazia",
-            "Segure o botão OK em um canal, filme ou episódio para adicionar.\nDurante o vídeo, use o menu de opções.",
+            "Segure o botão OK em um canal, filme ou série para adicionar.\nDurante o vídeo, use o menu de opções.",
         ) }
         else -> {
             val live = items.filter { it.type == ContentType.LIVE }
@@ -559,18 +621,19 @@ fun MyListScreen(lib: Library, nav: Nav) {
             CinemaLayout(header, lib.version, "Minha lista", "${items.size} itens") {
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 48.dp)) {
                 if (live.isNotEmpty()) item("live") {
-                    SectionTitle("Canais", trailing = "${live.size}")
+                    SectionTitle("Canais")
                     MediaRow(live, CHANNEL_W) { i, e ->
                         ChannelCard(e.name, e.logo, e.group, onFocused = { header.channel(e, "Canal · ${e.group}") }) { PlaybackQueue.start(context, live, i) }
                     }
                 }
                 if (vod.isNotEmpty()) item("vod") {
-                    SectionTitle("Filmes e episódios", trailing = "${vod.size}")
+                    SectionTitle("Filmes e séries")
                     MediaRow(vod, POSTER_W) { i, e ->
                         PosterCard(
-                            e.name, e.logo, key = "my:${e.url}", progress = Repository.progress(e.url),
+                            e.name, e.logo, key = "my:${e.url}", progress = Repository.progress(e.url), year = e.year,
                             onFocused = { header.show(e, "${kindOf(e.type)} · ${e.group}") },
-                            onClick = { if (e.type == ContentType.MOVIE) nav.openMovie(e) else PlaybackQueue.start(context, vod, i) }, onLongClick = { toggleFav(context, e) },
+                            // série abre os detalhes (escolher temporada/episódio), filme também
+                            onClick = { openFav(context, nav, vod, i) }, onLongClick = { toggleFav(context, e) },
                         )
                     }
                 }
@@ -622,22 +685,22 @@ fun SearchScreen(lib: Library, nav: Nav) {
                     CinemaLayout(header, lib.version, "Resultados", "\"$query\"", infoStart = 40.dp) {
                         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 48.dp)) {
                             if (movies.isNotEmpty()) item("movies") {
-                                SectionTitle("Filmes", trailing = "${movies.size}")
+                                SectionTitle("Filmes")
                                 MediaRow(movies, POSTER_W) { _, e ->
                                     PosterCard(
-                                        e.name, e.logo, key = "s:${e.url}", onFocused = { header.show(e, "Filme · ${e.group}") },
+                                        e.name, e.logo, key = "s:${e.url}", year = e.year, onFocused = { header.show(e, "Filme · ${e.group}") },
                                         onClick = { saveQuery(); nav.openMovie(e) }, onLongClick = { toggleFav(context, e) },
                                     )
                                 }
                             }
                             if (uniqueShows.isNotEmpty()) item("shows") {
-                                SectionTitle("Séries", trailing = "${uniqueShows.size}")
+                                SectionTitle("Séries")
                                 MediaRow(uniqueShows, POSTER_W) { _, s ->
-                                    PosterCard(s.name, s.logo, key = "s:${s.key}", tmdbTitle = s.name, tv = true, onFocused = { header.show(s, seriesLabel(s.episodeCount)) }, onClick = { saveQuery(); nav.openShow(s) })
+                                    PosterCard(s.name, s.logo, key = "s:${s.key}", tmdbTitle = s.name, tv = true, year = s.year, onFocused = { header.show(s, seriesLabel(s.episodeCount)) }, onClick = { saveQuery(); nav.openShow(s) }, onLongClick = { toggleFavRef(context, Repository.showRef(s)) })
                                 }
                             }
                             if (live.isNotEmpty()) item("live") {
-                                SectionTitle("Canais", trailing = "${live.size}")
+                                SectionTitle("Canais")
                                 MediaRow(live, CHANNEL_W) { i, e ->
                                     ChannelCard(e.name, e.logo, e.group, onFocused = { header.channel(e, "Canal · ${e.group}") }) { saveQuery(); PlaybackQueue.start(context, live, i) }
                                 }
@@ -686,7 +749,7 @@ private fun SearchKeyboard(query: String, searching: Boolean, onQuery: (String) 
         Key("Teclado do sistema / voz", Modifier.size(width = 282.dp, height = 40.dp), small = true) { onSystem() }
         if (recent.isNotEmpty() && query.isBlank()) {
             Spacer(Modifier.height(18.dp))
-            Text("BUSCAS RECENTES", fontSize = 11.sp, letterSpacing = 2.sp, fontWeight = FontWeight.Bold, color = Palette.Brand)
+            Text("BUSCAS RECENTES", fontSize = 13.sp, letterSpacing = 2.sp, fontWeight = FontWeight.Bold, color = Palette.Brand)
             Spacer(Modifier.height(6.dp))
             recent.take(4).forEach { r ->
                 Key(r, Modifier.padding(bottom = 4.dp).size(width = 282.dp, height = 34.dp), small = true, start = true) { onQuery(r) }
@@ -729,7 +792,7 @@ fun SettingsScreen() {
                 Text(
                     "${lib.liveTotal} canais · ${lib.movieTotal} filmes · ${lib.showTotal} séries\n" +
                         "Os canais, filmes e séries chegam prontos do servidor e se atualizam sozinhos.",
-                    fontSize = 14.sp, color = Palette.TextDim, lineHeight = 21.sp,
+                    fontSize = 16.sp, color = Palette.TextDim, lineHeight = 23.sp,
                 )
                 Spacer(Modifier.height(12.dp))
                 TvButton("Atualizar agora", modifier = Modifier.focusProperties { down = prefsFocus }, onClick = {
@@ -737,13 +800,13 @@ fun SettingsScreen() {
                     Repository.refreshAllAsync()
                 })
             }
-            status?.let { Text(it, color = Palette.TextDim, fontSize = 13.sp, modifier = Modifier.padding(top = 10.dp)) }
+            status?.let { Text(it, color = Palette.TextDim, fontSize = 15.sp, modifier = Modifier.padding(top = 10.dp)) }
         }
 
         item { SettingsHeader("Preferências") }
         item {
             var version by remember { mutableStateOf(Repository.preferredVersion) }
-            Text("Filmes e séries: versão preferida", fontSize = 15.sp, color = Palette.TextDim, modifier = Modifier.padding(start = 16.dp, bottom = 6.dp))
+            Text("Filmes e séries: versão preferida", fontSize = 16.sp, color = Palette.TextDim, modifier = Modifier.padding(start = 16.dp, bottom = 6.dp))
             Row(Modifier.padding(start = 12.dp, bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(Repository.DUB, Repository.LEG).forEach { v ->
                     TvButton(
@@ -788,8 +851,8 @@ private fun SettingsHeader(text: String) {
 private fun ListRow(title: String, subtitle: String, error: Boolean, actions: @Composable () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
-            Text(title, color = Palette.Text, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(subtitle, fontSize = 12.sp, color = if (error) Palette.Error else Palette.TextFaint, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(title, color = Palette.Text, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(subtitle, fontSize = 14.sp, color = if (error) Palette.Error else Palette.TextFaint, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
         Spacer(Modifier.width(12.dp))
         actions()

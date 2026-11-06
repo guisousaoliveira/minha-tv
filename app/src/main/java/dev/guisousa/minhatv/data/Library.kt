@@ -6,7 +6,7 @@ data class GroupInfo(val name: String, val count: Int)
 
 /** Série no catálogo (key = id do servidor). */
 @Serializable
-data class Show(val key: String, val name: String, val group: String, val logo: String?, val episodeCount: Int)
+data class Show(val key: String, val name: String, val group: String, val logo: String?, val episodeCount: Int, val year: Int? = null)
 
 /** Resumo do catálogo (só as categorias), usado para montar as telas. */
 class Library(
