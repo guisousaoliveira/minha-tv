@@ -576,7 +576,7 @@ class PlayerActivity : ComponentActivity() {
         infoNow.visibility = if (cur != null) View.VISIBLE else View.GONE
         val extra = mutableListOf<String>()
         next?.let { extra += "A seguir:  ${timeFmt.format(Date(it.start))}  ${it.title}" }
-        if (e.url in Repository.favorites.value) extra += "Na Minha lista"
+        if (Repository.isFavorite(e.url)) extra += "Na Minha lista"
         infoNext.text = extra.joinToString("\n")
         infoNext.visibility = if (extra.isEmpty()) View.GONE else View.VISIBLE
         val logo = e.logo?.takeIf { it.isNotBlank() && live }
@@ -966,7 +966,7 @@ class PlayerActivity : ComponentActivity() {
 
     private fun showOptions() {
         val exo = player ?: return
-        val fav = current.url in Repository.favorites.value
+        val fav = Repository.isFavorite(current.url)
         val options = mutableListOf<Pair<PlayerControls.Choice, () -> Unit>>()
         if (isLive) options += PlayerControls.Choice("Canais", current.group) to { channelsPanel() }
         options += PlayerControls.Choice("Legendas") to { pickTrack(C.TRACK_TYPE_TEXT) }
@@ -1128,7 +1128,7 @@ class PlayerActivity : ComponentActivity() {
             b.visibility = if (both) View.VISIBLE else View.GONE
             if (both) b.text = "Versão · " + Repository.versionName(Repository.versionOrDub(playing ?: current))
         }
-        btnFav?.text = if (items.isNotEmpty() && current.url in Repository.favorites.value) "Na Minha lista" else "+ Minha lista"
+        btnFav?.text = if (items.isNotEmpty() && Repository.isFavorite(current.url)) "Na Minha lista" else "+ Minha lista"
         val e = items.getOrNull(index) ?: return
         controls.kicker.text = if (isLive) "${index + 1}  ·  ${listName(e)}" else e.group
         controls.title.text = e.name
