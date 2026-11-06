@@ -68,6 +68,8 @@ object Repository {
         val catSerie: Map<String, String>,
         val todosFilmes: List<CardFilme>,
         val todasSeries: List<CardSerie>,
+        /** Nome da lista pronta do ao vivo ("Principais"), se o catálogo tiver uma. */
+        val principais: String?,
     )
 
     @Volatile private var dados: Dados? = null
@@ -80,6 +82,11 @@ object Repository {
     private fun carregar(): Boolean {
         val cats = catalogo.categorias() ?: return false
         val canais = catalogo.canais().orEmpty()
+        // ao vivo: "Principais" (lista pronta de ids) primeiro; os canais dela continuam na categoria normal também
+        val catsCanais = ordemAoVivo(cats.canais)
+        val canalPorId = canais.associateBy { it.id }
+        val canaisPorCat = canais.groupBy { it.c }.toMutableMap()
+        catsCanais.forEach { c -> c.ids?.let { canaisPorCat[c.id] = canaisPorIds(it, canalPorId) } }
         val nomeCat = HashMap<String, String>()
         (cats.canais + cats.filmes + cats.series).forEach { nomeCat[it.id] = nomeCurto(it.nome) }
         // o mesmo filme aparece em várias categorias (em média 2): guarda um objeto só por id
@@ -89,19 +96,18 @@ object Repository {
         val umaSerie = HashMap<Long, CardSerie>()
         val seriesPorCat = LinkedHashMap<String, List<CardSerie>>()
         cats.series.forEach { c -> seriesPorCat[c.id] = catalogo.series(c.id).orEmpty().map { umaSerie.getOrPut(it.id) { it } } }
-        // categoria de cada título: a primeira de gênero/serviço (Lançamentos e Em Alta por último)
-        val filmePorId = HashMap<Long, Pair<CardFilme, String>>()
-        (cats.filmes.drop(1) + cats.filmes.take(1)).forEach { c -> filmesPorCat[c.id]?.forEach { filmePorId.putIfAbsent(it.id, it to c.id) } }
-        val seriePorId = HashMap<Long, Pair<CardSerie, String>>()
-        (cats.series.drop(1) + cats.series.take(1)).forEach { c -> seriesPorCat[c.id]?.forEach { seriePorId.putIfAbsent(it.id, it to c.id) } }
+        // categoria principal de cada título: a que o servidor manda ("c") ou a primeira de gênero/serviço
+        // (nunca Lançamentos, Em Alta, Legendados, 4K ou Diversos, a não ser que não sobre outra)
+        val filmePorId = principais(cats.filmes, filmesPorCat, nomeCat, { it.id }, { it.c })
+        val seriePorId = principais(cats.series, seriesPorCat, nomeCat, { it.id }, { it.c })
         val vistosF = HashSet<Long>()
         val todosFilmes = filmesPorCat.values.flatten().filter { vistosF.add(it.id) }
         val vistosS = HashSet<Long>()
         val todasSeries = seriesPorCat.values.flatten().filter { vistosS.add(it.id) }
         val d = Dados(
             canais = canais,
-            canalPorId = canais.associateBy { it.id },
-            canaisPorCat = canais.groupBy { it.c },
+            canalPorId = canalPorId,
+            canaisPorCat = canaisPorCat,
             filmesPorCat = filmesPorCat,
             filmePorId = filmePorId,
             seriesPorCat = seriesPorCat,
@@ -113,6 +119,7 @@ object Repository {
             catSerie = cats.series.associate { nomeCurto(it.nome) to it.id },
             todosFilmes = todosFilmes,
             todasSeries = todasSeries,
+            principais = catsCanais.firstOrNull { it.ids != null && canaisPorCat[it.id].orEmpty().isNotEmpty() }?.let { nomeCurto(it.nome) },
         )
         dados = d
         runCatching { migrarApelidos() }.onFailure { android.util.Log.w("MinhaTV", "apelidos: não migrou", it) }
@@ -122,12 +129,31 @@ object Repository {
         _epg.value = EpgData(catalogo.guia())
         _library.value = Library(
             ++libVersion,
-            cats.canais.map { GroupInfo(nomeCurto(it.nome), d.canaisPorCat[it.id]?.size ?: 0) }.filter { it.count > 0 },
+            catsCanais.map { GroupInfo(nomeCurto(it.nome), d.canaisPorCat[it.id]?.size ?: 0) }.filter { it.count > 0 },
             cats.filmes.map { GroupInfo(nomeCurto(it.nome), filmesPorCat[it.id]?.size ?: 0) }.filter { it.count > 0 },
             cats.series.map { GroupInfo(nomeCurto(it.nome), seriesPorCat[it.id]?.size ?: 0) }.filter { it.count > 0 },
+            liveTotal = catsCanais.filter { it.ids == null }.sumOf { d.canaisPorCat[it.id]?.size ?: 0 },
         )
         android.util.Log.i("MinhaTV", "catálogo ${catalogo.manifesto.versao}: ${canais.size} canais, ${todosFilmes.size} filmes, ${todasSeries.size} séries")
         return true
+    }
+
+    /** Título -> (cartão, id da categoria principal). Ver [CategoriaPrincipal.escolher]. */
+    private fun <T> principais(
+        cats: List<Cat>, porCat: Map<String, List<T>>, nomeCat: Map<String, String>,
+        id: (T) -> Long, sugerida: (T) -> String?,
+    ): HashMap<Long, Pair<T, String>> {
+        val doTitulo = HashMap<Long, Pair<T, ArrayList<String>>>()
+        cats.forEach { c -> porCat[c.id]?.forEach { t -> doTitulo.getOrPut(id(t)) { t to ArrayList<String>(2) }.second.add(c.id) } }
+        val validas = cats.mapTo(HashSet()) { it.id }
+        val primeira = cats.firstOrNull()?.id
+        val out = HashMap<Long, Pair<T, String>>(doTitulo.size * 2)
+        for ((k, v) in doTitulo) {
+            val (t, lista) = v
+            val c = CategoriaPrincipal.escolher(sugerida(t), lista, primeira) { cid -> if (cid in validas) nomeCat[cid] else null } ?: continue
+            out[k] = t to c
+        }
+        return out
     }
 
     @Synchronized
@@ -137,7 +163,11 @@ object Repository {
         prefs = app.getSharedPreferences("minhatv", Context.MODE_PRIVATE)
         SourceHealth.init(app)
         catalogo = Catalogo(File(app.filesDir, "v2"), Catalogo.defaultHttp())
-        _favorites.value = prefs.getStringSet(FAV_KEY, emptySet())!!.toSet()
+        // Minha lista guarda a série, não um episódio: converte os favoritos antigos ("v2:e:id:T:E" -> "v2:e:id")
+        val favsSalvos = prefs.getStringSet(FAV_KEY, emptySet())!!.toSet()
+        val favsSerie = FavRefs.converter(favsSalvos)
+        if (favsSerie != favsSalvos) prefs.edit().putStringSet(FAV_KEY, favsSerie).apply()
+        _favorites.value = favsSerie
         cleanupOld()
         scope.launch {
             val temLocal = try { runCatching { carregar() }.getOrDefault(false) } finally { _isLoading.value = false }
@@ -195,13 +225,21 @@ object Repository {
         type = ContentType.LIVE, quality = c.f.firstOrNull()?.q,
     )
 
+    // a categoria mostrada é sempre a principal do título (e não a da fileira em que ele apareceu)
     private fun filmeEntry(d: Dados, f: CardFilme, cat: String? = null) = Entry(
-        name = f.t, url = F + f.id, group = d.nomeCat[cat ?: d.filmePorId[f.id]?.second] ?: "", logo = f.p,
+        name = f.t, url = F + f.id, group = d.nomeCat[d.filmePorId[f.id]?.second ?: cat] ?: "", logo = f.p,
         type = ContentType.MOVIE, added = f.ad, year = f.a,
     )
 
     private fun serieShow(d: Dados, s: CardSerie, cat: String? = null) = Show(
-        key = s.id.toString(), name = s.t, group = d.nomeCat[cat ?: d.seriePorId[s.id]?.second] ?: "", logo = s.p, episodeCount = s.ne,
+        key = s.id.toString(), name = s.t, group = d.nomeCat[d.seriePorId[s.id]?.second ?: cat] ?: "", logo = s.p, episodeCount = s.ne,
+        year = s.a,
+    )
+
+    /** Série inteira na Minha lista: um Entry de série sem temporada/episódio (url = [showRef]). */
+    private fun serieEntry(d: Dados, s: CardSerie, cat: String) = Entry(
+        name = s.t, url = E + s.id, group = d.nomeCat[cat] ?: "", logo = s.p,
+        type = ContentType.SERIES, seriesName = s.t, year = s.a,
     )
 
     private fun episodioEntry(showId: Long, titulo: String, group: String, logo: String?, temporada: Int, numero: Int) = Entry(
@@ -215,6 +253,7 @@ object Repository {
     private fun entryOf(d: Dados, url: String): Entry? = when {
         url.startsWith(C) -> url.removePrefix(C).toLongOrNull()?.let { d.canalPorId[it] }?.let { canalEntry(d, it) }
         url.startsWith(F) -> url.removePrefix(F).toLongOrNull()?.let { d.filmePorId[it] }?.let { (f, c) -> filmeEntry(d, f, c) }
+        FavRefs.ehSerie(url) -> url.removePrefix(E).toLongOrNull()?.let { d.seriePorId[it] }?.let { (s, c) -> serieEntry(d, s, c) }
         url.startsWith(E) -> {
             val p = url.removePrefix(E).split(':')
             val sid = p.getOrNull(0)?.toLongOrNull()
@@ -456,12 +495,27 @@ object Repository {
 
     private const val FAV_KEY = "v2_favorites"
 
-    fun toggleFavorite(url: String): Boolean {
+    /** Liga/desliga na Minha lista. Episódio conta como a série inteira ([FavRefs.normalizar]). */
+    fun toggleFavorite(url0: String): Boolean {
+        val url = FavRefs.normalizar(url0)
         val now = _favorites.value.toMutableSet()
         val added = if (url in now) { now.remove(url); false } else { now.add(url); true }
         _favorites.value = now
         prefs.edit().putStringSet(FAV_KEY, now).apply()
         return added
+    }
+
+    /** Está na Minha lista? (episódio: olha a série) */
+    fun isFavorite(url: String): Boolean = FavRefs.normalizar(url) in _favorites.value
+
+    /** É a série inteira guardada na Minha lista (abrir os detalhes, não tocar)? */
+    fun isShowRef(e: Entry): Boolean = FavRefs.ehSerie(e.url)
+
+    /** Série de uma referência "v2:e:<id>" (para abrir os detalhes a partir da Minha lista). */
+    fun showOf(ref: String): Show? {
+        val d = dados ?: return null
+        val id = idOf(ref, E) ?: return null
+        return d.seriePorId[id]?.let { (s, c) -> serieShow(d, s, c) }
     }
 
     @Volatile private var favCache: Pair<Set<String>, List<Entry>>? = null
@@ -636,4 +690,17 @@ object Repository {
     var lastChannelUrl: String?
         get() = prefs.getString("last_channel", null)
         set(v) { prefs.edit().putString("last_channel", v).apply() }
+
+    /** No canal ao vivo, ▲▼ trocam de canal (desligado: só mostram o que está passando). */
+    var arrowsZap: Boolean
+        get() = prefs.getBoolean("arrows_zap", true)
+        set(v) { prefs.edit().putBoolean("arrows_zap", v).apply() }
+
+    /** Última categoria aberta no Ao vivo ("" = Todos, null = nunca escolheu). */
+    var lastLiveGroup: String?
+        get() = prefs.getString("last_live_group", null)
+        set(v) { prefs.edit().putString("last_live_group", v).apply() }
+
+    /** Nome da lista "Principais" do ao vivo, se o catálogo tiver. */
+    fun principaisGroup(): String? = dados?.principais
 }

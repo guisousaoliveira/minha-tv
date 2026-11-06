@@ -26,6 +26,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -130,10 +132,12 @@ private fun CinemaInfo(
     val compact = heroHeight < CINEMA_HERO
     Column(Modifier.fillMaxWidth().height(heroHeight).padding(start = infoStart, top = infoTop, end = 56.dp)) {
         Text(
-            (header.subtitle ?: fallbackSub).uppercase(), fontSize = 12.sp, letterSpacing = 2.5.sp, fontWeight = FontWeight.Bold,
+            (header.subtitle ?: fallbackSub).uppercase(), fontSize = 14.sp, letterSpacing = 2.sp, fontWeight = FontWeight.Bold,
             color = Palette.Brand, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(560.dp),
         )
         Spacer(Modifier.height(8.dp))
+        // título em 2 linhas: a sinopse fica com 2 (senão passa da área do destaque)
+        var tituloLinhas by remember { mutableIntStateOf(1) }
         AnimatedContent(
             header.title ?: fallbackTitle,
             transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(120)) },
@@ -142,17 +146,21 @@ private fun CinemaInfo(
             Text(
                 t, fontSize = if (compact) 34.sp else 42.sp, lineHeight = if (compact) 38.sp else 46.sp, fontWeight = FontWeight.ExtraBold, color = Palette.Text,
                 maxLines = if (compact) 1 else 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(600.dp),
+                onTextLayout = { if (t == (header.title ?: fallbackTitle)) tituloLinhas = it.lineCount },
             )
         }
         Spacer(Modifier.height(10.dp))
         if (destaque != null) MetaLine(destaque, ficha?.g)
         else if (!header.detail.isNullOrBlank()) {
-            Text(header.detail!!, fontSize = 15.sp, lineHeight = 22.sp, color = Palette.TextDim, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(560.dp))
+            Text(header.detail!!, fontSize = 17.sp, lineHeight = 24.sp, color = Palette.TextDim, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(560.dp))
         }
         val sinopse = ficha?.s
         if (!sinopse.isNullOrBlank()) {
             Spacer(Modifier.height(10.dp))
-            Text(sinopse, fontSize = 14.sp, lineHeight = 20.sp, color = Color(0xFFCFCFD4), maxLines = if (compact) 2 else 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(540.dp))
+            Text(
+                sinopse, fontSize = 17.sp, lineHeight = 24.sp, color = Palette.TextBody,
+                maxLines = if (compact || tituloLinhas > 1) 2 else 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(600.dp),
+            )
         }
     }
 }
@@ -165,7 +173,7 @@ private fun MetaLine(d: Repository.Destaque, generosFicha: List<String>?) {
             if (d.serie && d.temporadas > 0) add(if (d.temporadas == 1) "1 temporada" else "${d.temporadas} temporadas")
             addAll(d.generos.ifEmpty { generosFicha.orEmpty().take(2) })
         }
-        if (partes.isNotEmpty()) Text(partes.joinToString("  ·  "), fontSize = 15.sp, color = Palette.Text, fontWeight = FontWeight.Medium)
+        if (partes.isNotEmpty()) Text(partes.joinToString("  ·  "), fontSize = 17.sp, color = Palette.Text, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
         if ('d' in d.versoes) Tag("DUB")
         if ('l' in d.versoes) Tag("LEG")
         if (d.k4) Tag("4K")
@@ -175,8 +183,8 @@ private fun MetaLine(d: Repository.Destaque, generosFicha: List<String>?) {
 @Composable
 private fun Tag(text: String) {
     Text(
-        text, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Palette.TextDim,
-        modifier = Modifier.border(1.dp, Color(0x66FFFFFF), RoundedCornerShape(3.dp)).padding(horizontal = 6.dp, vertical = 1.dp),
+        text, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Palette.Text, maxLines = 1,
+        modifier = Modifier.border(1.dp, Color(0x99FFFFFF), RoundedCornerShape(3.dp)).padding(horizontal = 7.dp, vertical = 1.dp),
     )
 }
 

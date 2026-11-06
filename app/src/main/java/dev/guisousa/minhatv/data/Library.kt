@@ -6,7 +6,7 @@ data class GroupInfo(val name: String, val count: Int)
 
 /** Série no catálogo (key = id do servidor). */
 @Serializable
-data class Show(val key: String, val name: String, val group: String, val logo: String?, val episodeCount: Int)
+data class Show(val key: String, val name: String, val group: String, val logo: String?, val episodeCount: Int, val year: Int? = null)
 
 /** Resumo do catálogo (só as categorias), usado para montar as telas. */
 class Library(
@@ -14,8 +14,9 @@ class Library(
     val liveGroups: List<GroupInfo>,
     val movieGroups: List<GroupInfo>,
     val showGroups: List<GroupInfo>,
+    /** Canais sem repetir (a lista "Principais" repete canais das outras categorias). */
+    val liveTotal: Int = liveGroups.sumOf { it.count },
 ) {
-    val liveTotal = liveGroups.sumOf { it.count }
     val movieTotal = movieGroups.sumOf { it.count }
     val showTotal = showGroups.sumOf { it.count }
     val isEmpty get() = liveTotal + movieTotal + showTotal == 0
