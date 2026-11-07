@@ -26,6 +26,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -54,6 +56,7 @@ import androidx.compose.ui.unit.sp
 import dev.guisousa.minhatv.data.ContentType
 import dev.guisousa.minhatv.data.Entry
 import dev.guisousa.minhatv.data.Library
+import dev.guisousa.minhatv.data.Conta
 import dev.guisousa.minhatv.data.Repository
 import dev.guisousa.minhatv.data.Show
 import dev.guisousa.minhatv.data.TituloFileira
@@ -838,6 +841,9 @@ fun SettingsScreen() {
             status?.let { Text(it, color = Palette.TextDim, fontSize = 15.sp, modifier = Modifier.padding(top = 10.dp)) }
         }
 
+        item { SettingsHeader("Conta") }
+        item { ContaRow() }
+
         item { SettingsHeader("Preferências") }
         item {
             var version by remember { mutableStateOf(Repository.preferredVersion) }
@@ -869,6 +875,87 @@ fun SettingsScreen() {
             }
         }
     }
+}
+
+@Composable
+private fun ContaRow() {
+    val usuario by Conta.usuario.collectAsState()
+    var entrando by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val u = usuario
+    if (u == null) {
+        ListRow(
+            title = "Sem conta",
+            subtitle = "Opcional. Entre com sua conta W4LLE para o histórico e a Minha lista irem junto para o celular, o Windows e o site.",
+            error = false,
+        ) { TvButton("Entrar", onClick = { entrando = true }) }
+    } else {
+        ListRow(
+            title = "Conectado como ${u.nome.ifBlank { "sua conta" }}",
+            subtitle = "Histórico e Minha lista sincronizam com esta conta.",
+            error = false,
+        ) {
+            TvButton("Sair", onClick = {
+                confirm(context, "Sair da conta?", "O app continua funcionando nesta TV, só para de sincronizar.", "Sair") { Conta.sair() }
+            })
+        }
+    }
+    if (entrando) EntrarDialog(onClose = { entrando = false })
+}
+
+/** Tela de entrar: QR + código. A pessoa entra pelo celular e a TV conecta sozinha. */
+@Composable
+private fun EntrarDialog(onClose: () -> Unit) {
+    var estado by remember { mutableStateOf<Conta.EstadoLogin?>(null) }
+    DisposableEffect(Unit) {
+        val job = Conta.esperarLogin { estado = it }
+        onDispose { job.cancel() }
+    }
+    LaunchedEffect(estado) {
+        if (estado is Conta.EstadoLogin.Pronto) { kotlinx.coroutines.delay(1800); onClose() }
+    }
+    val closeFocus = remember { FocusRequester() }
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onClose,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Box(Modifier.fillMaxSize().background(Color(0xF2000000)), contentAlignment = Alignment.Center) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(48.dp)) {
+                val e = estado
+                val codigo = (e as? Conta.EstadoLogin.Aguardando)?.codigo
+                Box(Modifier.size(260.dp).background(Color.White, RoundedCornerShape(10.dp)).padding(10.dp), contentAlignment = Alignment.Center) {
+                    if (codigo != null) QrCode("${Conta.PAGINA}#$codigo", Modifier.fillMaxSize())
+                    else Spinner(32.dp)
+                }
+                Column(Modifier.width(420.dp)) {
+                    Text("Entrar com a conta W4LLE", fontSize = 26.sp, fontWeight = FontWeight.SemiBold, color = Palette.Text)
+                    Spacer(Modifier.height(16.dp))
+                    when (e) {
+                        is Conta.EstadoLogin.Pronto -> Text("Pronto! Conectado como ${e.nome.ifBlank { "sua conta" }}.", fontSize = 18.sp, color = Palette.Text)
+                        is Conta.EstadoLogin.Entrando -> Text("Conectando…", fontSize = 18.sp, color = Palette.Text)
+                        else -> {
+                            Text(
+                                "Aponte a câmera do celular para o QR Code e entre com seu usuário e senha.\n\nOu abra no celular:",
+                                fontSize = 16.sp, color = Palette.TextDim, lineHeight = 24.sp,
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            Text(Conta.PAGINA.removePrefix("https://"), fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = Palette.Text)
+                            Spacer(Modifier.height(8.dp))
+                            Text("e digite o código", fontSize = 16.sp, color = Palette.TextDim)
+                            Spacer(Modifier.height(6.dp))
+                            Text(codigo?.let { Conta.mostrarCodigo(it) } ?: "…", fontSize = 40.sp, fontWeight = FontWeight.Bold, color = Palette.Text, letterSpacing = 4.sp)
+                            if (e is Conta.EstadoLogin.Erro) Text(e.msg, fontSize = 14.sp, color = Palette.Error, modifier = Modifier.padding(top = 8.dp))
+                            Spacer(Modifier.height(12.dp))
+                            Text("Não tem conta? Crie grátis em w4lle-tv.vercel.app", fontSize = 13.sp, color = Palette.TextFaint)
+                        }
+                    }
+                    Spacer(Modifier.height(24.dp))
+                    TvButton("Fechar", modifier = Modifier.focusRequester(closeFocus), onClick = onClose)
+                }
+            }
+        }
+    }
+    LaunchedEffect(Unit) { runCatching { closeFocus.requestFocus() } }
 }
 
 @Composable

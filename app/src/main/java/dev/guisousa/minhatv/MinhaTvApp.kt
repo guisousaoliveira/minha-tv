@@ -25,6 +25,7 @@ class MinhaTvApp : Application(), coil.ImageLoaderFactory {
         super.onCreate()
         useBrazilTimeIfUnset()
         Repository.init(this)
+        dev.guisousa.minhatv.data.Conta.init(this)
         // Não há mais atualização periódica em segundo plano (o app confere se as listas mudaram ao abrir):
         // cancela a que versões antigas deixaram agendada. WorkManager demora para iniciar: fora da thread principal.
         Thread { runCatching { androidx.work.WorkManager.getInstance(this).cancelUniqueWork("refresh-playlists") } }.start()
