@@ -64,14 +64,15 @@ internal fun xtreamHls(url: String): String? {
 }
 
 /**
- * Vídeo do canal em foco, tocando dentro do quadro da prévia. Usa o mesmo player da tela cheia ([LiveSession]):
- * abrir o canal amplia o vídeo que já está tocando, e voltar devolve ele para cá, sem carregar de novo.
- * Só começa depois de você parar um pouco no canal ([dwellMs]) e para quando a tela sai da frente
- * (trocou de aba, foi para os detalhes, app em segundo plano). [onShowing] avisa quando aparece a imagem.
+ * Vídeo do canal escolhido (OK na lista), tocando dentro do quadro da prévia. Usa o mesmo player da tela cheia
+ * ([LiveSession]): abrir o canal amplia o vídeo que já está tocando, e voltar devolve ele para cá, sem carregar
+ * de novo. Para quando a tela sai da frente (trocou de aba, foi para os detalhes, app em segundo plano).
+ * [dwellMs]: espera antes de trocar de canal (voltando da tela cheia num canal trocado com ▲▼, a prévia
+ * passa para ele nesse meio-tempo e nada é recarregado). [onShowing] avisa quando aparece a imagem.
  */
 @OptIn(UnstableApi::class)
 @Composable
-fun LivePreviewVideo(entry: Entry?, active: Boolean, modifier: Modifier = Modifier, dwellMs: Long = 800, onShowing: (Boolean) -> Unit = {}) {
+fun LivePreviewVideo(entry: Entry?, active: Boolean, modifier: Modifier = Modifier, dwellMs: Long = 300, onShowing: (Boolean) -> Unit = {}) {
     val context = LocalContext.current
     val player = remember { LiveSession.player(context) }
     var firstFrame by remember { mutableStateOf(false) }
@@ -90,9 +91,14 @@ fun LivePreviewVideo(entry: Entry?, active: Boolean, modifier: Modifier = Modifi
             }
         }
         player.addListener(l)
+        LiveSession.previews++
         onDispose {
+            LiveSession.previews--
             player.removeListener(l)
-            texture?.let { player.clearVideoTextureView(it) }
+            texture?.let {
+                player.clearVideoTextureView(it)
+                if (LiveSession.previewTexture?.get() === it) { LiveSession.previewTexture = null; LiveSession.onPreview = false }
+            }
             // saiu da tela de canais (outra aba, detalhes): para o vídeo, a não ser que a tela cheia esteja com ele
             if (!LiveSession.fullscreen) LiveSession.stop()
         }
@@ -105,10 +111,13 @@ fun LivePreviewVideo(entry: Entry?, active: Boolean, modifier: Modifier = Modifi
         owner.lifecycle.addObserver(obs)
         onDispose { owner.lifecycle.removeObserver(obs) }
     }
-    // voltou da tela cheia: o vídeo volta a ser desenhado aqui (a tela cheia tinha pegado a imagem para ela)
+    // voltou da tela cheia: o vídeo volta a ser desenhado aqui (normalmente a tela cheia já devolveu ao fechar)
     LaunchedEffect(resumed, texture) {
         val tv = texture
-        if (resumed && tv != null) player.setVideoTextureView(tv)
+        if (resumed && tv != null) {
+            LiveSession.previewTexture = java.lang.ref.WeakReference(tv)
+            LiveSession.showOnPreview()
+        }
     }
     val on = entry != null && active && resumed
     LaunchedEffect(entry?.url, on) {
@@ -126,11 +135,10 @@ fun LivePreviewVideo(entry: Entry?, active: Boolean, modifier: Modifier = Modifi
             player.playWhenReady = true
             if (vigiar(player, { firstFrame }, { failed }, onShowing)) return@LaunchedEffect
         }
-        // outro canal: o anterior fica mudo na hora e só é desligado depois da espera (voltando da tela cheia
-        // num canal trocado com ▲▼, a lista pula para ele nesse meio-tempo e nada é recarregado)
-        player.playWhenReady = false
+        // outro canal: espera um pouco antes de desligar o anterior (ver [dwellMs])
         firstFrame = false; failed = false
         delay(dwellMs)
+        player.playWhenReady = false
         player.stop(); player.clearMediaItems()
         LiveSession.channelUrl = null
         val sources = runCatching { Repository.sources(entry) }.getOrDefault(emptyList())
@@ -188,7 +196,14 @@ fun LivePreviewVideo(entry: Entry?, active: Boolean, modifier: Modifier = Modifi
     }
     val alpha by animateFloatAsState(if (firstFrame && on) 1f else 0f, tween(400), label = "preview")
     AndroidView(
-        factory = { ctx -> TextureView(ctx).also { texture = it; player.setVideoTextureView(it) } },
+        factory = { ctx ->
+            TextureView(ctx).also {
+                texture = it
+                LiveSession.previewTexture = java.lang.ref.WeakReference(it)
+                LiveSession.onPreview = false
+                if (!LiveSession.fullscreen) LiveSession.showOnPreview()
+            }
+        },
         modifier = modifier.graphicsLayer { this.alpha = alpha },
     )
 }

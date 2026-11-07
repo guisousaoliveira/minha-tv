@@ -399,6 +399,7 @@ class PlayerActivity : ComponentActivity() {
         exo.addAnalyticsListener(analyticsListener!!)
         player = exo
         playerView.player = exo
+        if (live) LiveSession.onPreview = false // a imagem agora é desenhada aqui
         playerListener = object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) = handleError(error)
 
@@ -1679,10 +1680,31 @@ class PlayerActivity : ComponentActivity() {
         if (sharedLive && isFinishing) {
             // aberto pela lista do Ao vivo (foco num canal "l:..."): a prévia pega o vídeo de volta, sem recarregar.
             // Se o canal foi trocado com ▲▼, a lista põe o foco nele (assim a prévia continua o mesmo canal)
-            backToPreview = dev.guisousa.minhatv.ui.FocusMemory.last?.startsWith("l:") == true && items.isNotEmpty()
+            // (a lista de uma categoria aberta pela tela inicial não tem prévia: aí o vídeo para)
+            backToPreview = dev.guisousa.minhatv.ui.FocusMemory.last?.startsWith("l:") == true && items.isNotEmpty() &&
+                LiveSession.previews > 0
             if (backToPreview) dev.guisousa.minhatv.ui.FocusMemory.last = "l:${current.url}" else LiveSession.stop()
             LiveSession.fullscreen = false
+            releaseSharedLive()
         }
+    }
+
+    /**
+     * Solta o player do ao vivo na hora em que a tela cheia fecha. O Android só chama onStop/onDestroy depois
+     * (às vezes ~10 s, enquanto a lista anima): até lá os vigias daqui continuavam mexendo no vídeo e a
+     * imagem da tela cheia continuava presa a ele, e a prévia ficava dando travadinhas com o som normal.
+     */
+    private fun releaseSharedLive() {
+        handler.removeCallbacksAndMessages(null)
+        val exo = player ?: return
+        analyticsListener?.let { exo.removeAnalyticsListener(it) }
+        playerListener?.let { exo.removeListener(it) }
+        analyticsListener = null; playerListener = null
+        // a imagem vai direto para o quadro da prévia (sem passar por "sem imagem", que obriga o vídeo a esperar
+        // o próximo quadro-chave); depois disso tirar o player daqui não mexe mais na imagem
+        if (backToPreview) LiveSession.showOnPreview()
+        playerView.player = null
+        player = null
     }
 
     override fun onStop() {
@@ -1691,7 +1713,7 @@ class PlayerActivity : ComponentActivity() {
         cancelZap()
         saveResume()
         // ao vivo voltando para a lista: continua tocando (agora na prévia). App em segundo plano: pausa
-        if (!(sharedLive && isFinishing && backToPreview)) player?.pause()
+        if (!(sharedLive && isFinishing)) player?.pause()
     }
 
     override fun onDestroy() {
