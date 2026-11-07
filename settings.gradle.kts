@@ -14,3 +14,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "MinhaTV"
 include(":app")
+include(":mobile")
