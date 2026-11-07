@@ -99,9 +99,12 @@ class Catalogo(private val dir: File, private val http: OkHttpClient, private va
         const val UA = "VLC/3.0.20 LibVLC/3.0.20"
         val json = Json { ignoreUnknownKeys = true; coerceInputValues = true; explicitNulls = false }
 
+        // ping a cada 10 s: uma conexão guardada que morreu (Wi-Fi da TV, roteador) é descoberta logo,
+        // em vez de o pedido ficar 1 minuto esperando resposta que nunca vem
         fun defaultHttp(): OkHttpClient = OkHttpClient.Builder()
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(60, TimeUnit.SECONDS)
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(20, TimeUnit.SECONDS)
+            .pingInterval(10, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
             .build()
 
@@ -147,19 +150,33 @@ class Catalogo(private val dir: File, private val http: OkHttpClient, private va
 
     private fun get(path: String): ByteArray {
         val req = Request.Builder().url(base + path).header("User-Agent", UA).build()
-        http.newCall(req).execute().use { r ->
-            if (!r.isSuccessful) throw IOException("HTTP ${r.code} em $path")
-            return r.body?.bytes() ?: throw IOException("resposta vazia em $path")
+        var erro: IOException? = null
+        // 3 tentativas: falhou de rede, a próxima vai numa conexão nova
+        repeat(3) { tentativa ->
+            try {
+                http.newCall(req).execute().use { r ->
+                    if (!r.isSuccessful) throw IOException("HTTP ${r.code} em $path")
+                    return r.body?.bytes() ?: throw IOException("resposta vazia em $path")
+                }
+            } catch (e: IOException) {
+                erro = e
+                if (e.message?.startsWith("HTTP 404") == true) throw e
+                android.util.Log.w("MinhaTV", "catálogo: $path falhou (tentativa ${tentativa + 1} de 3): $e")
+                http.connectionPool.evictAll()
+                if (tentativa < 2) Thread.sleep(500L * (tentativa + 1))
+            }
         }
+        throw erro ?: IOException("falhou $path")
     }
 
-    private fun download(parte: String, hash: String) {
+    private fun download(parte: String, hash: String): ByteArray {
         val bytes = get("$parte.json")
         val f = file(parte)
         val tmp = File(f.path + ".tmp")
         tmp.writeBytes(bytes)
         if (!tmp.renameTo(f)) { f.delete(); tmp.renameTo(f) }
         synchronized(hashes) { hashes[parte] = hash }
+        return bytes
     }
 
     /**
@@ -206,17 +223,29 @@ class Catalogo(private val dir: File, private val http: OkHttpClient, private va
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Map<String, Ficha>>?) = size > 6
     }
 
+    /** Por que a última ficha pedida não veio (para mostrar na tela). */
+    @Volatile var fichaErro: String? = null
+
     suspend fun ficha(serie: Boolean, id: Long): Ficha? = withContext(Dispatchers.IO) {
+        fichaErro = null
         val parte = fichaParte(serie, id, manifesto.fichas.coerceAtLeast(1))
-        synchronized(fichaCache) { fichaCache[parte] }?.let { return@withContext it[id.toString()] }
-        val hash = manifesto.partes[parte]
-        if (hash != null && (hashes[parte] != hash || !file(parte).exists())) {
-            runCatching { download(parte, hash); saveHashes() }
-                .onFailure { android.util.Log.w("MinhaTV", "catálogo: ficha $parte não baixou", it) }
-        }
-        val mapa = read(parte, fichaSer) ?: return@withContext null
+        synchronized(fichaCache) { fichaCache[parte] }?.get(id.toString())?.let { return@withContext it }
+        val hash = manifesto.partes[parte] ?: "?"
+        // baixa (se mudou ou não tem) e lê direto do que veio, sem depender do arquivo (a sincronização
+        // pode apagar a ficha velha no meio). Se o item não está na ficha guardada, baixa de novo uma vez.
+        fun baixar(): Map<String, Ficha>? = runCatching {
+            val bytes = download(parte, hash); saveHashes()
+            json.decodeFromString(fichaSer, bytes.decodeToString())
+        }.onFailure {
+            android.util.Log.w("MinhaTV", "catálogo: ficha $parte não baixou", it)
+            fichaErro = if (it is IOException) "não consegui baixar a ficha (${it.message ?: "sem internet?"})" else "ficha com defeito no servidor"
+        }.getOrNull()
+        val atual = hashes[parte] == hash
+        val noDisco = if (file(parte).exists()) read(parte, fichaSer) else null
+        // sem internet, a ficha velha do disco ainda serve (os links podem ter mudado, mas quase sempre tocam)
+        val mapa = noDisco?.takeIf { atual && it.containsKey(id.toString()) } ?: baixar() ?: noDisco ?: return@withContext null
         synchronized(fichaCache) { fichaCache[parte] = mapa }
-        mapa[id.toString()]
+        mapa[id.toString()].also { if (it == null && fichaErro == null) fichaErro = "este título não está mais no servidor (atualize a lista)" }
     }
 
     fun clearFichaCache() = synchronized(fichaCache) { fichaCache.clear() }

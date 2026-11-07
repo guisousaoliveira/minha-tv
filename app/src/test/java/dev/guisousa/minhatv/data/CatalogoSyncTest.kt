@@ -19,9 +19,13 @@ class CatalogoSyncTest {
     private val arquivos = HashMap<String, String>()
     private val pedidos = ArrayList<String>()
 
+    /** Quantos pedidos seguidos falham de rede (conexão morta) antes de responder. */
+    private var falhas = 0
+
     private val http = OkHttpClient.Builder().addInterceptor(Interceptor { chain ->
         val caminho = chain.request().url.encodedPath.removePrefix("/app/v2/")
         pedidos += caminho
+        if (falhas > 0) { falhas--; throw java.net.SocketTimeoutException("timeout") }
         val corpo = arquivos[caminho]
         Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
             .code(if (corpo != null) 200 else 404).message("x")
@@ -70,6 +74,40 @@ class CatalogoSyncTest {
         assertTrue(c.sync())
         assertEquals(listOf("manifesto.json", "filmes/101.json"), pedidos)
         assertEquals(2, c.filmes("101")!!.size)
+        dir.deleteRecursively()
+        Unit
+    }
+
+    @Test
+    fun fichaTentaDeNovoQuandoARedeFalhaEQuandoOItemNaoEstaNaGuardada() = runBlocking {
+        val dir = Files.createTempDirectory("ficha").toFile()
+        arquivos["categorias.json"] = """{"series":[]}"""
+        arquivos["fichas/s_001.json"] = """{"1":{"t":"A","eps":[[1,1,{"dub":[{"u":"http://x/1"}]}]]}}"""
+        manifesto("categorias" to "c1", "fichas/s_001" to "x1")
+        val c = Catalogo(dir, http, "http://teste/app/v2/")
+        c.sync()
+
+        // conexão morta nas 2 primeiras tentativas: a 3ª baixa
+        falhas = 2
+        assertEquals("A", c.ficha(true, 1)?.t)
+
+        // item novo (257 cai na mesma parte) que não está na ficha guardada: baixa de novo e acha
+        arquivos["fichas/s_001.json"] = """{"1":{"t":"A"},"257":{"t":"B"}}"""
+        c.clearFichaCache()
+        assertEquals("B", c.ficha(true, 257)?.t)
+
+        // fora do ar de vez: usa a ficha que já está no disco
+        c.clearFichaCache()
+        falhas = 100
+        manifesto("categorias" to "c1", "fichas/s_001" to "x2")
+        runCatching { c.sync() } // falha de rede no manifesto: segue com o que tem
+        assertEquals("B", c.ficha(true, 257)?.t)
+        falhas = 0
+
+        // não existe em lugar nenhum: diz o motivo
+        c.clearFichaCache()
+        assertEquals(null, c.ficha(true, 513))
+        assertTrue(c.fichaErro!!.contains("não está"))
         dir.deleteRecursively()
         Unit
     }

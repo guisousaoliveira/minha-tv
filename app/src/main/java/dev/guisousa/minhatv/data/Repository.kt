@@ -406,7 +406,7 @@ object Repository {
 
     suspend fun episodes(show: Show): Episodes = withContext(Dispatchers.IO) {
         val id = show.key.toLongOrNull() ?: return@withContext Episodes(emptyList(), "série desconhecida")
-        val f = catalogo.ficha(true, id) ?: return@withContext Episodes(emptyList(), "não consegui baixar a ficha (sem internet?)")
+        val f = catalogo.ficha(true, id) ?: return@withContext Episodes(emptyList(), catalogo.fichaErro ?: "não consegui baixar a ficha (sem internet?)")
         val eps = Catalogo.episodios(f).sortedWith(compareBy({ if (it.temporada == 0) Int.MAX_VALUE else it.temporada }, { it.numero }))
         val logo = show.logo ?: f.p
         val list = eps.map { episodioEntry(id, show.name, show.group, logo, it.temporada, it.numero) }
