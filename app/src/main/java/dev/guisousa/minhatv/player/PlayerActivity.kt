@@ -33,7 +33,6 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
-import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
@@ -66,8 +65,15 @@ object PlaybackQueue {
 
     fun start(context: Context, items: List<Entry>, index: Int, groupName: String? = null) {
         if (items.isEmpty()) return
-        // fecha a prévia do ao vivo antes (o servidor conta cada conexão como uma tela)
-        LivePreview.stop()
+        // filme/série: fecha o vídeo do ao vivo antes (o servidor conta cada conexão como uma tela).
+        // Canal ao vivo: o player de tela cheia aproveita o vídeo da prévia (ver LiveSession)
+        val live = items.getOrNull(index.coerceIn(0, items.size - 1))?.type == ContentType.LIVE
+        if (live) {
+            // marca já: a tela de canais "pausa" antes de a tela cheia abrir, e a prévia não pode parar o vídeo nessa hora
+            LiveSession.fullscreen = true
+        } else {
+            LivePreview.stop()
+        }
         this.items = items
         this.index = index.coerceIn(0, items.size - 1)
         this.groupName = groupName
@@ -96,6 +102,12 @@ object PlaybackQueue {
 class PlayerActivity : ComponentActivity() {
 
     private var player: ExoPlayer? = null
+    /** Ao vivo: o player é o da prévia ([LiveSession]); ao sair, os ouvintes saem e o vídeo continua na prévia. */
+    private var sharedLive = false
+    private var analyticsListener: androidx.media3.exoplayer.analytics.AnalyticsListener? = null
+    private var playerListener: Player.Listener? = null
+    /** Na abertura, o canal que já está tocando na prévia é aproveitado (uma vez só). */
+    private var adoptOnce = true
     private lateinit var playerView: PlayerView
     private lateinit var infoPanel: LinearLayout
     private lateinit var infoLogo: android.widget.ImageView
@@ -345,39 +357,12 @@ class PlayerActivity : ComponentActivity() {
         if (items.isEmpty()) { finish(); return }
         buildViews()
 
-        // mínimo = máximo: o player nunca para de puxar o sinal. Se parasse (como antes),
-        // a conexão ficava ociosa uns 40 s e o servidor do canal derrubava, fazendo a imagem piscar.
-        // ao vivo: reserva pequena (10 s) e começa rápido, como os apps de IPTV; filme: reserva grande
+        // ao vivo: o MESMO player da prévia (abrir o canal que já está na prévia só amplia o vídeo, sem recarregar;
+        // voltar devolve ele para a prévia). Filme/série: um player próprio, liberado ao sair.
         val live = items[index].type == ContentType.LIVE
-        // ao vivo igual ao Saimo: 32 s / 120 s / 1,5 s / 5 s e 96 MB; aparelho com pouca memória: 15/30/1,5/3 e 32 MB
-        val am = getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager
-        val mem = android.app.ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }
-        val lowRam = am.isLowRamDevice || mem.totalMem <= 1_610_612_736L
-        val loadControl = DefaultLoadControl.Builder()
-            .apply {
-                when {
-                    live && lowRam -> setBufferDurationsMs(15_000, 30_000, 1_500, 3_000).setTargetBufferBytes(32 * 1024 * 1024).setPrioritizeTimeOverSizeThresholds(false)
-                    live -> setBufferDurationsMs(32_000, 120_000, 1_500, 5_000).setTargetBufferBytes(96 * 1024 * 1024).setPrioritizeTimeOverSizeThresholds(true)
-                    lowRam -> setBufferDurationsMs(15_000, 30_000, 1_500, 3_000).setTargetBufferBytes(32 * 1024 * 1024).setPrioritizeTimeOverSizeThresholds(false)
-                    else -> setBufferDurationsMs(30_000, 50_000, 1_500, 3_000).setTargetBufferBytes(96 * 1024 * 1024).setPrioritizeTimeOverSizeThresholds(true)
-                }
-            }
-            .build()
-        val exo = ExoPlayer.Builder(this)
-            .setLoadControl(loadControl)
-            .setRenderersFactory(androidx.media3.exoplayer.DefaultRenderersFactory(this).setEnableDecoderFallback(true))
-            .setBandwidthMeter(androidx.media3.exoplayer.upstream.DefaultBandwidthMeter.Builder(this).setInitialBitrateEstimate(8_000_000L).build())
-            .setLivePlaybackSpeedControl(
-                androidx.media3.exoplayer.DefaultLivePlaybackSpeedControl.Builder()
-                    .setFallbackMinPlaybackSpeed(1.0f).setFallbackMaxPlaybackSpeed(1.04f).build(),
-            )
-            .build()
-        exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
-            .setPreferredAudioLanguages("pt", "por", "pt-BR")
-            .build()
-        // TVs que trocam a taxa de quadros sem piscar passam a mostrar filme 24 fps sem "tremidas"
-        exo.videoChangeFrameRateStrategy = C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_ONLY_IF_SEAMLESS
-        exo.addAnalyticsListener(object : androidx.media3.exoplayer.analytics.AnalyticsListener {
+        sharedLive = live
+        val exo = if (live) LiveSession.player(this).also { LiveSession.fullscreen = true } else buildPlayer(this, live = false)
+        analyticsListener = object : androidx.media3.exoplayer.analytics.AnalyticsListener {
             override fun onDroppedVideoFrames(t: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime, dropped: Int, elapsedMs: Long) {
                 android.util.Log.w("MinhaTV", "player: $dropped quadros perdidos em ${elapsedMs}ms")
             }
@@ -410,10 +395,11 @@ class PlayerActivity : ComponentActivity() {
             override fun onPlaybackStateChanged(t: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime, state: Int) {
                 if (state == Player.STATE_BUFFERING) android.util.Log.w("MinhaTV", "player: carregando (buffer)")
             }
-        })
+        }
+        exo.addAnalyticsListener(analyticsListener!!)
         player = exo
         playerView.player = exo
-        exo.addListener(object : Player.Listener {
+        playerListener = object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) = handleError(error)
 
             override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
@@ -464,7 +450,8 @@ class PlayerActivity : ComponentActivity() {
                     Player.STATE_IDLE -> hideLoading()
                 }
             }
-        })
+        }
+        exo.addListener(playerListener!!)
         play(index)
         playerView.requestFocus()
         handler.postDelayed(freezeWatch, 4000)
@@ -623,7 +610,10 @@ class PlayerActivity : ComponentActivity() {
         Repository.addRecent(e)
         if (isLive) Repository.lastChannelUrl = e.url
         sourcesJob?.cancel()
-        player?.stop()
+        // abriu o canal que já está tocando na prévia: continua o mesmo vídeo (sem parar nem carregar de novo)
+        val adopt = adoptOnce && isLive && LiveSession.isPlaying(e.url)
+        adoptOnce = false
+        if (!adopt) player?.stop()
         loadingText.text = "Abrindo ${e.name}…"
         if (!e.url.startsWith("v2:")) {
             sources = listOf(e)
@@ -634,7 +624,7 @@ class PlayerActivity : ComponentActivity() {
             sources = emptyList()
             sourceIndex = 0
             playing = null
-            loadingBox.visibility = View.VISIBLE
+            if (adopt) adoptPreview() else loadingBox.visibility = View.VISIBLE
         }
         setupControls()
         if (isLive) showInfo(manual = false) else { infoPanel.visibility = View.GONE; showControls() }
@@ -650,6 +640,14 @@ class PlayerActivity : ComponentActivity() {
             }
             sources = list
             sourceIndex = 0
+            if (adopt) {
+                // a fonte que a prévia está tocando passa a ser a atual (as outras ficam de reserva)
+                sourceIndex = list.indexOfFirst { it.url == LiveSession.sourceUrl }.coerceAtLeast(0)
+                playing = list[sourceIndex]
+                usingHlsVariant = LiveSession.playedUrl != null && LiveSession.playedUrl != LiveSession.sourceUrl
+                updateButtons()
+                return@launch
+            }
             playSource(list[0], resume = true)
             updateButtons()
             // filme/série: a versão escolhida (Dublado/Legendado) não existe: avisa em vez de trocar calado
@@ -693,6 +691,19 @@ class PlayerActivity : ComponentActivity() {
             segs.size == 3 && last.endsWith(".ts") && last.removeSuffix(".ts").all { it.isDigit() } -> "$base/live/${segs[0]}/${segs[1]}/${last.removeSuffix(".ts")}.m3u8$q"
             else -> null
         }
+    }
+
+    /** Herdou o vídeo da prévia: já está tocando, então nada de "Abrindo…" nem vigia da primeira imagem. */
+    private fun adoptPreview() {
+        val exo = player ?: return
+        firstFrame = true
+        sourcePlayed = true
+        readyOnce = exo.playbackState == Player.STATE_READY
+        lastPos = -1L; lastFrames = -1; frozenFor = -4000
+        livePos = -1L; liveStillMs = 0
+        exo.playWhenReady = true
+        hideLoading()
+        android.util.Log.i("MinhaTV", "player: continuando o vídeo da prévia (${LiveSession.playedUrl})")
     }
 
     private fun playSource(src: Entry, resume: Boolean) {
@@ -760,6 +771,7 @@ class PlayerActivity : ComponentActivity() {
             .build()
         exo.setMediaSource(factory.createMediaSource(item))
         exo.prepare()
+        if (isLive) LiveSession.loaded(current.url, src.url, url)
         var ask = false
         if (resume && !isLive) {
             val pos = Repository.getResume(current.url)
@@ -1659,18 +1671,43 @@ class PlayerActivity : ComponentActivity() {
         player?.let { if (it.mediaItemCount == 0) return; if (it.playbackState == Player.STATE_IDLE) it.prepare(); it.playWhenReady = true }
     }
 
+    /** Saindo para a lista de canais (que tem a prévia): o vídeo continua lá. Saindo para outra tela: para. */
+    private var backToPreview = false
+
+    override fun onPause() {
+        super.onPause()
+        if (sharedLive && isFinishing) {
+            // aberto pela lista do Ao vivo (foco num canal "l:..."): a prévia pega o vídeo de volta, sem recarregar.
+            // Se o canal foi trocado com ▲▼, a lista põe o foco nele (assim a prévia continua o mesmo canal)
+            backToPreview = dev.guisousa.minhatv.ui.FocusMemory.last?.startsWith("l:") == true && items.isNotEmpty()
+            if (backToPreview) dev.guisousa.minhatv.ui.FocusMemory.last = "l:${current.url}" else LiveSession.stop()
+            LiveSession.fullscreen = false
+        }
+    }
+
     override fun onStop() {
         super.onStop()
         Repository.playbackActive = false
         cancelZap()
         saveResume()
-        player?.pause()
+        // ao vivo voltando para a lista: continua tocando (agora na prévia). App em segundo plano: pausa
+        if (!(sharedLive && isFinishing && backToPreview)) player?.pause()
     }
 
     override fun onDestroy() {
         super.onDestroy()
         handler.removeCallbacksAndMessages(null)
-        player?.release()
+        val exo = player
+        if (sharedLive && exo != null) {
+            analyticsListener?.let { exo.removeAnalyticsListener(it) }
+            playerListener?.let { exo.removeListener(it) }
+            playerView.player = null
+            LiveSession.fullscreen = false
+        } else {
+            exo?.release()
+            // fechou antes de montar o player (lista vazia): a prévia volta a cuidar do vídeo
+            if (items.isEmpty()) LiveSession.fullscreen = false
+        }
         player = null
     }
 
