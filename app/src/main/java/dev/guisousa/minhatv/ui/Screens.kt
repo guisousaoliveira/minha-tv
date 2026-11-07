@@ -424,6 +424,18 @@ fun LiveScreen(lib: Library) {
     var group by rememberSaveable(lib.version) { mutableStateOf(startLiveGroup(lib)) }
     val channels = load(lib.version, group) { Repository.entries(ContentType.LIVE, group) }
     var focused by remember(group) { mutableStateOf<Entry?>(null) }
+    // canal na prévia: só muda com OK (andar com as setas não carrega nada). OK de novo nele: tela cheia
+    var previewing by remember { mutableStateOf<Entry?>(null) }
+    val context = LocalContext.current
+    val focusEnabled = LocalFocusEnabled.current
+    LaunchedEffect(focusEnabled) { if (!focusEnabled) previewing = null }
+    // voltou da tela cheia num canal trocado com ▲▼: a prévia fica nele (o vídeo continua, sem recarregar)
+    val restoreTick = FocusMemory.restore.intValue
+    LaunchedEffect(restoreTick, channels) {
+        if (!focusEnabled) return@LaunchedEffect
+        val u = dev.guisousa.minhatv.player.LiveSession.channelUrl ?: return@LaunchedEffect
+        if (previewing?.url != u) channels?.firstOrNull { it.url == u }?.let { previewing = it }
+    }
     // brilho de fundo na cor da categoria (Globo azul, Record vermelho...), sumindo no preto
     val tint by androidx.compose.animation.animateColorAsState(groupColor(focused?.group ?: group), tween(500), label = "tint")
     Box(
@@ -437,9 +449,14 @@ fun LiveScreen(lib: Library) {
         Row(Modifier.fillMaxSize().padding(top = 72.dp)) {
             GroupColumn(lib.liveGroups, lib.liveTotal, group, pinned = Repository.principaisGroup()) { group = it; Repository.lastLiveGroup = it ?: "" }
             Box(Modifier.weight(1f)) {
-                if (channels == null) Loading() else ChannelList(channels, groupName = group ?: "Todos", onFocused = { focused = it })
+                if (channels == null) Loading() else ChannelList(
+                    channels, groupName = group ?: "Todos", onFocused = { focused = it },
+                    onClick = { i, e ->
+                        if (previewing?.url == e.url) PlaybackQueue.start(context, channels, i, group ?: "Todos") else previewing = e
+                    },
+                )
             }
-            ChannelPreview(focused)
+            ChannelPreview(previewing ?: focused, video = previewing != null, fullscreenHint = previewing != null && previewing?.url == focused?.url)
         }
     }
 }
@@ -472,9 +489,12 @@ private fun groupColor(g: String?): Color {
     }
 }
 
-/** Painel à direita com o canal em foco: logo num quadro "ao vivo", o programa de agora e os próximos. */
+/**
+ * Painel à direita: o canal na prévia (ou, sem prévia, o canal em foco) num quadro "ao vivo", o programa de
+ * agora e os próximos. [video]: toca o canal no quadro. [fullscreenHint]: o foco está no canal da prévia.
+ */
 @Composable
-private fun ChannelPreview(e: Entry?) {
+private fun ChannelPreview(e: Entry?, video: Boolean, fullscreenHint: Boolean) {
     val epg by Repository.epg.collectAsState()
     val now = nowTicker()
     Column(Modifier.width(424.dp).fillMaxHeight().padding(end = 56.dp, top = 4.dp)) {
@@ -485,7 +505,7 @@ private fun ChannelPreview(e: Entry?) {
         ) {
             Logo(e.logo, Modifier.align(Alignment.Center).size(width = 200.dp, height = 112.dp), fallback = e.name)
             // o canal tocando de verdade (sem tirar a logo até a imagem chegar)
-            dev.guisousa.minhatv.player.LivePreviewVideo(e, active = LocalFocusEnabled.current, modifier = Modifier.matchParentSize())
+            dev.guisousa.minhatv.player.LivePreviewVideo(if (video) e else null, active = LocalFocusEnabled.current, modifier = Modifier.matchParentSize())
             Row(
                 Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(4.dp)).background(Palette.Live).padding(horizontal = 8.dp, vertical = 3.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -501,7 +521,16 @@ private fun ChannelPreview(e: Entry?) {
                 )
             }
         }
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(8.dp))
+        Text(
+            when {
+                !video -> "OK: ver a prévia"
+                fullscreenHint -> "OK de novo: tela cheia"
+                else -> "OK: trocar a prévia para este canal"
+            },
+            fontSize = 12.sp, color = Palette.TextFaint, maxLines = 1, overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(Modifier.height(10.dp))
         val progs = epg.forEntry(e).orEmpty()
         val cur = progs.firstOrNull { it.start <= now && now < it.stop }
         val upcoming = progs.filter { it.start > now }.take(3)
@@ -537,7 +566,13 @@ private fun ChannelPreview(e: Entry?) {
 }
 
 @Composable
-fun ChannelList(channels: List<Entry>, modifier: Modifier = Modifier, groupName: String? = null, onFocused: ((Entry) -> Unit)? = null) {
+fun ChannelList(
+    channels: List<Entry>,
+    modifier: Modifier = Modifier,
+    groupName: String? = null,
+    onFocused: ((Entry) -> Unit)? = null,
+    onClick: ((Int, Entry) -> Unit)? = null,
+) {
     val context = LocalContext.current
     val epg by Repository.epg.collectAsState()
     val favorites by Repository.favorites.collectAsState()
@@ -551,7 +586,7 @@ fun ChannelList(channels: List<Entry>, modifier: Modifier = Modifier, groupName:
         itemsIndexed(channels) { i, e ->
             FocusBox(
                 // a fila do player é esta lista: ▲▼ no player andam nela
-                onClick = { PlaybackQueue.start(context, channels, i, groupName) },
+                onClick = { if (onClick != null) onClick(i, e) else PlaybackQueue.start(context, channels, i, groupName) },
                 onLongClick = { toggleFav(context, e) },
                 onFocused = onFocused?.let { cb -> { cb(e) } },
                 modifier = Modifier.fillMaxWidth(),

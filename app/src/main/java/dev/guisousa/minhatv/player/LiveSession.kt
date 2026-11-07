@@ -24,6 +24,20 @@ object LiveSession {
     @Volatile var playedUrl: String? = null
     /** A tela cheia está usando o player: a prévia não troca nem para nada. */
     @Volatile var fullscreen = false
+    /** Quantos quadros de prévia estão na tela (sem nenhum, sair da tela cheia para o vídeo). Só na thread principal. */
+    var previews = 0
+    /** Quadro da prévia na tela e se o vídeo está sendo desenhado nele agora (a tela cheia desenha na dela). */
+    var previewTexture: java.lang.ref.WeakReference<android.view.TextureView>? = null
+    var onPreview = false
+
+    /** Passa a imagem para o quadro da prévia (se houver um). Só na thread principal. */
+    fun showOnPreview(): Boolean {
+        val tv = previewTexture?.get() ?: return false
+        val p = exo ?: return false
+        if (!onPreview) p.setVideoTextureView(tv)
+        onPreview = true
+        return true
+    }
 
     fun player(context: Context): ExoPlayer = exo ?: buildPlayer(context.applicationContext, live = true).also { exo = it }
 
