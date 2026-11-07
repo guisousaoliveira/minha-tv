@@ -1,0 +1,8 @@
+--------- beginning of main
+--------- beginning of system
+11-07 18:09:43.027  3049  3133 I MinhaTV : catálogo ef67bff1: 1489 canais, 29540 filmes, 11430 séries
+11-07 18:11:43.659  3049  3049 W MinhaTV : player: carregando (buffer)
+11-07 18:11:45.145  3049  3049 W MinhaTV : player: falha ao baixar pedaço de vídeo (http=404 v)
+11-07 18:11:45.189  3049  3049 W MinhaTV : player: erro ERROR_CODE_IO_BAD_HTTP_STATUS http=404 morto=true
+11-07 18:11:45.189  3049  3049 W MinhaTV : player: fora do ar em todas as fontes
+11-07 18:12:23.181  3049  5098 W MinhaTV : player: playlist redirecionada, as próximas atualizações vão pelo link original
