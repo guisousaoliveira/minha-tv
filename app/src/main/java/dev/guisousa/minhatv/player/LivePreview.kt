@@ -26,7 +26,6 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
-import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import dev.guisousa.minhatv.data.Entry
@@ -36,10 +35,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 
-/** Player da prévia que está aberto agora (o player de tela cheia fecha ele antes de abrir: o servidor conta telas). */
+/** Memória da prévia do ao vivo (o player em si é o [LiveSession], dividido com a tela cheia). */
 object LivePreview {
-    @Volatile internal var current: ExoPlayer? = null
-    fun stop() { current?.let { it.stop(); it.clearMediaItems() } }
+    /** Para o vídeo do ao vivo (o servidor conta cada conexão como uma tela). */
+    fun stop() = LiveSession.stop()
     /** Servidores que não deram a versão HLS: a prévia vai direto no .ts deles. */
     internal val noHls = java.util.Collections.synchronizedSet(HashSet<String>())
     /** Endereço que já tocou para cada canal: na próxima vez ele é o primeiro a tentar. */
@@ -65,35 +64,40 @@ internal fun xtreamHls(url: String): String? {
 }
 
 /**
- * Vídeo do canal em foco, tocando dentro do quadro da prévia.
+ * Vídeo do canal em foco, tocando dentro do quadro da prévia. Usa o mesmo player da tela cheia ([LiveSession]):
+ * abrir o canal amplia o vídeo que já está tocando, e voltar devolve ele para cá, sem carregar de novo.
  * Só começa depois de você parar um pouco no canal ([dwellMs]) e para quando a tela sai da frente
- * (abriu o player, trocou de aba, foi para os detalhes). [onShowing] avisa quando aparece a imagem.
+ * (trocou de aba, foi para os detalhes, app em segundo plano). [onShowing] avisa quando aparece a imagem.
  */
 @OptIn(UnstableApi::class)
 @Composable
 fun LivePreviewVideo(entry: Entry?, active: Boolean, modifier: Modifier = Modifier, dwellMs: Long = 800, onShowing: (Boolean) -> Unit = {}) {
     val context = LocalContext.current
-    val player = remember {
-        // pouco buffer: a prévia começa rápido e não segura banda à toa
-        val load = DefaultLoadControl.Builder().setBufferDurationsMs(2_000, 8_000, 800, 1_500).build()
-        ExoPlayer.Builder(context).setLoadControl(load).build().apply { playWhenReady = true }
-    }
+    val player = remember { LiveSession.player(context) }
     var firstFrame by remember { mutableStateOf(false) }
     var failed by remember { mutableStateOf(false) }
+    var texture by remember { mutableStateOf<TextureView?>(null) }
     DisposableEffect(player) {
         val l = object : Player.Listener {
             override fun onRenderedFirstFrame() { firstFrame = true }
-            override fun onPlayerError(error: PlaybackException) { failed = true; firstFrame = false }
+            override fun onPlayerError(error: PlaybackException) {
+                if (LiveSession.fullscreen) return // na tela cheia quem cuida dos erros é o player de lá
+                // ficou para trás da janela ao vivo (pausa, rede lenta): volta para o ao vivo em vez de esconder o vídeo
+                if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
+                    player.seekToDefaultPosition(); player.prepare(); return
+                }
+                failed = true; firstFrame = false
+            }
         }
         player.addListener(l)
-        LivePreview.current = player
         onDispose {
             player.removeListener(l)
-            if (LivePreview.current === player) LivePreview.current = null
-            player.release()
+            texture?.let { player.clearVideoTextureView(it) }
+            // saiu da tela de canais (outra aba, detalhes): para o vídeo, a não ser que a tela cheia esteja com ele
+            if (!LiveSession.fullscreen) LiveSession.stop()
         }
     }
-    // app em segundo plano ou player de tela cheia aberto: para a prévia
+    // app em segundo plano ou player de tela cheia aberto
     val owner = LocalLifecycleOwner.current
     var resumed by remember { mutableStateOf(owner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) }
     DisposableEffect(owner) {
@@ -101,13 +105,34 @@ fun LivePreviewVideo(entry: Entry?, active: Boolean, modifier: Modifier = Modifi
         owner.lifecycle.addObserver(obs)
         onDispose { owner.lifecycle.removeObserver(obs) }
     }
+    // voltou da tela cheia: o vídeo volta a ser desenhado aqui (a tela cheia tinha pegado a imagem para ela)
+    LaunchedEffect(resumed, texture) {
+        val tv = texture
+        if (resumed && tv != null) player.setVideoTextureView(tv)
+    }
     val on = entry != null && active && resumed
     LaunchedEffect(entry?.url, on) {
-        player.stop(); player.clearMediaItems()
-        firstFrame = false; failed = false
         onShowing(false)
-        if (!on || entry == null) return@LaunchedEffect
+        if (!on || entry == null) {
+            firstFrame = false
+            // tela cheia aberta por cima: o vídeo continua lá, não mexe. Senão (outra aba, segundo plano): para.
+            if (!LiveSession.fullscreen) LiveSession.stop()
+            return@LaunchedEffect
+        }
+        // o canal já está tocando (voltou da tela cheia, ou o foco voltou para ele): só mostra, sem recarregar
+        if (LiveSession.isPlaying(entry.url)) {
+            failed = false
+            if (player.playbackState == Player.STATE_READY) firstFrame = true
+            player.playWhenReady = true
+            if (vigiar(player, { firstFrame }, { failed }, onShowing)) return@LaunchedEffect
+        }
+        // outro canal: o anterior fica mudo na hora e só é desligado depois da espera (voltando da tela cheia
+        // num canal trocado com ▲▼, a lista pula para ele nesse meio-tempo e nada é recarregado)
+        player.playWhenReady = false
+        firstFrame = false; failed = false
         delay(dwellMs)
+        player.stop(); player.clearMediaItems()
+        LiveSession.channelUrl = null
         val sources = runCatching { Repository.sources(entry) }.getOrDefault(emptyList())
             .filter { !it.url.startsWith("v2:") }.ifEmpty { if (entry.url.startsWith("v2:")) emptyList() else listOf(entry) }
         fun hostOf(u: String) = android.net.Uri.parse(u).host.orEmpty()
@@ -138,29 +163,60 @@ fun LivePreviewVideo(entry: Entry?, active: Boolean, modifier: Modifier = Modifi
                 val factory = DefaultMediaSourceFactory(DefaultDataSource.Factory(context, StableRedirectDataSource.Factory(http)))
                 val item = MediaItem.Builder().setUri(url)
                     .apply { if (url.lowercase().substringBefore('?').endsWith(".m3u8")) setMimeType(MimeTypes.APPLICATION_M3U8) }
+                    // igual à tela cheia: nunca desacelera e acelera no máximo 4% para alcançar o vivo
+                    .setLiveConfiguration(MediaItem.LiveConfiguration.Builder().setMinPlaybackSpeed(1.0f).setMaxPlaybackSpeed(1.04f).build())
+                    .setMediaMetadata(androidx.media3.common.MediaMetadata.Builder().setTitle(src.name).build())
                     .build()
                 player.setMediaSource(factory.createMediaSource(item))
                 player.prepare()
+                player.playWhenReady = true
+                LiveSession.loaded(entry.url, src.url, url)
                 // servidor que não responde em 8 s: passa para o próximo (alguns levam ~4 s só para responder)
                 val ok = withTimeoutOrNull(8_000) { snapshotFlow { firstFrame || failed }.first { it } } == true && firstFrame
                 if (ok) {
                     LivePreview.lastOk[key] = url; LivePreview.goodHosts += host; LivePreview.badHosts -= host
-                    onShowing(true)
-                    // se cair depois, só esconde o vídeo (a logo volta a aparecer)
-                    snapshotFlow { failed }.first { it }
-                    onShowing(false)
-                    return@LaunchedEffect
+                    if (vigiar(player, { firstFrame }, { failed }, onShowing)) return@LaunchedEffect
+                    // caiu de vez: tenta a próxima fonte
                 }
                 if (url == hls && failed) LivePreview.noHls += host
                 else if (host !in LivePreview.goodHosts) LivePreview.badHosts += host
                 if (LivePreview.lastOk[key] == url) LivePreview.lastOk.remove(key)
                 player.stop()
+                LiveSession.channelUrl = null
             }
         }
     }
     val alpha by animateFloatAsState(if (firstFrame && on) 1f else 0f, tween(400), label = "preview")
     AndroidView(
-        factory = { ctx -> TextureView(ctx).also { player.setVideoTextureView(it) } },
+        factory = { ctx -> TextureView(ctx).also { texture = it; player.setVideoTextureView(it) } },
         modifier = modifier.graphicsLayer { this.alpha = alpha },
     )
+}
+
+/**
+ * Vigia o vídeo da prévia enquanto toca: imagem parada (o relógio do vídeo não anda) por 8 s, ou carregando
+ * há mais de 10 s, reconecta no mesmo canal (até 2 vezes). Devolve true se ficou tocando até a prévia sair
+ * (coroutine cancelada) e false se caiu de vez (aí quem chamou tenta outra fonte).
+ */
+private suspend fun vigiar(player: ExoPlayer, firstFrame: () -> Boolean, failed: () -> Boolean, onShowing: (Boolean) -> Unit): Boolean {
+    var reconexoes = 0
+    var ultimaPos = -1L
+    var paradoDesde = 0L
+    while (true) {
+        onShowing(firstFrame())
+        delay(1_000)
+        if (failed()) { onShowing(false); return false }
+        if (LiveSession.fullscreen) continue
+        val agora = android.os.SystemClock.uptimeMillis()
+        val pos = player.currentPosition
+        val andando = player.playbackState == Player.STATE_READY && player.isPlaying && pos != ultimaPos
+        if (andando || ultimaPos < 0) { ultimaPos = pos; paradoDesde = agora; continue }
+        val limite = if (player.playbackState == Player.STATE_BUFFERING) 10_000 else 8_000
+        if (agora - paradoDesde < limite) continue
+        if (reconexoes >= 2) { onShowing(false); return false }
+        reconexoes++
+        android.util.Log.w("MinhaTV", "prévia: imagem parada, reconectando ($reconexoes de 2)")
+        player.seekToDefaultPosition(); player.prepare(); player.playWhenReady = true
+        ultimaPos = -1L; paradoDesde = agora
+    }
 }
