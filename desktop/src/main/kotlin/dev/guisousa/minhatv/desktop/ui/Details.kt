@@ -45,6 +45,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.FilterQuality
 import coil3.compose.AsyncImage
 import dev.guisousa.minhatv.data.Entry
 import dev.guisousa.minhatv.data.Ficha
@@ -69,7 +70,7 @@ private fun DetailsBackdrop(fundo: String?, content: @Composable () -> Unit) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         if (fundo != null) {
             Box(Modifier.align(Alignment.TopEnd).fillMaxWidth(0.75f).height(maxHeight * 0.75f)) {
-                AsyncImage(fundo, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alignment = Alignment.TopCenter)
+                AsyncImage(nitida(fundo, fundo = true), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alignment = Alignment.TopCenter, filterQuality = FilterQuality.High)
                 Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to Palette.Background, 0.5f to Color(0x99000000), 1f to Color.Transparent)))
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.45f to Color.Transparent, 1f to Palette.Background)))
             }

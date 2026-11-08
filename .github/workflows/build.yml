@@ -69,13 +69,25 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Testes e instalador do Windows
+      - name: Testes e app do Windows
         shell: bash
         env:
           APP_VERSION: 1.0.${{ github.run_number }}
+        run: ./gradlew --no-daemon :desktop:test :desktop:createDistributable
+
+      # instalador próprio (Inno Setup): telas do Bad Wolf TV e "Você quer instalar por cima?"
+      - name: Instalador do Windows
+        shell: pwsh
+        env:
+          APP_VERSION: 1.0.${{ github.run_number }}
         run: |
-          ./gradlew --no-daemon :desktop:test :desktop:packageExe
-          cp "desktop/build/compose/binaries/main/exe/Bad Wolf TV-$APP_VERSION.exe" BadWolfTV-Windows.exe
+          $is = "$env:RUNNER_TEMP\innosetup.exe"
+          Invoke-WebRequest "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe" -OutFile $is
+          if ((Get-FileHash $is -Algorithm SHA256).Hash -ne "9C73C3BAE7ED48D44112A0F48E66742C00090BDB5BEF71D9D3C056C66E97B732") { throw "Inno Setup baixado não confere" }
+          Start-Process $is -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/CURRENTUSER", "/DIR=$env:RUNNER_TEMP\inno" -Wait
+          & "$env:RUNNER_TEMP\inno\ISCC.exe" /Q "/DAppVersion=$env:APP_VERSION" desktop\instalador\BadWolfTV.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item desktop\build\instalador\BadWolfTV-Windows.exe BadWolfTV-Windows.exe
 
       - name: Juntar o instalador ao release
         uses: softprops/action-gh-release@v2

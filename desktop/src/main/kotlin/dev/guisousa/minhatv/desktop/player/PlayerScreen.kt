@@ -49,6 +49,10 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
+import org.jetbrains.skia.FilterMipmap
+import org.jetbrains.skia.FilterMode
+import org.jetbrains.skia.MipmapMode
+import org.jetbrains.skia.SamplingMode
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerEventType
@@ -95,7 +99,12 @@ fun VideoView(player: PlayerController, modifier: Modifier = Modifier, onClick: 
                 val dw = w * s; val dh = h * s
                 val x = (size.width - dw) / 2; val y = (size.height - dh) / 2
                 val img = Image.makeFromBitmap(bmp)
-                drawIntoCanvas { it.nativeCanvas.drawImageRect(img, Rect.makeXYWH(x, y, dw, dh)) }
+                // sem dizer a amostragem o Skia usa "vizinho mais próximo" e o vídeo fica quadriculado:
+                // ampliando usa cúbica (Mitchell), reduzindo usa linear
+                val sampling = if (s > 1f) SamplingMode.MITCHELL else FilterMipmap(FilterMode.LINEAR, MipmapMode.NONE)
+                drawIntoCanvas {
+                    it.nativeCanvas.drawImageRect(img, Rect.makeWH(w, h), Rect.makeXYWH(x, y, dw, dh), sampling, null, true)
+                }
                 img.close()
             }
         }

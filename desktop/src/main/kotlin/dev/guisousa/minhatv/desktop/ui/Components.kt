@@ -60,6 +60,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.FilterQuality
 import coil3.compose.AsyncImage
 import dev.guisousa.minhatv.data.ContentType
 import dev.guisousa.minhatv.data.Entry
@@ -77,6 +78,15 @@ fun rememberHover(): Pair<MutableInteractionSource, Boolean> {
     return src to h
 }
 
+/**
+ * Pôster/fundo do TMDB numa resolução boa para tela de PC: o catálogo traz pôster w342 e fundo w1280,
+ * que ficam borrados/pixelados esticados numa tela grande ou com escala do Windows.
+ */
+fun nitida(url: String?, fundo: Boolean = false): String? =
+    url?.replace(tmdbTamanho, if (fundo) "/t/p/original/" else "/t/p/w500/")
+
+private val tmdbTamanho = Regex("""/t/p/(w\d+(_and_h\d+_bestv2)?|original)/""")
+
 /** Imagem da internet com um nome no lugar quando não abre. */
 @Composable
 fun NetImage(url: String?, modifier: Modifier = Modifier, crop: Boolean = true, fallback: String? = null, alignment: Alignment = Alignment.Center) {
@@ -84,8 +94,9 @@ fun NetImage(url: String?, modifier: Modifier = Modifier, crop: Boolean = true, 
     Box(modifier) {
         if (!url.isNullOrBlank() && !broken) {
             AsyncImage(
-                model = url, contentDescription = null, modifier = Modifier.fillMaxSize(),
+                model = nitida(url), contentDescription = null, modifier = Modifier.fillMaxSize(),
                 contentScale = if (crop) ContentScale.Crop else ContentScale.Fit, alignment = alignment,
+                filterQuality = FilterQuality.High,
                 onError = { broken = true },
             )
         }
@@ -143,7 +154,7 @@ fun Poster(
         HoverCard(onClick, Modifier.fillMaxWidth().aspectRatio(2f / 3f), onHover = onHover) {
             var broken by remember(image) { mutableStateOf(false) }
             if (!image.isNullOrBlank() && !broken) {
-                AsyncImage(image, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, onError = { broken = true })
+                AsyncImage(nitida(image), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, filterQuality = FilterQuality.High, onError = { broken = true })
             } else {
                 Text(
                     title.trimStart { !it.isLetterOrDigit() }.take(1).uppercase(), Modifier.align(Alignment.Center),
@@ -324,7 +335,7 @@ fun CinemaHeader(hero: HeroItem?, modifier: Modifier = Modifier, extra: @Composa
     Box(modifier.fillMaxWidth()) {
         Crossfade(fundo, Modifier.align(Alignment.TopEnd).fillMaxWidth(0.72f).fillMaxHeight(), animationSpec = tween(300)) { img ->
             if (img != null) Box(Modifier.fillMaxSize()) {
-                AsyncImage(img, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alignment = Alignment.TopCenter)
+                AsyncImage(nitida(img, fundo = true), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alignment = Alignment.TopCenter, filterQuality = FilterQuality.High)
                 Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to Palette.Background, 0.45f to Color(0x99000000), 1f to Color.Transparent)))
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.5f to Color.Transparent, 1f to Palette.Background)))
             }

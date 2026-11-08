@@ -1,5 +1,7 @@
 package dev.guisousa.minhatv.desktop
 
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -119,7 +121,21 @@ fun main() {
             if (nav.fullscreen) {
                 if (state.placement != WindowPlacement.Fullscreen) lastPlacement = state.placement
                 state.placement = WindowPlacement.Fullscreen
-            } else if (state.placement == WindowPlacement.Fullscreen) state.placement = lastPlacement
+            } else if (state.placement == WindowPlacement.Fullscreen) {
+                // No Windows, ir direto de tela cheia para maximizada deixa a janela presa sem a barra
+                // de título, cobrindo a tela toda. Volta primeiro para janela normal e só depois maximiza.
+                state.placement = WindowPlacement.Floating
+                if (lastPlacement == WindowPlacement.Maximized) {
+                    delay(200)
+                    if (!nav.fullscreen) state.placement = WindowPlacement.Maximized
+                }
+            }
+        }
+        // se a janela sair da tela cheia por fora (Windows+seta, etc.), o app fica sabendo
+        LaunchedEffect(Unit) {
+            snapshotFlow { state.placement }.collect { pl ->
+                if (pl != WindowPlacement.Fullscreen && nav.fullscreen) nav.fullscreen = false
+            }
         }
         Window(
             onCloseRequest = {
@@ -148,7 +164,8 @@ private fun handleKey(nav: Nav, key: Key, alt: Boolean): Boolean {
     val typing = nav.top == null && nav.tab == Tab.SEARCH
     if (key == Key.F11 || (key == Key.Enter && alt)) { nav.fullscreen = !nav.fullscreen; return true }
     if (key == Key.Escape) {
-        if (nav.fullscreen && !inPlayer) { nav.fullscreen = false; return true }
+        // Esc sai da tela cheia primeiro (como no navegador); de novo, volta uma tela
+        if (nav.fullscreen) { nav.fullscreen = false; return true }
         return nav.back()
     }
     if (typing) return false
