@@ -32,6 +32,9 @@ const val SAFARI_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebK
  * Versão HLS de um link .ts do Xtream (mesma regra do app da TV): o HLS costuma abrir mais rápido e
  * aguentar melhor quedas; se falhar, volta para o .ts.
  */
+fun isHls(url: String): Boolean =
+    runCatching { java.net.URI(url).path.orEmpty() }.getOrDefault("").let { it.endsWith(".m3u8") || it.endsWith(".m3u") }
+
 fun hlsVariant(url: String): String? {
     val u = runCatching { java.net.URI(url) }.getOrNull() ?: return null
     val path = u.path ?: return null
@@ -177,7 +180,9 @@ class PlayerController {
         Log.i("tocando ${item?.name} fonte ${sourceIndex + 1}/${sources.size}: $url")
         attempt?.cancel()
         val myUrl = url
-        p.submit { p.media().play(url, *opts.toTypedArray()) }
+        // HLS ao vivo passa pelo proxy local, que atualiza a lista sempre pelo link original
+        val playUrl = if (live && isHls(url)) LiveProxy.endereco(url, src.userAgent ?: SAFARI_UA, src.referrer) else url
+        p.submit { p.media().play(playUrl, *opts.toTypedArray()) }
         attempt = scope.launch {
             delay(if (live) 12_000 else 25_000)
             if (currentUrl == myUrl && !gotFrame) onError("sem imagem depois do tempo limite")
@@ -200,7 +205,7 @@ class PlayerController {
         val e = item ?: return
         Log.w("falhou ${e.name} fonte ${sourceIndex + 1} (${currentUrl}): $why")
         val src = sources.getOrNull(sourceIndex) ?: return
-        if (gotFrame && live && liveRetries < 3) {
+        if (gotFrame && live && liveRetries < 8) {
             // canal que já estava tocando e caiu: reabre a mesma fonte
             liveRetries++
             start(src, 0)

@@ -11,7 +11,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
-val appVersion = "1.0.0"
+// versão vem do GitHub (1.0.N, o mesmo número do APK da TV); no PC fica 1.0.0
+val appVersion = System.getenv("APP_VERSION")?.takeIf { it.isNotBlank() } ?: "1.0.0"
 
 java {
     sourceCompatibility = JavaVersion.VERSION_17
@@ -93,7 +94,7 @@ compose.desktop {
             description = "Bad Wolf TV - filmes, séries e TV ao vivo"
             vendor = "Bad Wolf"
             copyright = "Bad Wolf TV"
-            modules("java.naming", "java.management", "jdk.unsupported", "jdk.crypto.ec", "java.net.http")
+            modules("java.naming", "java.management", "jdk.unsupported", "jdk.crypto.ec", "java.net.http", "jdk.httpserver")
             appResourcesRootDir.set(vlcResources)
             windows {
                 iconFile.set(project.file("src/main/resources/icone.ico"))

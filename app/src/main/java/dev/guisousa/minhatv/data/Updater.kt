@@ -43,8 +43,10 @@ object Updater {
             val o = Json.parseToJsonElement(text).jsonObject
             val tag = o["tag_name"]?.jsonPrimitive?.content ?: return@runCatching null
             val code = tag.substringAfterLast('.').toIntOrNull() ?: return@runCatching null
-            val apk = o["assets"]?.jsonArray?.map { it.jsonObject }
-                ?.firstOrNull { it["name"]?.jsonPrimitive?.content?.endsWith(".apk") == true }
+            // o release também tem o APK do celular e o instalador do Windows: pega o da TV pelo nome
+            val assets = o["assets"]?.jsonArray?.map { it.jsonObject }.orEmpty()
+            val apk = (assets.firstOrNull { it["name"]?.jsonPrimitive?.content == "MinhaTV.apk" }
+                ?: assets.firstOrNull { it["name"]?.jsonPrimitive?.content?.endsWith(".apk") == true })
                 ?.get("browser_download_url")?.jsonPrimitive?.content ?: return@runCatching null
             if (code > BuildConfig.VERSION_CODE) Release(code, tag.removePrefix("v"), apk) else null
         }.getOrNull()
