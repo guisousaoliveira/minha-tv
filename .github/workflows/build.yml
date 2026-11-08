@@ -30,14 +30,15 @@ jobs:
       - name: Renomear APKs
         run: |
           cp app/build/outputs/apk/release/app-release.apk MinhaTV.apk
-          cp mobile/build/outputs/apk/release/mobile-release.apk BadWolfTV-celular.apk
+          cp mobile/build/outputs/apk/release/mobile-release.apk Mobile-BadWolfTV.apk
 
       - uses: actions/upload-artifact@v4
         with:
           name: MinhaTV-apk
           path: MinhaTV.apk
 
-      # o APK da TV vai sozinho e primeiro: TVs com o app antigo baixam o primeiro .apk do release
+      # TVs com o app antigo baixam o primeiro .apk do release, e o GitHub lista em ordem alfabética:
+      # o do celular precisa ter nome depois de "MinhaTV.apk" (por isso "Mobile-...")
       - name: Publicar release
         if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
@@ -52,7 +53,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.${{ github.run_number }}
-          files: BadWolfTV-celular.apk
+          files: Mobile-BadWolfTV.apk
 
   windows:
     needs: build
