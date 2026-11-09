@@ -1,0 +1,10 @@
+--------- beginning of system
+--------- beginning of main
+11-09 00:50:30.349  3194  3221 I MinhaTV : catálogo e6b1d5e0: 1489 canais, 29234 filmes, 11430 séries
+11-09 00:52:30.709  3194  3194 W MinhaTV : player: carregando (buffer)
+11-09 00:52:31.753  3194  3194 I MinhaTV : player: faixas de áudio 1, legendas 0 · versão escolhida dub, versão do item dub
+11-09 00:52:31.893  3194  3194 W MinhaTV : player: vídeo a 25.0 fps, modos da tela: 60.00
+11-09 00:52:31.893  3194  3194 W MinhaTV : player: vídeo 1920x1080 25.0 fps video/avc
+11-09 00:52:38.047  3194  3194 W MinhaTV : player: carregando (buffer)
+11-09 00:52:38.057  3194  3194 W MinhaTV : player: 12 quadros perdidos em 5665ms
+11-09 00:52:49.535  3194  3194 W MinhaTV : player: 2 quadros perdidos em 1021ms
