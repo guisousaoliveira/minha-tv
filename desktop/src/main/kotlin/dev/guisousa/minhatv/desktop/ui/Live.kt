@@ -48,7 +48,7 @@ import dev.guisousa.minhatv.data.Programme
 import dev.guisousa.minhatv.data.Repository
 import dev.guisousa.minhatv.data.Settings
 import dev.guisousa.minhatv.data.UserLibrary
-import dev.guisousa.minhatv.desktop.player.VideoView
+import dev.guisousa.minhatv.desktop.player.PreviewPlayer
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -102,7 +102,7 @@ fun LiveScreen() {
         Column(Modifier.weight(1.15f).fillMaxHeight().padding(start = 12.dp, end = PagePad, bottom = 24.dp)) {
             Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(Palette.Surface)) {
                 if (selected != null) {
-                    VideoView(player, Modifier.fillMaxSize(), onDoubleClick = { nav.play(selected) })
+                    PreviewPlayer(player, onFullscreen = { nav.play(selected) }, modifier = Modifier.fillMaxSize())
                 } else {
                     Text("Clique num canal para ver aqui.\nDois cliques abre em tela cheia.", Modifier.align(Alignment.Center), color = Palette.TextDim, fontSize = 14.sp)
                 }

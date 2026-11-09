@@ -77,7 +77,6 @@ class PlayerController {
     val live get() = item?.type == ContentType.LIVE
 
     val frames = VideoFrames { scope.launch { frameTick++ } }
-    private var mp: EmbeddedMediaPlayer? = null
     private var attempt: Job? = null
     private var saver: Job? = null
     /** Links da fonte atual a tentar (HLS e depois .ts). */
@@ -90,9 +89,16 @@ class PlayerController {
     var onFinished: (() -> Unit)? = null
     var onPlayItem: ((Entry) -> Unit)? = null
 
-    private fun player(): EmbeddedMediaPlayer? {
+    @Volatile private var mp: EmbeddedMediaPlayer? = null
+    private val lock = Any()
+
+    /**
+     * Cria o VLC e o player. Demora alguns segundos na primeira vez (carrega as DLLs e os plugins),
+     * por isso roda fora da tela: no começo do app com [preparar] e, se ainda não estiver pronto, antes do play.
+     */
+    private fun criar(): EmbeddedMediaPlayer? = synchronized(lock) {
         mp?.let { return it }
-        val f = Vlc.factory ?: run { error = Vlc.erro ?: "Player indisponível"; return null }
+        val f = Vlc.factory ?: return null
         val p = f.mediaPlayers().newEmbeddedMediaPlayer()
         p.videoSurface().set(f.videoSurfaces().newVideoSurface(frames.formatCallback, frames.renderCallback, true))
         p.events().addMediaPlayerEventListener(object : MediaPlayerEventAdapter() {
@@ -108,7 +114,16 @@ class PlayerController {
         })
         p.audio().setVolume(volume)
         mp = p
-        return p
+        p
+    }
+
+    /** Deixa o VLC pronto em segundo plano (chamado quando o app abre). */
+    fun preparar() {
+        scope.launch(Dispatchers.IO) {
+            val t = System.currentTimeMillis()
+            val p = runCatching { criar() }.onFailure { Log.e("VLC não iniciou", it) }.getOrNull()
+            Log.i("VLC pronto em ${System.currentTimeMillis() - t} ms (${if (p != null) "ok" else "falhou"})")
+        }
     }
 
     private fun ui(f: () -> Unit) { scope.launch { f() } }
@@ -161,7 +176,21 @@ class PlayerController {
     }
 
     private fun start(src: Entry, startMs: Long) {
-        val p = player() ?: return
+        val p = mp
+        if (p == null) {
+            // VLC ainda carregando: mostra "Preparando…" com a bolinha girando em vez de travar a tela
+            val dono = item
+            hasVideo = false
+            buffering = true
+            status = "Preparando o player…"
+            scope.launch {
+                val novo = runCatching { withContext(Dispatchers.IO) { criar() } }.getOrNull()
+                if (item !== dono || dono == null) return@launch
+                if (novo == null) { status = null; error = Vlc.erro ?: "Player indisponível"; return@launch }
+                start(src, startMs)
+            }
+            return
+        }
         val url = variants[variantIndex]
         currentUrl = url
         gotFrame = false

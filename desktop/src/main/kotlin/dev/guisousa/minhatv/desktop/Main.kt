@@ -1,7 +1,5 @@
 package dev.guisousa.minhatv.desktop
 
-import androidx.compose.runtime.snapshotFlow
-import kotlinx.coroutines.delay
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -99,7 +97,10 @@ private fun setupImages() {
         .build()
     SingletonImageLoader.setSafe { ctx: PlatformContext ->
         ImageLoader.Builder(ctx)
-            .components { add(OkHttpNetworkFetcherFactory(callFactory = { client })) }
+            .components {
+                add(OkHttpNetworkFetcherFactory(callFactory = { client }))
+                add(DecoderNitido.Factory())
+            }
             .memoryCache { MemoryCache.Builder().maxSizeBytes(256L * 1024 * 1024).build() }
             .diskCache { DiskCache.Builder().directory(File(AppDirs.cache, "imagens").toOkioPath()).maxSizeBytes(600L * 1024 * 1024).build() }
             .crossfade(true)
@@ -113,30 +114,10 @@ fun main() {
     setupImages()
     Repository.init()
     val player = PlayerController()
+    player.preparar()
     application {
         val nav = remember { Nav(player) }
         val state = rememberWindowState(size = DpSize(1366.dp, 800.dp), position = WindowPosition(Alignment.Center))
-        var lastPlacement by remember { mutableStateOf(WindowPlacement.Floating) }
-        LaunchedEffect(nav.fullscreen) {
-            if (nav.fullscreen) {
-                if (state.placement != WindowPlacement.Fullscreen) lastPlacement = state.placement
-                state.placement = WindowPlacement.Fullscreen
-            } else if (state.placement == WindowPlacement.Fullscreen) {
-                // No Windows, ir direto de tela cheia para maximizada deixa a janela presa sem a barra
-                // de título, cobrindo a tela toda. Volta primeiro para janela normal e só depois maximiza.
-                state.placement = WindowPlacement.Floating
-                if (lastPlacement == WindowPlacement.Maximized) {
-                    delay(200)
-                    if (!nav.fullscreen) state.placement = WindowPlacement.Maximized
-                }
-            }
-        }
-        // se a janela sair da tela cheia por fora (Windows+seta, etc.), o app fica sabendo
-        LaunchedEffect(Unit) {
-            snapshotFlow { state.placement }.collect { pl ->
-                if (pl != WindowPlacement.Fullscreen && nav.fullscreen) nav.fullscreen = false
-            }
-        }
         Window(
             onCloseRequest = {
                 runCatching { player.release() }
@@ -151,6 +132,12 @@ fun main() {
             LaunchedEffect(Unit) {
                 window.minimumSize = java.awt.Dimension(960, 600)
                 window.background = java.awt.Color.BLACK
+            }
+            // tela cheia sem borda (não sai sozinha ao clicar em outro monitor); se não der, usa a do Java
+            LaunchedEffect(nav.fullscreen) {
+                if (!TelaCheia.definir(window, nav.fullscreen)) {
+                    state.placement = if (nav.fullscreen) WindowPlacement.Fullscreen else WindowPlacement.Floating
+                }
             }
             App(nav)
         }
@@ -170,7 +157,11 @@ private fun handleKey(nav: Nav, key: Key, alt: Boolean): Boolean {
     }
     if (typing) return false
     if (key == Key.Backspace) return nav.back()
-    if (!inPlayer) return false
+    if (!inPlayer) {
+        // prévia do ao vivo tocando: M liga/desliga o som
+        if (key == Key.M && p.item != null) { p.toggleMute(); return true }
+        return false
+    }
     when (key) {
         Key.F -> nav.fullscreen = !nav.fullscreen
         Key.Spacebar, Key.K -> p.togglePause()

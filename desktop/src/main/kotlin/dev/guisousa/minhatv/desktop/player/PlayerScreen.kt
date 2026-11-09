@@ -152,6 +152,7 @@ fun PlayerScreen() {
     Box(
         Modifier.fillMaxSize().background(Color.Black)
             .onPointerEvent(PointerEventType.Move) { lastMove = System.currentTimeMillis() }
+            .volumeNaRodinha(p) { lastMove = System.currentTimeMillis() }
             .pointerHoverIcon(if (visible) PointerIcon.Default else PointerIcon(java.awt.Toolkit.getDefaultToolkit().createCustomCursor(java.awt.image.BufferedImage(1, 1, java.awt.image.BufferedImage.TYPE_INT_ARGB), java.awt.Point(0, 0), "vazio")))
     ) {
         VideoView(p, Modifier.fillMaxSize())
@@ -225,6 +226,7 @@ fun PlayerScreen() {
                         Spacer(Modifier.width(8.dp))
                         IconBtn(if (p.muted || p.volume == 0) Ic.VolumeOff else Ic.Volume, { p.toggleMute() }, size = 40.dp)
                         VolumeBar(if (p.muted) 0 else p.volume) { p.changeVolume(it); lastMove = System.currentTimeMillis() }
+                        Text(if (p.muted) "Mudo" else "${p.volume}%", Modifier.padding(start = 10.dp).width(44.dp), color = Palette.TextDim, fontSize = 13.sp)
                         Spacer(Modifier.weight(1f))
                         if (!p.live && p.resumedFrom > 0 && p.time < p.resumedFrom + 60_000) {
                             PillButton("Do início", { p.seekTo(0) }, Ic.Restart)
@@ -283,7 +285,7 @@ private fun SeekBar(time: Long, length: Long, onSeek: (Long) -> Unit) {
 }
 
 @Composable
-private fun VolumeBar(volume: Int, onChange: (Int) -> Unit) {
+internal fun VolumeBar(volume: Int, onChange: (Int) -> Unit) {
     BoxWithConstraints(Modifier.width(110.dp).height(20.dp).pointerHoverIcon(PointerIcon.Hand)) {
         val wPx = constraints.maxWidth.toFloat().coerceAtLeast(1f)
         fun v(x: Float) = ((x / wPx).coerceIn(0f, 1f) * 100).toInt()
@@ -302,7 +304,7 @@ private fun VolumeBar(volume: Int, onChange: (Int) -> Unit) {
 
 /** Menu de áudio e legendas (quando o vídeo tem mais de uma opção). */
 @Composable
-private fun TracksMenu(p: PlayerController, onOpen: (Boolean) -> Unit) {
+internal fun TracksMenu(p: PlayerController, onOpen: (Boolean) -> Unit) {
     var open by remember { mutableStateOf(false) }
     var audios by remember { mutableStateOf<List<PlayerController.Track>>(emptyList()) }
     var subs by remember { mutableStateOf<List<PlayerController.Track>>(emptyList()) }
@@ -325,6 +327,64 @@ private fun TracksMenu(p: PlayerController, onOpen: (Boolean) -> Unit) {
             subs.forEach { t ->
                 val name = if (t.id < 0) "Desligadas" else t.name
                 DropdownMenuItem({ Text(name, color = if (t.id == curS) Palette.Brand else Palette.Text) }, { p.setSubtitleTrack(t.id); open = false; onOpen(false) })
+            }
+        }
+    }
+}
+
+/** Rodinha do mouse em cima do vídeo muda o volume (de 5 em 5). */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+internal fun Modifier.volumeNaRodinha(p: PlayerController, onChange: () -> Unit = {}): Modifier =
+    onPointerEvent(PointerEventType.Scroll) { ev ->
+        val dy = ev.changes.firstOrNull()?.scrollDelta?.y ?: 0f
+        if (dy != 0f) {
+            val base = if (p.muted) 0 else p.volume
+            p.changeVolume(base + if (dy < 0) 5 else -5)
+            onChange()
+        }
+    }
+
+/**
+ * Prévia do ao vivo: vídeo com uma barra de controles que aparece ao passar o mouse
+ * (pausar, mudo, volume, áudio/legendas, fonte e tela cheia). A rodinha do mouse muda o volume.
+ */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+@Composable
+fun PreviewPlayer(p: PlayerController, onFullscreen: () -> Unit, modifier: Modifier = Modifier) {
+    var hover by remember { mutableStateOf(false) }
+    var lastMove by remember { mutableStateOf(0L) }
+    var menuOpen by remember { mutableStateOf(false) }
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(hover, lastMove, menuOpen, p.playing) {
+        visible = hover || menuOpen || !p.playing
+        if (!hover || menuOpen || !p.playing) return@LaunchedEffect
+        delay(2500); visible = false
+    }
+    Box(
+        modifier
+            .onPointerEvent(PointerEventType.Enter) { hover = true; lastMove = System.currentTimeMillis() }
+            .onPointerEvent(PointerEventType.Exit) { hover = false }
+            .onPointerEvent(PointerEventType.Move) { hover = true; lastMove = System.currentTimeMillis() }
+            .volumeNaRodinha(p) { lastMove = System.currentTimeMillis() }
+    ) {
+        VideoView(p, Modifier.fillMaxSize(), onDoubleClick = onFullscreen)
+        if (p.status != null && p.error == null) {
+            Text(p.status ?: "", Modifier.align(Alignment.Center).offset(y = 40.dp), color = Palette.TextDim, fontSize = 12.sp)
+        }
+        AnimatedVisibility(visible && p.error == null, Modifier.align(Alignment.BottomStart).fillMaxWidth(), enter = fadeIn(), exit = fadeOut()) {
+            Row(
+                Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xE6000000))))
+                    .padding(start = 8.dp, end = 8.dp, top = 24.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconBtn(if (p.playing) Ic.Pause else Ic.Play, { p.togglePause() }, size = 36.dp)
+                IconBtn(if (p.muted || p.volume == 0) Ic.VolumeOff else Ic.Volume, { p.toggleMute() }, size = 36.dp)
+                VolumeBar(if (p.muted) 0 else p.volume) { p.changeVolume(it); lastMove = System.currentTimeMillis() }
+                Text(if (p.muted) "Mudo" else "${p.volume}%", Modifier.padding(start = 8.dp), color = Palette.TextDim, fontSize = 12.sp)
+                Spacer(Modifier.weight(1f))
+                if (p.sources.size > 1) IconBtn(Ic.Source, { p.nextSource() }, size = 36.dp)
+                TracksMenu(p, onOpen = { menuOpen = it })
+                IconBtn(Ic.Fullscreen, onFullscreen, size = 36.dp)
             }
         }
     }
