@@ -12,6 +12,8 @@ const CFG = window.BW_CONFIG || {};
 const SERVIDOR = (CFG.servidor || "https://badwolf.pages.dev").replace(/\/+$/, "");
 const TMDB_FUNDO = "https://image.tmdb.org/t/p/w1280/";
 const VERSAO_APP = CFG.versao || "dev";
+/** A interface é desenhada em 1536x864 e aumentada até a tela de 1920x1080 (ver #ui no CSS). */
+const ESCALA = 1.25;
 
 const KEY = {
   LEFT: 37, UP: 38, RIGHT: 39, DOWN: 40, OK: 13,
@@ -344,12 +346,14 @@ function mostrar(el) {
     if (eixo) {
       const caixa = p.getBoundingClientRect(), r = el.getBoundingClientRect();
       const folga = Number(p.getAttribute("data-folga") || 40);
+      // posições na tela (já aumentadas) -> rolagem dentro da caixa (sem o aumento)
+      const f = folga * ESCALA;
       if (eixo === "y") {
-        if (r.bottom > caixa.bottom - folga) p.scrollTop += r.bottom - caixa.bottom + folga;
-        else if (r.top < caixa.top + folga) p.scrollTop -= caixa.top + folga - r.top;
+        if (r.bottom > caixa.bottom - f) p.scrollTop += (r.bottom - caixa.bottom + f) / ESCALA;
+        else if (r.top < caixa.top + f) p.scrollTop -= (caixa.top + f - r.top) / ESCALA;
       } else {
-        if (r.right > caixa.right - folga) p.scrollLeft += r.right - caixa.right + folga;
-        else if (r.left < caixa.left + folga) p.scrollLeft -= caixa.left + folga - r.left;
+        if (r.right > caixa.right - f) p.scrollLeft += (r.right - caixa.right + f) / ESCALA;
+        else if (r.left < caixa.left + f) p.scrollLeft -= (caixa.left + f - r.left) / ESCALA;
       }
     }
     p = p.parentElement;
@@ -683,7 +687,7 @@ function TelaLista() {
       Fundo.cor("#000");
       casca(ui, "lista");
       const tela = h("div.screen");
-      const grade = h("div.grid", { "data-rola": "y", style: { paddingLeft: "72px" } });
+      const grade = h("div.grid", { "data-rola": "y", style: { paddingLeft: "56px" } });
       const gi = h("div.grid-inner");
       const favs = Usuario.favs();
       const titulos = favs.map((k) => { const p = k.split(":"); return p[0] === "f" || p[0] === "s" ? Cat.card(p[0], +p[1]) : null; }).filter(Boolean);
@@ -927,9 +931,9 @@ function TelaFilme(card) {
   return {
     montar(ui) {
       Fundo.cor("#000"); Fundo.imagem(Cat.fundo(card) || card.p);
-      const tela = h("div.screen.detail", { style: { top: "0", height: "1080px" } });
-      tela.appendChild(h("div.poster-big", { bg: card.p || null, style: { top: "130px" } }));
-      info = h("div.info", { style: { top: "130px" } });
+      const tela = h("div.screen.detail", { style: { top: "0", height: "864px" } });
+      tela.appendChild(h("div.poster-big", { bg: card.p || null, style: { top: "90px" } }));
+      info = h("div.info", { style: { top: "90px" } });
       const meta = [card.a, (card.g || []).slice(0, 3).join(", "), card.k].filter(Boolean).join("  ·  ");
       info.appendChild(h("h1", { text: card.t }));
       info.appendChild(h("div.meta", { text: meta }));
@@ -1041,19 +1045,19 @@ function TelaSerie(card) {
   return {
     montar(ui) {
       Fundo.cor("#000"); Fundo.imagem(Cat.fundo(card) || card.p);
-      const tela = h("div.screen.detail", { style: { top: "0", height: "1080px" } });
-      tela.appendChild(h("div.poster-big", { bg: card.p || null, style: { top: "80px", width: "260px", height: "390px" } }));
-      const info = h("div.info", { style: { top: "70px", left: "380px" } });
-      info.appendChild(h("h1", { text: card.t, style: { fontSize: "52px", lineHeight: "60px" } }));
+      const tela = h("div.screen.detail", { style: { top: "0", height: "864px" } });
+      tela.appendChild(h("div.poster-big", { bg: card.p || null, style: { top: "50px", width: "200px", height: "300px" } }));
+      const info = h("div.info", { style: { top: "44px", left: "290px", width: "1190px" } });
+      info.appendChild(h("h1", { text: card.t, style: { fontSize: "44px", lineHeight: "52px" } }));
       info.appendChild(h("div.meta", { text: [card.a, card.nt ? card.nt + (card.nt > 1 ? " temporadas" : " temporada") : null, card.ne ? card.ne + " episódios" : null, (card.g || []).slice(0, 3).join(", ")].filter(Boolean).join("  ·  ") }));
-      syn = h("div.syn", { style: { maxHeight: "114px" } });
+      syn = h("div.syn", { style: { maxHeight: "96px", fontSize: "22px", lineHeight: "32px", marginTop: "14px" } });
       info.appendChild(syn);
-      btns = h("div.btns", { "data-grupo": "btns", style: { marginTop: "24px" } });
+      btns = h("div.btns", { "data-grupo": "btns", style: { marginTop: "20px" } });
       info.appendChild(btns);
       tela.appendChild(info);
-      seasonsBox = h("div.seasons", { "data-grupo": "temps", "data-rola": "x", style: { left: "380px", width: "1460px", overflow: "hidden" } });
+      seasonsBox = h("div.seasons", { "data-grupo": "temps", "data-rola": "x", style: { left: "290px", width: "1190px", overflow: "hidden" } });
       tela.appendChild(seasonsBox);
-      epsBox = h("div.eps", { "data-rola": "y", style: { left: "380px" } });
+      epsBox = h("div.eps", { "data-rola": "y", style: { left: "290px" } });
       epsInner = h("div.eps-inner");
       epsBox.appendChild(epsInner);
       tela.appendChild(epsBox);
@@ -1105,27 +1109,63 @@ const Player = {
   // ---------- fontes ----------
   /** Tentativas de um canal/vídeo: cada fonte (sem cabeçalho especial primeiro); no ao vivo, também a versão .m3u8. */
   montarTentativas(fontes, aoVivo) {
-    const ordem = fontes.filter((f) => !f.h).concat(fontes.filter((f) => f.h)).slice(0, 10);
+    const ordem = fontes.filter((f) => !f.h).concat(fontes.filter((f) => f.h)).slice(0, 8);
+    const temJs = !!(window.Hls && window.Hls.isSupported());
     const out = [];
     ordem.forEach((f) => {
-      out.push({ url: f.u, q: f.q });
-      if (aoVivo) { const hls = xtreamHls(f.u); if (hls && hls !== f.u) out.push({ url: hls, q: f.q, hls: true }); }
+      const m3u8 = /\.m3u8(\?|$)/i.test(f.u) ? f.u : (aoVivo ? xtreamHls(f.u) : null);
+      // 1) HLS pelo hls.js: a cada atualização a lista é pedida no link original (o servidor redireciona para
+      //    um endereço com senha que vence em segundos; o player da TV ficava preso nele e o canal parava)
+      if (m3u8 && temJs) out.push({ url: m3u8, q: f.q, js: true, tipo: "HLS" });
+      // 2) o link do jeito que veio, no player da TV
+      if (f.u !== m3u8 || !temJs) out.push({ url: f.u, q: f.q, tipo: /\.m3u8(\?|$)/i.test(f.u) ? "HLS (TV)" : aoVivo ? "TS" : "" });
     });
     return out;
   },
 
-  carregarUrl(url) {
+  /** Carregador de listas do hls.js que sempre volta no link original do canal (ver montarTentativas). */
+  carregadorEstavel(original) {
+    const Base = window.Hls.DefaultConfig.loader;
+    // todos os endereços para onde o link original já redirecionou (o hls.js continua pedindo o primeiro)
+    const redirecionados = {};
+    return class extends Base {
+      load(context, config, callbacks) {
+        if (redirecionados[context.url]) context.url = original;
+        const ok = callbacks.onSuccess;
+        const ctx = context;
+        callbacks = Object.assign({}, callbacks, {
+          onSuccess(resp, stats, c, net) {
+            if (ctx.url === original && resp && resp.url && resp.url !== original) redirecionados[resp.url] = 1;
+            ok(resp, stats, c, net);
+          },
+        });
+        super.load(context, config, callbacks);
+      }
+    };
+  },
+
+  carregarUrl(t) {
+    const url = t.url;
     const v = this.video;
     if (this.hls) { try { this.hls.destroy(); } catch (e) { /* ignore */ } this.hls = null; }
     v.removeAttribute("src");
     try { v.load(); } catch (e) { /* ignore */ }
-    const m3u8 = /\.m3u8(\?|$)/i.test(url);
-    // TV LG toca .m3u8 sozinha; se não der, a próxima tentativa usa o hls.js
-    if (m3u8 && this._usarHlsJs && window.Hls && window.Hls.isSupported()) {
-      this.hls = new window.Hls({ enableWorker: true, lowLatencyMode: false, backBufferLength: 30 });
-      this.hls.on(window.Hls.Events.ERROR, (_, d) => { if (d && d.fatal) this.falhou("hls " + d.details); });
-      this.hls.loadSource(url);
-      this.hls.attachMedia(v);
+    if (t.js) {
+      const hls = new window.Hls({
+        enableWorker: true, lowLatencyMode: false, backBufferLength: 30, maxBufferLength: 30,
+        liveSyncDurationCount: 3, manifestLoadingMaxRetry: 4, levelLoadingMaxRetry: 6, fragLoadingMaxRetry: 6,
+        pLoader: this.carregadorEstavel(url),
+      });
+      hls.on(window.Hls.Events.ERROR, (_, d) => {
+        if (!d || !d.fatal) return;
+        // erro de rede/mídia no meio: o hls.js tenta se recuperar antes de trocar de fonte
+        if (d.type === window.Hls.ErrorTypes.MEDIA_ERROR && !this._recuperouMidia) { this._recuperouMidia = true; hls.recoverMediaError(); return; }
+        this.falhou("hls " + d.details);
+      });
+      this._recuperouMidia = false;
+      hls.loadSource(url);
+      hls.attachMedia(v);
+      this.hls = hls;
     } else {
       v.src = url;
     }
@@ -1135,19 +1175,11 @@ const Player = {
 
   tentar() {
     clearTimeout(this._abrirT);
-    if (this.tentIdx >= this.tentativas.length) {
-      // depois das fontes normais, uma rodada com o hls.js para as que são .m3u8
-      const m3u8 = this.tentativas.filter((t) => /\.m3u8(\?|$)/i.test(t.url) && !t.js);
-      if (!this._rodadaJs && m3u8.length && window.Hls && window.Hls.isSupported()) {
-        this._rodadaJs = true;
-        this.tentativas = this.tentativas.concat(m3u8.map((t) => ({ url: t.url, q: t.q, js: true })));
-      } else { this.semFonte(); return; }
-    }
+    if (this.tentIdx >= this.tentativas.length) { this.semFonte(); return; }
     const t = this.tentativas[this.tentIdx];
-    this._usarHlsJs = !!t.js;
     this.tocouUmaVez = false;
     this.carregando(true);
-    this.carregarUrl(t.url);
+    this.carregarUrl(t);
     const minha = this.tentIdx;
     // não abriu a tempo: próxima fonte
     this._abrirT = setTimeout(() => { if (this.tentIdx === minha && !this.tocouUmaVez) this.falhou("demorou"); }, this.aoVivo ? 12000 : 25000);
@@ -1160,7 +1192,8 @@ const Player = {
       this.reconexoes++;
       const pos = this.aoVivo ? 0 : this.video.currentTime;
       this.tocouUmaVez = false;
-      this.carregarUrl(this.tentativas[this.tentIdx].url);
+      this.carregando(true);
+      this.carregarUrl(this.tentativas[this.tentIdx]);
       if (pos) this._retomar = pos;
       return;
     }
@@ -1171,14 +1204,29 @@ const Player = {
   },
 
   // ---------- vigia: imagem parada ----------
+  /** Quadros desenhados até agora (quando a TV informa): anda mesmo quando o relógio do vídeo não anda. */
+  quadros() {
+    const v = this.video;
+    try {
+      if (v.getVideoPlaybackQuality) return v.getVideoPlaybackQuality().totalVideoFrames;
+      if (v.webkitDecodedFrameCount != null) return v.webkitDecodedFrameCount;
+    } catch (e) { /* ignore */ }
+    return -1;
+  },
   ligarVigia() {
     clearInterval(this.vigia);
-    this.ultimoTempo = -1; this.paradoDesde = Date.now();
+    this.ultimoTempo = -1; this.ultimosQuadros = -1; this.paradoDesde = Date.now();
     this.vigia = setInterval(() => {
       const v = this.video;
-      if (!this.ativo || v.paused || !this.tocouUmaVez) { this.paradoDesde = Date.now(); this.ultimoTempo = v.currentTime; return; }
-      if (v.currentTime !== this.ultimoTempo) { this.ultimoTempo = v.currentTime; this.paradoDesde = Date.now(); return; }
-      if (Date.now() - this.paradoDesde > (this.aoVivo ? 10000 : 20000)) {
+      const t = v.currentTime, q = this.quadros();
+      const andou = t !== this.ultimoTempo || (q >= 0 && q !== this.ultimosQuadros);
+      this.ultimoTempo = t; this.ultimosQuadros = q;
+      if (!this.ativo || v.paused || !this.tocouUmaVez || andou) { this.paradoDesde = Date.now(); return; }
+      // relógio e quadros parados: só conta como travado se a TV também diz que está sem dados para tocar
+      // (algumas TVs LG não atualizam o relógio no ao vivo e o vídeo segue normal)
+      const semDados = v.readyState < 3;
+      if (!semDados && q < 0) { this.paradoDesde = Date.now(); return; }
+      if (Date.now() - this.paradoDesde > (this.aoVivo ? 15000 : 25000)) {
         this.paradoDesde = Date.now();
         console.log("player: imagem parada, reconectando");
         this.falhou("parado");
@@ -1192,7 +1240,7 @@ const Player = {
     this.ativo = true;
     this.aoVivo = aoVivo;
     this.tentativas = this.montarTentativas(fontes, aoVivo);
-    this.tentIdx = 0; this._rodadaJs = false; this.reconexoes = 0;
+    this.tentIdx = 0; this.reconexoes = 0;
     this.ligarVigia();
     this.tentar();
   },
@@ -1335,7 +1383,26 @@ const Player = {
 function TelaPlayer() {
   const P = Player;
   const anterior = Telas.topo();
-  let raiz, topo, baixo, centro, barra, pos, buf, seek, tAtual, tTotal, zapBox, errBox;
+  let raiz, topo, baixo, centro, barra, pos, buf, seek, tAtual, tTotal, zapBox, errBox, fontesBox = null;
+  const fecharFontes = () => { if (fontesBox && fontesBox.parentNode) fontesBox.parentNode.removeChild(fontesBox); fontesBox = null; Foco.atual = null; };
+  /** Lista das fontes (e de como cada uma é aberta); OK troca na hora. */
+  const abrirFontes = () => {
+    fecharFontes();
+    const lista = h("div.fontes-lista", { "data-rola": "y" });
+    let atual = null;
+    P.tentativas.forEach((t, i) => {
+      const el = h("div.fonte.foc" + (i === P.tentIdx ? ".sel" : ""), null, [
+        h("span", { text: (i === P.tentIdx ? "▶ " : "") + "Fonte " + (i + 1) }),
+        h("span.det", { text: [t.tipo, t.q].filter(Boolean).join(" · ") }),
+      ]);
+      el._ok = () => { fecharFontes(); P.tentIdx = i; P.reconexoes = 0; P.tentar(); ui.textos(); ui.mostrar(4000); };
+      if (i === P.tentIdx) atual = el;
+      lista.appendChild(el);
+    });
+    fontesBox = h("div.fontes", null, [h("h3", { text: "Fontes" }), h("p", { text: "OK troca · Voltar fecha" }), lista]);
+    raiz.appendChild(fontesBox);
+    Foco.definir(atual || $(".fonte", fontesBox));
+  };
   const ui = {
     mostrar(ms) {
       topo.classList.remove("hidden");
@@ -1351,7 +1418,9 @@ function TelaPlayer() {
         const c = P.canalAtual, prog = Cat.agora(c, Date.now());
         topo.appendChild(h("h2", { text: (P.idx + 1) + "  " + c.n }));
         topo.appendChild(h("div.sub", { text: prog ? hora(prog.ini) + " – " + hora(prog.fim) + "  ·  " + prog.t : "Ao vivo" }));
-        topo.appendChild(h("div.sub", { text: "▲▼ trocar de canal  ·  Voltar: lista de canais", style: { color: "#9a9a9a", fontSize: "20px" } }));
+        const t = P.tentativas[P.tentIdx];
+        const fonte = t ? "Fonte " + (P.tentIdx + 1) + " de " + P.tentativas.length + (t.tipo ? " · " + t.tipo : "") + (t.q ? " · " + t.q : "") : "";
+        topo.appendChild(h("div.sub", { text: "▲▼ trocar de canal  ·  ◀▶ fontes  ·  Voltar: lista de canais" + (fonte ? "  ·  " + fonte : ""), style: { color: "#9a9a9a", fontSize: "20px" } }));
       } else if (P.item) {
         topo.appendChild(h("h2", { text: P.item.titulo }));
         if (P.item.sub) topo.appendChild(h("div.sub", { text: P.item.sub }));
@@ -1408,7 +1477,7 @@ function TelaPlayer() {
       topo = h("div.topinfo");
       barra = h("div.bar", null, [buf = h("div.buf"), pos = h("div.pos"), seek = h("div.seek")]);
       baixo = h("div.bottom", null, [barra, h("div.times", null, [tAtual = h("b", { text: "00:00" }), tTotal = h("span", { text: "" })]),
-        h("div.keys", { text: "OK pausar  ·  ◀ ▶ voltar/avançar (segure para pular mais)  ·  Voltar: sair" })]);
+        h("div.keys", { text: "OK pausar  ·  ◀ ▶ voltar/avançar (segure para pular mais)  ·  ▼ fontes  ·  Voltar: sair" })]);
       centro = h("div.center");
       zapBox = h("div.zap.hidden");
       errBox = h("div.errcard.hidden");
@@ -1423,9 +1492,9 @@ function TelaPlayer() {
     },
     tecla(e) {
       const k = e.keyCode;
-      if (!errBox.classList.contains("hidden")) return false; // cartão de erro: navegação normal
+      if (!errBox.classList.contains("hidden") || fontesBox) return false; // cartão de erro / fontes: navegação normal
       if (k === KEY.OK) {
-        if (P.aoVivo) { ui.mostrar(6000); return true; }
+        if (P.aoVivo) { ui.textos(); ui.mostrar(6000); return true; }
         const v = P.video;
         if (v.paused) { v.play(); ui.mostrar(3000); } else { v.pause(); ui.mostrar(600000); }
         return true;
@@ -1437,17 +1506,19 @@ function TelaPlayer() {
         if (k === KEY.UP) { P.zap(-1); return true; }
         if (k === KEY.DOWN || k === KEY.CH_DOWN) { P.zap(k === KEY.DOWN ? 1 : -1); return true; }
         if (k === KEY.CH_UP) { P.zap(1); return true; }
-        if (k === KEY.LEFT || k === KEY.RIGHT) { ui.mostrar(6000); return true; }
+        if (k === KEY.LEFT || k === KEY.RIGHT) { abrirFontes(); return true; }
         return false;
       }
       if (k === KEY.LEFT || k === KEY.RW) { P.pular(-1); return true; }
       if (k === KEY.RIGHT || k === KEY.FF) { P.pular(1); return true; }
-      if (k === KEY.UP || k === KEY.DOWN) { ui.mostrar(5000); return true; }
+      if (k === KEY.DOWN) { abrirFontes(); return true; }
+      if (k === KEY.UP) { ui.mostrar(5000); return true; }
       if (k === KEY.CH_UP && P.fila.length > 1 && P.filaIdx + 1 < P.fila.length) { P.filaIdx++; P.tocarItemNaMesmaTela(P.fila[P.filaIdx]); return true; }
       if (k === KEY.CH_DOWN && P.filaIdx > 0) { P.filaIdx--; P.tocarItemNaMesmaTela(P.fila[P.filaIdx]); return true; }
       return false;
     },
     voltar() {
+      if (fontesBox) { fecharFontes(); return true; }
       if (P.seekAlvo != null) { clearTimeout(P.seekT); P.seekAlvo = null; ui.atualizar(); return true; }
       if (!P.aoVivo && ui.visivel() && !P.video.paused) { ui.esconder(); return true; }
       return false;
