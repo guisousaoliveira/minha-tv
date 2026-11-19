@@ -1,0 +1,1580 @@
+/*
+ * Bad Wolf TV para TVs LG (webOS).
+ * Lê o mesmo catálogo pronto do servidor que o app Android (catálogo v2: badwolf.pages.dev/app/v2/) e só exibe.
+ * Tela de 1920x1080 controlada pelo controle remoto (setas, OK, Voltar).
+ * Escrito para TVs a partir do webOS 4 (2018); o build (esbuild) converte para o navegador delas.
+ */
+"use strict";
+
+// ======================= configuração =======================
+
+const CFG = window.BW_CONFIG || {};
+const SERVIDOR = (CFG.servidor || "https://badwolf.pages.dev").replace(/\/+$/, "");
+const TMDB_FUNDO = "https://image.tmdb.org/t/p/w1280/";
+const VERSAO_APP = CFG.versao || "dev";
+
+const KEY = {
+  LEFT: 37, UP: 38, RIGHT: 39, DOWN: 40, OK: 13,
+  BACK: [461, 27, 10009], BACKSPACE: 8,
+  PLAY: 415, PAUSE: 19, PLAYPAUSE: 10252, STOP: 413, FF: 417, RW: 412,
+  CH_UP: 33, CH_DOWN: 34,
+};
+
+// ======================= utilidades =======================
+
+const $ = (sel, root) => (root || document).querySelector(sel);
+const $$ = (sel, root) => Array.prototype.slice.call((root || document).querySelectorAll(sel));
+
+/** h("div.card.foc", {onclick}, [filhos]) -> elemento */
+function h(tag, attrs, kids) {
+  const parts = tag.split(".");
+  const el = document.createElement(parts[0] || "div");
+  if (parts.length > 1) el.className = parts.slice(1).join(" ");
+  if (attrs) {
+    for (const k of Object.keys(attrs)) {
+      const v = attrs[k];
+      if (v == null || v === false) continue;
+      if (k === "text") el.textContent = v;
+      else if (k === "html") el.innerHTML = v;
+      else if (k === "style" && typeof v === "object") Object.keys(v).forEach((s) => { el.style[s] = v[s]; });
+      else if (k.indexOf("on") === 0) el[k] = v;
+      else if (k === "bg") el.style.backgroundImage = v ? "url(\"" + String(v).replace(/"/g, "%22") + "\")" : "";
+      else el.setAttribute(k, v);
+    }
+  }
+  if (kids != null) (Array.isArray(kids) ? kids : [kids]).forEach((c) => {
+    if (c == null || c === false) return;
+    el.appendChild(typeof c === "string" || typeof c === "number" ? document.createTextNode(String(c)) : c);
+  });
+  return el;
+}
+
+const pad2 = (n) => (n < 10 ? "0" : "") + n;
+function hora(ms) { const d = new Date(ms); return pad2(d.getHours()) + ":" + pad2(d.getMinutes()); }
+function relogio(seg) {
+  seg = Math.max(0, Math.floor(seg || 0));
+  const hh = Math.floor(seg / 3600), mm = Math.floor(seg / 60) % 60, ss = seg % 60;
+  return (hh ? hh + ":" + pad2(mm) : pad2(mm)) + ":" + pad2(ss);
+}
+function semAcento(s) {
+  return (s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+}
+function store(k, v) {
+  try {
+    if (v === undefined) { const s = localStorage.getItem("bw." + k); return s == null ? null : JSON.parse(s); }
+    if (v === null) localStorage.removeItem("bw." + k); else localStorage.setItem("bw." + k, JSON.stringify(v));
+  } catch (e) { /* sem espaço: segue sem guardar */ }
+  return null;
+}
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+function comTempo(p, ms, msg) {
+  return Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(msg || "tempo esgotado")), ms))]);
+}
+function toast(msg, ms) {
+  const ov = $("#overlay");
+  $$(".toast", ov).forEach((t) => t.remove());
+  const t = h("div.toast", { text: msg });
+  ov.appendChild(t);
+  setTimeout(() => t.remove(), ms || 2500);
+}
+
+// ======================= cache no aparelho (IndexedDB) =======================
+
+const Cache = {
+  db: null,
+  abrir() {
+    return new Promise((res) => {
+      try {
+        const req = indexedDB.open("badwolf", 1);
+        req.onupgradeneeded = () => req.result.createObjectStore("partes");
+        req.onsuccess = () => { this.db = req.result; res(); };
+        req.onerror = () => res();
+      } catch (e) { res(); }
+    });
+  },
+  ler(k) {
+    return new Promise((res) => {
+      if (!this.db) return res(null);
+      try {
+        const r = this.db.transaction("partes").objectStore("partes").get(k);
+        r.onsuccess = () => res(r.result || null);
+        r.onerror = () => res(null);
+      } catch (e) { res(null); }
+    });
+  },
+  gravar(k, v) {
+    return new Promise((res) => {
+      if (!this.db) return res();
+      try {
+        const tx = this.db.transaction("partes", "readwrite");
+        tx.objectStore("partes").put(v, k);
+        tx.oncomplete = () => res();
+        tx.onerror = () => res();
+      } catch (e) { res(); }
+    });
+  },
+};
+
+// ======================= catálogo =======================
+
+const Cat = {
+  manifesto: null,
+  categorias: { canais: [], filmes: [], series: [] },
+  canais: [], canalPorId: {},
+  filmePorId: {}, seriePorId: {},
+  filmesPorCat: {}, seriesPorCat: {},
+  inicio: [],
+  apelidos: { f: {}, s: {} },
+  guia: null,
+  fichas: {}, // parte -> mapa
+  token() { return store("token") || CFG.token || ""; },
+  base() { return SERVIDOR + "/" + encodeURIComponent(this.token()) + "/app/v2/"; },
+
+  async baixar(caminho, tempo) {
+    const r = await comTempo(fetch(this.base() + caminho, { cache: "no-store" }), tempo || 30000, "o servidor não respondeu");
+    if (r.status === 404) throw new Error("404");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.text();
+  },
+
+  /** Parte do catálogo: do cache se o hash bate; senão baixa (3 tentativas) e guarda. */
+  async parte(nome) {
+    const hash = this.manifesto && this.manifesto.partes[nome];
+    const c = await Cache.ler(nome);
+    if (c && (c.hash === hash || !hash)) return JSON.parse(c.texto);
+    let erro;
+    for (let i = 0; i < 3; i++) {
+      try {
+        const texto = await this.baixar(nome + ".json");
+        const dados = JSON.parse(texto);
+        Cache.gravar(nome, { hash: hash, texto: texto });
+        return dados;
+      } catch (e) {
+        erro = e;
+        if (e.message === "404") break;
+        await sleep(600 * (i + 1));
+      }
+    }
+    if (c) return JSON.parse(c.texto); // sem internet: o que já tinha
+    throw erro;
+  },
+
+  async carregar(progresso) {
+    let m = null;
+    try {
+      m = JSON.parse(await this.baixar("manifesto.json", 20000));
+      Cache.gravar("manifesto", { hash: m.versao, texto: JSON.stringify(m) });
+    } catch (e) {
+      if (e.message === "404") throw new Error("chave");
+      const c = await Cache.ler("manifesto");
+      if (!c) throw e;
+      m = JSON.parse(c.texto);
+    }
+    this.manifesto = m;
+    const nomes = ["categorias", "canais", "inicio", "apelidos"].concat(
+      Object.keys(m.partes).filter((p) => p.indexOf("filmes/") === 0 || p.indexOf("series/") === 0));
+    let feitas = 0;
+    const res = {};
+    const fila = nomes.slice();
+    const trabalhador = async () => {
+      while (fila.length) {
+        const n = fila.shift();
+        try { res[n] = await this.parte(n); } catch (e) { if (["categorias", "canais"].indexOf(n) >= 0) throw e; }
+        feitas++;
+        progresso(feitas, nomes.length);
+      }
+    };
+    await Promise.all([trabalhador(), trabalhador(), trabalhador(), trabalhador()]);
+    this.categorias = res.categorias || this.categorias;
+    this.canais = res.canais || [];
+    this.canalPorId = {};
+    this.canais.forEach((c) => { this.canalPorId[c.id] = c; });
+    this.inicio = res.inicio || [];
+    this.apelidos = res.apelidos || this.apelidos;
+    this.filmePorId = {}; this.seriePorId = {}; this.filmesPorCat = {}; this.seriesPorCat = {};
+    Object.keys(res).forEach((n) => {
+      const serie = n.indexOf("series/") === 0;
+      if (!serie && n.indexOf("filmes/") !== 0) return;
+      const cat = n.split("/")[1];
+      const lista = (res[n] || []).map((c) => {
+        c.tipo = serie ? "s" : "f";
+        const porId = serie ? this.seriePorId : this.filmePorId;
+        return porId[c.id] || (porId[c.id] = c);
+      });
+      (serie ? this.seriesPorCat : this.filmesPorCat)[cat] = lista;
+    });
+    Usuario.migrarApelidos();
+  },
+
+  async carregarGuia() {
+    if (this.guia) return this.guia;
+    try { this.guia = await this.parte("guia"); } catch (e) { this.guia = {}; }
+    return this.guia;
+  },
+
+  programas(canal) {
+    const g = this.guia && this.guia[String(canal.id)];
+    if (!g) return [];
+    return g.map((p) => ({ ini: p[0] * 1000, fim: p[1] * 1000, t: p[2], d: p[3] }));
+  },
+  agora(canal, t) {
+    const ps = this.programas(canal);
+    for (let i = 0; i < ps.length; i++) if (ps[i].ini <= t && t < ps[i].fim) return ps[i];
+    return null;
+  },
+
+  async ficha(tipo, id) {
+    const n = this.manifesto.fichas || 256;
+    const parte = "fichas/" + tipo + "_" + ("00" + (((id % n) + n) % n)).slice(-3);
+    let mapa = this.fichas[parte];
+    if (!mapa) {
+      mapa = await this.parte(parte);
+      this.fichas[parte] = mapa;
+      const ks = Object.keys(this.fichas);
+      if (ks.length > 8) delete this.fichas[ks[0]];
+    }
+    return mapa[String(id)] || null;
+  },
+
+  card(tipo, id) { return tipo === "s" ? this.seriePorId[id] : this.filmePorId[id]; },
+  fundo(card) { return card && card.b ? (card.b.indexOf("http") === 0 ? card.b : TMDB_FUNDO + card.b) : null; },
+
+  canaisDe(catId) {
+    if (catId == null) return this.canais;
+    const cat = this.categorias.canais.filter((c) => c.id === catId)[0];
+    if (cat && cat.ids) return cat.ids.map((id) => this.canalPorId[id]).filter(Boolean);
+    return this.canais.filter((c) => c.c === catId);
+  },
+};
+
+// ======================= dados do usuário (no aparelho) =======================
+
+const Usuario = {
+  favs() { return store("favs") || []; },
+  ehFav(k) { return this.favs().indexOf(k) >= 0; },
+  trocarFav(k) {
+    const f = this.favs(); const i = f.indexOf(k);
+    if (i >= 0) f.splice(i, 1); else f.unshift(k);
+    store("favs", f);
+    return i < 0;
+  },
+  progresso() { return store("progresso") || {}; },
+  salvarProgresso(k, info) {
+    const p = this.progresso();
+    if (info) p[k] = info; else delete p[k];
+    const ks = Object.keys(p).sort((a, b) => p[b].em - p[a].em);
+    ks.slice(150).forEach((x) => delete p[x]);
+    store("progresso", p);
+  },
+  vistos() { return store("vistos") || {}; },
+  marcarVisto(k) { const v = this.vistos(); v[k] = 1; store("vistos", v); },
+  versao() { return store("versao") || "dub"; },
+  migrarApelidos() {
+    const a = Cat.apelidos || {};
+    const troca = (k) => {
+      const p = k.split(":");
+      const mapa = p[0] === "f" ? a.f : (p[0] === "s" || p[0] === "e") ? a.s : null;
+      if (mapa && mapa[p[1]]) { p[1] = String(mapa[p[1]]); return p.join(":"); }
+      return k;
+    };
+    const f = this.favs().map(troca);
+    store("favs", f.filter((k, i) => f.indexOf(k) === i));
+    const p = this.progresso(); const np = {};
+    Object.keys(p).forEach((k) => { np[troca(k)] = p[k]; });
+    store("progresso", np);
+    const v = this.vistos(); const nv = {};
+    Object.keys(v).forEach((k) => { nv[troca(k)] = 1; });
+    store("vistos", nv);
+  },
+};
+
+// ======================= foco (navegação pelo controle) =======================
+
+const Foco = {
+  atual: null,
+  raiz() {
+    const ov = $("#overlay");
+    return $$(".foc", ov).some((e) => e.offsetParent !== null) ? ov : $("#ui");
+  },
+  definir(el) {
+    if (!el) return;
+    if (this.atual) this.atual.classList.remove("focus");
+    this.atual = el;
+    el.classList.add("focus");
+    const grupo = el.closest("[data-grupo]");
+    if (grupo) grupo._ultimo = el;
+    if (el.tagName === "INPUT") el.focus(); else if (document.activeElement && document.activeElement.tagName === "INPUT") document.activeElement.blur();
+    mostrar(el);
+    if (el._aoFocar) el._aoFocar();
+    const t = Telas.topo();
+    if (t && t.focou) t.focou(el);
+  },
+  /** Próximo elemento na direção (pela posição na tela); entrando num grupo, volta ao último focado dele. */
+  mover(dir) {
+    const cur = this.atual && document.contains(this.atual) ? this.atual : null;
+    const todos = $$(".foc", this.raiz()).filter((e) => e.offsetParent !== null && e !== cur);
+    if (!cur) { this.definir(todos[0]); return true; }
+    const a = cur.getBoundingClientRect();
+    const ax = (a.left + a.right) / 2, ay = (a.top + a.bottom) / 2;
+    let melhor = null, nota = Infinity;
+    for (const e of todos) {
+      const b = e.getBoundingClientRect();
+      const bx = (b.left + b.right) / 2, by = (b.top + b.bottom) / 2;
+      let principal, lateral, sobrepoe;
+      if (dir === "right") { principal = b.left - a.right + 1; if (bx <= ax + 1) continue; lateral = Math.abs(by - ay); sobrepoe = b.bottom > a.top && b.top < a.bottom; }
+      else if (dir === "left") { principal = a.left - b.right + 1; if (bx >= ax - 1) continue; lateral = Math.abs(by - ay); sobrepoe = b.bottom > a.top && b.top < a.bottom; }
+      else if (dir === "down") { principal = b.top - a.bottom + 1; if (by <= ay + 1) continue; lateral = Math.abs(bx - ax); sobrepoe = b.right > a.left && b.left < a.right; }
+      else { principal = a.top - b.bottom + 1; if (by >= ay - 1) continue; lateral = Math.abs(bx - ax); sobrepoe = b.right > a.left && b.left < a.right; }
+      const n = Math.max(principal, 0) + lateral * (sobrepoe ? 0.3 : 2.5) + (sobrepoe ? 0 : 400);
+      if (n < nota) { nota = n; melhor = e; }
+    }
+    if (!melhor) return false;
+    const g1 = cur.closest("[data-grupo]"), g2 = melhor.closest("[data-grupo]");
+    if (g2 && g2 !== g1 && g2._ultimo && document.contains(g2._ultimo) && g2._ultimo.offsetParent !== null) melhor = g2._ultimo;
+    this.definir(melhor);
+    return true;
+  },
+};
+
+/** Rola as caixas (data-rola="x" / "y") para o elemento focado aparecer inteiro. */
+function mostrar(el) {
+  let p = el.parentElement;
+  while (p && p !== document.body) {
+    const eixo = p.getAttribute && p.getAttribute("data-rola");
+    if (eixo) {
+      const caixa = p.getBoundingClientRect(), r = el.getBoundingClientRect();
+      const folga = Number(p.getAttribute("data-folga") || 40);
+      if (eixo === "y") {
+        if (r.bottom > caixa.bottom - folga) p.scrollTop += r.bottom - caixa.bottom + folga;
+        else if (r.top < caixa.top + folga) p.scrollTop -= caixa.top + folga - r.top;
+      } else {
+        if (r.right > caixa.right - folga) p.scrollLeft += r.right - caixa.right + folga;
+        else if (r.left < caixa.left + folga) p.scrollLeft -= caixa.left + folga - r.left;
+      }
+    }
+    p = p.parentElement;
+  }
+}
+
+// ======================= telas (pilha para o Voltar) =======================
+
+const Telas = {
+  pilha: [],
+  /**
+   * tela = {montar(caixa) -> elemento a focar, tecla(e), voltar() -> true se tratou, voltou() -> elemento a focar,
+   * focou(el), esconder(), sair()}. Cada tela tem a sua caixa; a de baixo fica escondida (não é desenhada de novo).
+   */
+  abrir(tela, substituir) {
+    const atual = this.topo();
+    if (atual) {
+      atual._foco = Foco.atual;
+      if (atual.esconder) atual.esconder();
+      if (substituir) { this.pilha.pop(); this.tirar(atual); }
+      else if (atual._caixa) atual._caixa.style.display = "none";
+    }
+    this.pilha.push(tela);
+    const ui = $("#ui");
+    ui.classList.remove("hidden");
+    tela._caixa = h("div.caixa");
+    ui.appendChild(tela._caixa);
+    Foco.atual = null;
+    const alvo = tela.montar(tela._caixa);
+    Foco.definir(alvo || $(".foc", tela._caixa));
+  },
+  tirar(tela) {
+    if (tela.sair) tela.sair();
+    if (tela._caixa && tela._caixa.parentNode) tela._caixa.parentNode.removeChild(tela._caixa);
+  },
+  voltar() {
+    const atual = this.topo();
+    if (atual && atual.voltar && atual.voltar()) return;
+    if (this.pilha.length <= 1) { perguntarSair(); return; }
+    this.pilha.pop();
+    this.tirar(atual);
+    const ant = this.topo();
+    ant._caixa.style.display = "";
+    Foco.atual = null;
+    const alvo = ant.voltou ? ant.voltou() : null;
+    Foco.definir(alvo || (ant._foco && document.contains(ant._foco) ? ant._foco : $(".foc", ant._caixa)));
+  },
+  limpar() {
+    this.pilha.slice().reverse().forEach((t) => this.tirar(t));
+    this.pilha = [];
+    $("#ui").innerHTML = "";
+  },
+  topo() { return this.pilha[this.pilha.length - 1]; },
+};
+
+function perguntarSair() {
+  dialogo("Sair do Bad Wolf TV?", null, [
+    { t: "Ficar", f: () => {} },
+    { t: "Sair", f: () => { Player.parar(); try { window.close(); } catch (e) { /* ignore */ } } },
+  ]);
+}
+
+/** Caixa de pergunta por cima de tudo; Voltar fecha. */
+function dialogo(titulo, texto, botoes) {
+  const ov = $("#overlay");
+  const anterior = Foco.atual;
+  const fechar = () => { caixa.remove(); Dialogo.aberto = null; if (anterior && document.contains(anterior)) Foco.definir(anterior); };
+  const caixa = h("div.dialog", null, h("div.box", null, [
+    h("h2", { text: titulo }), texto ? h("p", { text: texto }) : null,
+    h("div.btns", null, botoes.map((b) => { const el = h("div.btn.foc", { text: b.t }); el._ok = () => { fechar(); b.f(); }; return el; })),
+  ]));
+  ov.appendChild(caixa);
+  Dialogo.aberto = fechar;
+  Foco.atual = null;
+  Foco.definir($(".foc", caixa));
+}
+const Dialogo = { aberto: null };
+
+// ======================= casca (topo com as abas) =======================
+
+const ABAS = [
+  { id: "inicio", t: "Início" }, { id: "aovivo", t: "Ao vivo" }, { id: "filmes", t: "Filmes" },
+  { id: "series", t: "Séries" }, { id: "lista", t: "Minha lista" }, { id: "busca", t: "Buscar" },
+];
+
+function casca(ui, abaAtual) {
+  const top = h("div.top", { "data-grupo": "abas" }, [
+    h("img.logo", { src: "logo.png" }),
+    h("div.brand", { html: "BAD WOLF <b>TV</b>" }),
+  ]);
+  ABAS.forEach((a) => {
+    const el = h("div.tab.foc" + (a.id === abaAtual ? ".sel" : ""), { text: a.t, "data-aba": a.id });
+    el._ok = () => trocarAba(a.id);
+    if (a.id === abaAtual) top._ultimo = el;
+    top.appendChild(el);
+  });
+  const rel = h("div.clock", { text: hora(Date.now()) });
+  top.appendChild(rel);
+  ui.appendChild(top);
+  clearInterval(casca._t);
+  casca._t = setInterval(() => { rel.textContent = hora(Date.now()); }, 15000);
+  return top;
+}
+
+function trocarAba(id) {
+  const t = { inicio: TelaInicio, aovivo: TelaAoVivo, filmes: () => TelaVod("f"), series: () => TelaVod("s"), lista: TelaLista, busca: TelaBusca }[id]();
+  Telas.limpar();
+  Telas.abrir(t);
+  const aba = $(".tab[data-aba='" + id + "']");
+  if (aba) Foco.definir(aba);
+}
+
+/** Voltar dentro de uma aba: vai para as abas; nas abas, Início; no Início, pergunta se quer sair. */
+function voltarParaAbas(aba) {
+  if (Foco.atual && Foco.atual.classList.contains("tab")) {
+    if (aba !== "inicio") { trocarAba("inicio"); return true; }
+    return false;
+  }
+  const t = $(".tab.sel");
+  if (t) { Foco.definir(t); return true; }
+  return false;
+}
+
+// ======================= cartões =======================
+
+function cartao(card, extra) {
+  extra = extra || {};
+  const tipo = card.tipo;
+  const poster = h("div.poster", { bg: card.p || null }, [
+    card.p ? null : h("div.t", { text: card.t }),
+    card.k ? h("div.badge", { text: card.k }) : null,
+    extra.frac ? h("div.bar", { style: { width: Math.round(Math.min(1, extra.frac) * 100) + "%" } }) : null,
+  ]);
+  const el = h("div.card.foc", null, [poster, extra.lbl ? h("div.lbl", { text: extra.lbl }) : null]);
+  el._card = card;
+  el._ok = extra.ok || (() => abrirTitulo(tipo, card.id));
+  if (extra.foco) el._aoFocar = () => extra.foco(card);
+  return el;
+}
+
+function abrirTitulo(tipo, id) {
+  const card = Cat.card(tipo, id);
+  if (!card) { toast("Este título não está mais no catálogo"); return; }
+  Telas.abrir(tipo === "s" ? TelaSerie(card) : TelaFilme(card));
+}
+
+/** Fundo da tela (capa grande desfocada à direita), trocado com atraso para não piscar a cada seta. */
+const Fundo = {
+  t: null, url: null,
+  cor(c) { const bg = $("#bg"); bg.innerHTML = ""; bg.style.background = c || "#000"; this.url = null; },
+  imagem(url) {
+    clearTimeout(this.t);
+    this.t = setTimeout(() => {
+      if (url === this.url) return;
+      this.url = url;
+      const bg = $("#bg");
+      bg.style.background = "#000";
+      if (!$(".fade", bg)) { bg.innerHTML = ""; bg.appendChild(h("div.fade")); }
+      $$("img", bg).forEach((i) => { i.classList.remove("on"); setTimeout(() => i.remove(), 700); });
+      if (!url) return;
+      const img = h("img", { src: url });
+      img.onload = () => img.classList.add("on");
+      bg.insertBefore(img, bg.firstChild);
+    }, 350);
+  },
+};
+
+// ======================= Início =======================
+
+function TelaInicio() {
+  let heroT, heroM, heroS;
+  const linhas = () => {
+    const out = [];
+    const prog = Usuario.progresso();
+    const cont = Object.keys(prog).sort((a, b) => prog[b].em - prog[a].em).map((k) => {
+      const p = k.split(":");
+      const card = p[0] === "f" ? Cat.card("f", +p[1]) : p[0] === "e" ? Cat.card("s", +p[1]) : null;
+      if (!card) return null;
+      return { card, frac: prog[k].dur ? prog[k].pos / prog[k].dur : 0, lbl: p[0] === "e" ? "T" + p[2] + " · E" + p[3] : null };
+    }).filter(Boolean);
+    const vistos = {};
+    const unico = cont.filter((x) => (vistos[x.card.tipo + x.card.id] ? false : (vistos[x.card.tipo + x.card.id] = 1)));
+    if (unico.length) out.push({ t: "Continuar assistindo", itens: unico.slice(0, 30) });
+    Cat.inicio.forEach((l) => {
+      const itens = (l.itens || (l.ids || []).map((id) => ({ tipo: l.tipo, id })))
+        .map((x) => Cat.card(x.tipo, x.id)).filter(Boolean).map((card) => ({ card }));
+      if (itens.length) out.push({ t: l.t, itens });
+    });
+    const fav = Usuario.favs().map((k) => { const p = k.split(":"); return p[0] === "f" || p[0] === "s" ? Cat.card(p[0], +p[1]) : null; })
+      .filter(Boolean).map((card) => ({ card }));
+    if (fav.length) out.push({ t: "Minha lista", itens: fav });
+    Cat.categorias.filmes.forEach((c) => { const l = Cat.filmesPorCat[c.id]; if (l && l.length) out.push({ t: c.nome.replace(/^Filmes · /, "Filmes: "), itens: l.slice(0, 30).map((card) => ({ card })) }); });
+    Cat.categorias.series.forEach((c) => { const l = Cat.seriesPorCat[c.id]; if (l && l.length) out.push({ t: c.nome.replace(/^Séries · /, "Séries: "), itens: l.slice(0, 30).map((card) => ({ card })) }); });
+    return out;
+  };
+  const focou = (card) => {
+    heroT.textContent = card.t;
+    heroM.innerHTML = "";
+    const meta = [card.a, card.tipo === "s" ? (card.nt ? card.nt + (card.nt > 1 ? " temporadas" : " temporada") : null) : null,
+      (card.g || []).slice(0, 3).join(", "), card.v === "dl" ? "Dublado e legendado" : card.v === "l" ? "Legendado" : null].filter(Boolean);
+    heroM.appendChild(document.createTextNode(meta.join("  ·  ")));
+    if (card.k) heroM.appendChild(h("span.k4", { text: card.k }));
+    heroS.textContent = "";
+    Fundo.imagem(Cat.fundo(card) || card.p);
+    const meu = card;
+    clearTimeout(focou._t);
+    focou._t = setTimeout(() => {
+      Cat.ficha(meu.tipo, meu.id).then((f) => { if (f && Foco.atual && Foco.atual._card === meu) heroS.textContent = f.s || ""; }).catch(() => {});
+    }, 700);
+  };
+  return {
+    montar(ui) {
+      Fundo.cor("#000");
+      casca(ui, "inicio");
+      const tela = h("div.screen.home");
+      heroT = h("h1"); heroM = h("div.meta"); heroS = h("div.syn");
+      tela.appendChild(h("div.hero", null, [heroT, heroM, heroS]));
+      const rows = h("div.rows", { "data-rola": "y", "data-folga": "0" });
+      const inner = h("div.rows-inner");
+      const ls = linhas();
+      if (!ls.length) inner.appendChild(h("div.empty", { text: "Catálogo vazio." }));
+      const fileiras = ls.map((l, i) => {
+        const strip = h("div.strip", { "data-rola": "x", "data-folga": "72" });
+        const si = h("div.strip-inner");
+        strip.appendChild(si);
+        const row = h("div.row", { "data-grupo": "r" + i }, [h("h2", { text: l.t }), strip]);
+        row._montar = () => {
+          if (row._ok) return;
+          row._ok = true;
+          l.itens.forEach((x) => si.appendChild(cartao(x.card, { frac: x.frac, lbl: x.lbl, foco: focou })));
+        };
+        inner.appendChild(row);
+        return row;
+      });
+      // só monta as fileiras perto da tela (são dezenas): ao focar uma, monta a de baixo
+      fileiras.slice(0, 3).forEach((r) => r._montar());
+      rows.appendChild(inner);
+      this._rows = rows;
+      tela.appendChild(rows);
+      ui.appendChild(tela);
+      this._fileiras = fileiras;
+      const pri = fileiras[0] && $(".card", fileiras[0]);
+      return pri;
+    },
+    focou(el) {
+      const row = el.closest(".row");
+      if (!row || !this._fileiras) return;
+      const i = this._fileiras.indexOf(row);
+      for (let j = Math.max(0, i - 1); j <= i + 2 && j < this._fileiras.length; j++) this._fileiras[j]._montar();
+      this._rows.scrollTop = row.offsetTop;
+    },
+    voltar() { return voltarParaAbas("inicio"); },
+  };
+}
+
+// ======================= Filmes / Séries =======================
+
+function TelaVod(tipo) {
+  const cats = tipo === "s" ? Cat.categorias.series : Cat.categorias.filmes;
+  const porCat = tipo === "s" ? Cat.seriesPorCat : Cat.filmesPorCat;
+  let catSel = store("cat_" + tipo) || (cats[0] && cats[0].id);
+  if (!porCat[catSel]) catSel = cats[0] && cats[0].id;
+  let grade, gradeInner, lista = [], montados = 0;
+  const LOTE = 42;
+  const montarMais = () => {
+    const fim = Math.min(lista.length, montados + LOTE);
+    for (; montados < fim; montados++) gradeInner.appendChild(cartao(lista[montados], { foco: (c) => Fundo.imagem(Cat.fundo(c)) }));
+  };
+  const mostrarCat = (id) => {
+    catSel = id; store("cat_" + tipo, id);
+    lista = porCat[id] || [];
+    montados = 0;
+    gradeInner.innerHTML = "";
+    grade.scrollTop = 0;
+    if (!lista.length) gradeInner.appendChild(h("div.empty", { text: "Nada aqui." }));
+    montarMais();
+  };
+  return {
+    montar(ui) {
+      Fundo.cor("#000");
+      casca(ui, tipo === "s" ? "series" : "filmes");
+      const tela = h("div.screen");
+      const cols = h("div.cols");
+      const grupos = h("div.groups", { "data-rola": "y", "data-grupo": "cats" });
+      const gi = h("div.groups-inner");
+      let focoCat = null;
+      cats.forEach((c) => {
+        const n = (porCat[c.id] || []).length;
+        const el = h("div.group.foc" + (c.id === catSel ? ".sel" : ""), null, [h("span", { text: c.nome.replace(/^(Filmes|Séries) · /, "") }), h("span.n", { text: n })]);
+        el._aoFocar = () => {
+          clearTimeout(el._t);
+          el._t = setTimeout(() => {
+            if (catSel === c.id) return;
+            $$(".group", gi).forEach((g) => g.classList.remove("sel"));
+            el.classList.add("sel");
+            mostrarCat(c.id);
+          }, 300);
+        };
+        el._ok = () => { const p = $(".card", gradeInner); if (p) Foco.definir(p); };
+        if (c.id === catSel) { focoCat = el; grupos._ultimo = el; }
+        gi.appendChild(el);
+      });
+      grupos.appendChild(gi);
+      grade = h("div.grid", { "data-rola": "y", "data-folga": "60" });
+      gradeInner = h("div.grid-inner");
+      grade.appendChild(gradeInner);
+      cols.appendChild(grupos); cols.appendChild(grade);
+      tela.appendChild(cols);
+      ui.appendChild(tela);
+      mostrarCat(catSel);
+      return focoCat;
+    },
+    focou(el) {
+      if (!el.classList.contains("card") || !gradeInner) return;
+      const cards = gradeInner.children;
+      const i = Array.prototype.indexOf.call(cards, el);
+      if (i >= montados - 12) montarMais();
+    },
+    voltar() {
+      if (Foco.atual && Foco.atual.classList.contains("card")) { const g = $(".group.sel"); if (g) { Foco.definir(g); return true; } }
+      return voltarParaAbas("x");
+    },
+  };
+}
+
+// ======================= Minha lista =======================
+
+function TelaLista() {
+  return {
+    montar(ui) {
+      Fundo.cor("#000");
+      casca(ui, "lista");
+      const tela = h("div.screen");
+      const grade = h("div.grid", { "data-rola": "y", style: { paddingLeft: "72px" } });
+      const gi = h("div.grid-inner");
+      const favs = Usuario.favs();
+      const titulos = favs.map((k) => { const p = k.split(":"); return p[0] === "f" || p[0] === "s" ? Cat.card(p[0], +p[1]) : null; }).filter(Boolean);
+      const canais = favs.map((k) => { const p = k.split(":"); return p[0] === "c" ? Cat.canalPorId[+p[1]] : null; }).filter(Boolean);
+      if (!titulos.length && !canais.length) gi.appendChild(h("div.empty", { text: "Sua lista está vazia. Nos detalhes de um filme ou série, escolha \"Minha lista\". Nos canais, segure OK." }));
+      titulos.forEach((c) => gi.appendChild(cartao(c, { foco: (x) => Fundo.imagem(Cat.fundo(x)) })));
+      canais.forEach((c, i) => {
+        const el = h("div.card.wide.foc", null, [h("div.poster", { bg: c.l || null, style: { backgroundSize: "contain", backgroundColor: "#1a1a1f" } }, c.l ? null : h("div.t", { text: c.n })), h("div.lbl", { text: c.n })]);
+        el._ok = () => Player.abrirCanal(canais, i, null);
+        gi.appendChild(el);
+      });
+      grade.appendChild(gi);
+      tela.appendChild(grade);
+      ui.appendChild(tela);
+      return $(".card", gi);
+    },
+    voltar() { return voltarParaAbas("lista"); },
+  };
+}
+
+// ======================= Busca =======================
+
+function TelaBusca() {
+  let input, res, resInner, termo = store("busca") || "";
+  const buscar = () => {
+    const q = semAcento(input.value.trim());
+    store("busca", input.value);
+    resInner.innerHTML = "";
+    if (q.length < 2) { resInner.appendChild(h("div.empty", { text: "Digite pelo menos 2 letras." })); return; }
+    const achados = [];
+    const testar = (card) => { if (achados.length < 84 && semAcento(card.t).indexOf(q) >= 0) achados.push(card); };
+    Object.keys(Cat.seriePorId).forEach((id) => testar(Cat.seriePorId[id]));
+    Object.keys(Cat.filmePorId).forEach((id) => testar(Cat.filmePorId[id]));
+    // começa com o termo primeiro
+    achados.sort((a, b) => (semAcento(a.t).indexOf(q) === 0 ? 0 : 1) - (semAcento(b.t).indexOf(q) === 0 ? 0 : 1));
+    const canais = Cat.canais.filter((c) => semAcento(c.n).indexOf(q) >= 0).slice(0, 12);
+    canais.forEach((c, i) => {
+      const el = h("div.card.wide.foc", null, [h("div.poster", { bg: c.l || null, style: { backgroundSize: "contain", backgroundColor: "#1a1a1f" } }, c.l ? null : h("div.t", { text: c.n })), h("div.lbl", { text: c.n })]);
+      el._ok = () => Player.abrirCanal(canais, i, null);
+      resInner.appendChild(el);
+    });
+    achados.forEach((c) => resInner.appendChild(cartao(c, { lbl: c.t })));
+    if (!achados.length && !canais.length) resInner.appendChild(h("div.empty", { text: "Nada encontrado." }));
+  };
+  return {
+    montar(ui) {
+      Fundo.cor("#000");
+      casca(ui, "busca");
+      const tela = h("div.screen.search");
+      input = h("input.foc", { type: "text", placeholder: "Filme, série ou canal", value: termo });
+      let t;
+      input.oninput = () => { clearTimeout(t); t = setTimeout(buscar, 400); };
+      input._ok = () => input.focus();
+      res = h("div.res", { "data-rola": "y" });
+      resInner = h("div.grid-inner");
+      res.appendChild(resInner);
+      tela.appendChild(input); tela.appendChild(res);
+      ui.appendChild(tela);
+      if (termo) buscar();
+      return input;
+    },
+    voltar() { return voltarParaAbas("busca"); },
+  };
+}
+
+// ======================= Ao vivo =======================
+
+function TelaAoVivo() {
+  const cats = Cat.categorias.canais;
+  let catSel = store("cat_live");
+  if (catSel === undefined || catSel === null || (catSel !== "" && !cats.some((c) => c.id === catSel))) catSel = (cats[0] && cats[0].id) || "";
+  let canais = [], lista, listaInner, montados = 0, painel, focado = null, previa = null;
+  const LOTE = 60;
+  const agora = () => Date.now();
+
+  const linhaCanal = (c, i) => {
+    const prog = Cat.agora(c, agora());
+    const fav = Usuario.ehFav("c:" + c.id);
+    const el = h("div.ch.foc" + (Player.canalAtual && Player.canalAtual.id === c.id ? ".playing" : ""), { "data-id": c.id }, [
+      h("div.num", { text: i + 1 }),
+      h("div.lg", { bg: c.l || null }, c.l ? null : c.n.slice(0, 14)),
+      h("div.info", null, [
+        h("div.nm", null, [c.n, (c.f[0] && c.f[0].q) ? h("span.q", { text: c.f[0].q }) : null, fav ? h("span.fav", { text: "Minha lista" }) : null]),
+        prog ? h("div.now", { text: hora(prog.ini) + " – " + hora(prog.fim) + "   " + prog.t }) : h("div.now", { text: "" }),
+        prog ? h("div.prog", null, h("i", { style: { width: Math.round(100 * (agora() - prog.ini) / Math.max(1, prog.fim - prog.ini)) + "%" } })) : null,
+      ]),
+    ]);
+    el._canal = c;
+    el._aoFocar = () => { focado = c; desenharPainel(); };
+    el._ok = () => {
+      if (previa && previa.id === c.id) { Player.abrirCanal(canais, i, catSel); return; }
+      previa = c;
+      $$(".ch.playing", listaInner).forEach((x) => x.classList.remove("playing"));
+      el.classList.add("playing");
+      desenharPainel();
+      Player.previa(c, $(".pbox", painel), canais, i);
+    };
+    el._longo = () => { const on = Usuario.trocarFav("c:" + c.id); toast(on ? "Adicionado à Minha lista" : "Tirado da Minha lista"); };
+    return el;
+  };
+  const montarMais = () => {
+    const fim = Math.min(canais.length, montados + LOTE);
+    for (; montados < fim; montados++) listaInner.appendChild(linhaCanal(canais[montados], montados));
+  };
+  const mostrarCat = (id) => {
+    catSel = id; store("cat_live", id);
+    canais = Cat.canaisDe(id === "" ? null : id);
+    montados = 0; listaInner.innerHTML = ""; lista.scrollTop = 0;
+    if (!canais.length) listaInner.appendChild(h("div.empty", { text: "Nenhum canal aqui." }));
+    montarMais();
+  };
+  const desenharPainel = () => {
+    const c = previa || focado;
+    const box = $(".pbox", painel);
+    const resto = $(".pinfo", painel);
+    if (!c) { resto.innerHTML = ""; return; }
+    $(".lg", box).style.backgroundImage = c.l ? "url(\"" + c.l + "\")" : "";
+    box.classList.toggle("video", !!previa && Player.ativo && Player.modo === "previa");
+    resto.innerHTML = "";
+    resto.appendChild(h("div.hint", { text: !previa ? "OK: ver a prévia" : (focado && focado.id === previa.id ? "OK de novo: tela cheia" : "OK: trocar a prévia para este canal") }));
+    const ps = Cat.programas(c), t = agora();
+    const cur = ps.filter((p) => p.ini <= t && t < p.fim)[0];
+    resto.appendChild(h("h3", { text: cur ? cur.t : c.n }));
+    if (cur) {
+      const falta = Math.max(0, Math.round((cur.fim - t) / 60000));
+      resto.appendChild(h("div.sub", { text: c.n + "  ·  " + hora(cur.ini) + "–" + hora(cur.fim) + "  ·  falta " + (falta >= 60 ? Math.floor(falta / 60) + " h " + (falta % 60) + " min" : falta + " min") }));
+      resto.appendChild(h("div.pline", null, h("i", { style: { width: Math.round(100 * (t - cur.ini) / Math.max(1, cur.fim - cur.ini)) + "%" } })));
+      if (cur.d) resto.appendChild(h("div.desc", { text: cur.d }));
+    } else resto.appendChild(h("div.sub", { text: "Sem guia de programação" }));
+    const prox = ps.filter((p) => p.ini > t).slice(0, 3);
+    if (prox.length) resto.appendChild(h("div.next", null, [h("b", { text: "A SEGUIR" })].concat(prox.map((p) => h("div", null, [h("span", { text: hora(p.ini) }), p.t])))));
+  };
+
+  return {
+    montar(ui) {
+      Fundo.cor("radial-gradient(1100px 700px at 1650px 330px, #0a2a33, #000)");
+      casca(ui, "aovivo");
+      const tela = h("div.screen");
+      const cols = h("div.cols");
+      const grupos = h("div.groups", { "data-rola": "y", "data-grupo": "cats" });
+      const gi = h("div.groups-inner");
+      let focoCat = null;
+      const opcoes = cats.map((c) => ({ id: c.id, nome: c.nome, n: Cat.canaisDe(c.id).length }));
+      opcoes.splice(cats.length && cats[0].id === "principais" ? 1 : 0, 0, { id: "", nome: "Todos", n: Cat.canais.length });
+      opcoes.forEach((c) => {
+        const el = h("div.group.foc" + (c.id === catSel ? ".sel" : ""), null, [h("span", { text: c.nome }), h("span.n", { text: c.n })]);
+        el._aoFocar = () => {
+          clearTimeout(el._t);
+          el._t = setTimeout(() => {
+            if (catSel === c.id) return;
+            $$(".group", gi).forEach((g) => g.classList.remove("sel"));
+            el.classList.add("sel");
+            mostrarCat(c.id);
+          }, 300);
+        };
+        el._ok = () => { const p = $(".ch", listaInner); if (p) Foco.definir(p); };
+        if (c.id === catSel) { focoCat = el; grupos._ultimo = el; }
+        gi.appendChild(el);
+      });
+      grupos.appendChild(gi);
+      lista = h("div.chlist", { "data-rola": "y", "data-folga": "80", "data-grupo": "canais" });
+      listaInner = h("div.chlist-inner");
+      lista.appendChild(listaInner);
+      painel = h("div.panel", null, [
+        h("div.pbox", null, [h("div.lg"), h("div.live", { text: "AO VIVO" })]),
+        h("div.pinfo"),
+      ]);
+      cols.appendChild(grupos); cols.appendChild(lista); cols.appendChild(painel);
+      tela.appendChild(cols);
+      ui.appendChild(tela);
+      mostrarCat(catSel);
+      Cat.carregarGuia().then(() => {
+        // a lista foi desenhada sem o guia: redesenha os programas
+        $$(".ch", listaInner).forEach((el) => {
+          const c = el._canal, p = Cat.agora(c, agora());
+          if (!p) return;
+          const info = $(".info", el);
+          info.replaceChild(h("div.now", { text: hora(p.ini) + " – " + hora(p.fim) + "   " + p.t }), $(".now", info));
+          info.appendChild(h("div.prog", null, h("i", { style: { width: Math.round(100 * (agora() - p.ini) / Math.max(1, p.fim - p.ini)) + "%" } })));
+        });
+        desenharPainel();
+      });
+      return focoCat;
+    },
+    focou(el) {
+      if (!el.classList.contains("ch")) return;
+      const i = Array.prototype.indexOf.call(listaInner.children, el);
+      if (i >= montados - 15) montarMais();
+    },
+    atualizarPainel() { desenharPainel(); },
+    /** Voltou da tela cheia: a prévia continua no canal que estava tocando (trocado com ▲▼ ou não), sem recarregar. */
+    voltou() {
+      $$(".ch.playing", listaInner).forEach((x) => x.classList.remove("playing"));
+      if (!(Player.canalAtual && Player.ativo)) { previa = null; desenharPainel(); return null; }
+      previa = Player.canalAtual;
+      const i = canais.indexOf(previa);
+      while (i >= montados && montados < canais.length) montarMais();
+      const el = $(".ch[data-id='" + previa.id + "']", listaInner);
+      if (el) { el.classList.add("playing"); lista._ultimo = el; }
+      focado = previa;
+      desenharPainel();
+      Player.mostrarPrevia($(".pbox", painel));
+      return el;
+    },
+    esconder() { if (Player.modo === "previa") Player.esconderVideo(); },
+    voltar() {
+      if (Foco.atual && Foco.atual.classList.contains("ch")) {
+        if (previa) { previa = null; Player.parar(); $$(".ch.playing", listaInner).forEach((x) => x.classList.remove("playing")); desenharPainel(); return true; }
+        const g = $(".group.sel"); if (g) { Foco.definir(g); return true; }
+      }
+      if (Foco.atual && Foco.atual.classList.contains("group") && previa) { previa = null; Player.parar(); desenharPainel(); }
+      return voltarParaAbas("aovivo");
+    },
+    sair() { Player.parar(); },
+  };
+}
+
+// ======================= Detalhes do filme =======================
+
+function TelaFilme(card) {
+  let ficha = null, info, btns, versao = Usuario.versao();
+  const k = "f:" + card.id;
+  const desenharBotoes = () => {
+    btns.innerHTML = "";
+    const temDub = ficha && ficha.v && ficha.v.dub && ficha.v.dub.length, temLeg = ficha && ficha.v && ficha.v.leg && ficha.v.leg.length;
+    if (temDub && !temLeg) versao = "dub";
+    if (temLeg && !temDub) versao = "leg";
+    const p = Usuario.progresso()[k];
+    const fontes = () => (ficha && ficha.v ? (ficha.v[versao] || []).concat(ficha.v[versao === "dub" ? "leg" : "dub"] || []) : []);
+    const tocar = (pos) => Player.abrirVod({ titulo: card.t, sub: card.a ? String(card.a) : "", fontes: fontes(), chave: k, inicio: pos || 0 });
+    const add = (t, f, sm) => { const b = h("div.btn.foc", null, [t, sm ? h("span.sm", { text: sm }) : null]); b._ok = f; btns.appendChild(b); return b; };
+    let primeiro;
+    if (!ficha) primeiro = add("Carregando…", () => {});
+    else if (!fontes().length) primeiro = add("Sem fontes no momento", () => {});
+    else if (p && p.pos > 30 && (!p.dur || p.pos < p.dur * 0.95)) { primeiro = add("Continuar", () => tocar(p.pos), relogio(p.pos)); add("Do início", () => tocar(0)); }
+    else primeiro = add("Assistir", () => tocar(0));
+    if (temDub && temLeg) add(versao === "dub" ? "Dublado" : "Legendado", () => { versao = versao === "dub" ? "leg" : "dub"; store("versao", versao); desenharBotoes(); Foco.definir(btns.children[btns.children.length - 2]); }, "trocar");
+    add(Usuario.ehFav(k) ? "✓ Minha lista" : "+ Minha lista", () => { const on = Usuario.trocarFav(k); toast(on ? "Adicionado à Minha lista" : "Tirado da Minha lista"); desenharBotoes(); Foco.definir(btns.lastChild); });
+    return primeiro;
+  };
+  return {
+    montar(ui) {
+      Fundo.cor("#000"); Fundo.imagem(Cat.fundo(card) || card.p);
+      const tela = h("div.screen.detail", { style: { top: "0", height: "1080px" } });
+      tela.appendChild(h("div.poster-big", { bg: card.p || null, style: { top: "130px" } }));
+      info = h("div.info", { style: { top: "130px" } });
+      const meta = [card.a, (card.g || []).slice(0, 3).join(", "), card.k].filter(Boolean).join("  ·  ");
+      info.appendChild(h("h1", { text: card.t }));
+      info.appendChild(h("div.meta", { text: meta }));
+      const syn = h("div.syn", { text: "" });
+      info.appendChild(syn);
+      btns = h("div.btns", { "data-grupo": "btns" });
+      info.appendChild(btns);
+      tela.appendChild(info);
+      ui.appendChild(tela);
+      const prim = desenharBotoes();
+      Cat.ficha("f", card.id).then((f) => {
+        ficha = f || { v: {} };
+        if (f && f.s) syn.textContent = f.s;
+        if (f && f.d && !card.a) info.querySelector(".meta").textContent = meta;
+        const b = desenharBotoes();
+        if (Telas.topo() === this) Foco.definir(b);
+      }).catch(() => { ficha = { v: {} }; syn.textContent = "Não consegui buscar este filme agora (sem internet?)."; desenharBotoes(); });
+      return prim;
+    },
+    voltou() { return desenharBotoes(); },
+  };
+}
+
+// ======================= Detalhes da série =======================
+
+function TelaSerie(card) {
+  let ficha = null, eps = [], porTemp = {}, temps = [], tempSel = null, versao = Usuario.versao();
+  let epsBox, epsInner, seasonsBox, btns, syn;
+  const chaveEp = (t, e) => "e:" + card.id + ":" + t + ":" + e;
+  const fontesDe = (ep, v) => (ep[2][v] || []).concat(ep[2][v === "dub" ? "leg" : "dub"] || []);
+  const temVersao = (v) => eps.some((ep) => ep[2][v] && ep[2][v].length);
+  const tocar = (idx, pos) => {
+    const lista = eps.filter((ep) => fontesDe(ep, versao).length);
+    const ep = eps[idx];
+    const i = lista.indexOf(ep);
+    Player.abrirSerie(card, lista.map((x) => ({
+      titulo: card.t, sub: (x[0] ? "T" + x[0] + " · " : "") + "Episódio " + x[1], fontes: fontesDe(x, versao), chave: chaveEp(x[0], x[1]),
+    })), Math.max(0, i), pos || 0);
+  };
+  const desenharEps = () => {
+    epsInner.innerHTML = "";
+    const prog = Usuario.progresso(), vistos = Usuario.vistos();
+    (porTemp[tempSel] || []).forEach((idx) => {
+      const ep = eps[idx];
+      const k = chaveEp(ep[0], ep[1]);
+      const p = prog[k];
+      const st = vistos[k] ? "Visto" : p && p.dur ? "Parou em " + Math.round(100 * p.pos / p.dur) + "%" : "";
+      const temFonte = fontesDe(ep, versao).length > 0;
+      const el = h("div.ep.foc", null, [h("div.code", { text: "E" + pad2(ep[1]) }), h("div.nm", { text: "Episódio " + ep[1] + (temFonte ? "" : " (sem fonte)") }), h("div.st", { text: st })]);
+      el._ok = () => { if (temFonte) tocar(idx, p && !vistos[k] && p.pos > 30 ? p.pos : 0); };
+      epsInner.appendChild(el);
+    });
+  };
+  const desenharTemporadas = () => {
+    seasonsBox.innerHTML = "";
+    temps.forEach((t) => {
+      const el = h("div.season.foc" + (t === tempSel ? ".sel" : ""), { text: t === 0 ? "Especiais" : "Temporada " + t });
+      el._aoFocar = () => { if (tempSel !== t) { tempSel = t; $$(".season", seasonsBox).forEach((s) => s.classList.remove("sel")); el.classList.add("sel"); desenharEps(); epsBox.scrollTop = 0; } };
+      el._ok = () => { const p = $(".ep", epsInner); if (p) Foco.definir(p); };
+      if (t === tempSel) seasonsBox._ultimo = el;
+      seasonsBox.appendChild(el);
+    });
+  };
+  const desenharBotoes = () => {
+    btns.innerHTML = "";
+    const add = (t, f, sm) => { const b = h("div.btn.foc", null, [t, sm ? h("span.sm", { text: sm }) : null]); b._ok = f; btns.appendChild(b); return b; };
+    let prim;
+    if (!ficha) prim = add("Carregando…", () => {});
+    else if (!eps.length) prim = add("Sem episódios no momento", () => {});
+    else {
+      // continuar: o último episódio aberto (se não terminou) ou o seguinte
+      const prog = Usuario.progresso(), vistos = Usuario.vistos();
+      let ultimo = null;
+      eps.forEach((ep, i) => { const p = prog[chaveEp(ep[0], ep[1])]; if (p && (!ultimo || p.em > ultimo.em)) ultimo = { i, em: p.em, pos: p.pos, k: chaveEp(ep[0], ep[1]) }; });
+      if (ultimo) {
+        const ep = eps[ultimo.i];
+        if (vistos[ultimo.k] && ultimo.i + 1 < eps.length) { const n = eps[ultimo.i + 1]; prim = add("Próximo episódio", () => tocar(ultimo.i + 1, 0), "T" + n[0] + " E" + n[1]); }
+        else prim = add("Continuar", () => tocar(ultimo.i, vistos[ultimo.k] ? 0 : ultimo.pos), "T" + ep[0] + " E" + ep[1]);
+      } else prim = add("Assistir", () => tocar(0, 0), "T" + eps[0][0] + " E" + eps[0][1]);
+    }
+    if (ficha && temVersao("dub") && temVersao("leg")) {
+      add(versao === "dub" ? "Dublado" : "Legendado", () => { versao = versao === "dub" ? "leg" : "dub"; store("versao", versao); desenharBotoes(); desenharEps(); Foco.definir(btns.children[btns.children.length - 2]); }, "trocar");
+    }
+    const k = "s:" + card.id;
+    add(Usuario.ehFav(k) ? "✓ Minha lista" : "+ Minha lista", () => { const on = Usuario.trocarFav(k); toast(on ? "Adicionado à Minha lista" : "Tirado da Minha lista"); desenharBotoes(); Foco.definir(btns.lastChild); });
+    return prim;
+  };
+  const carregar = (tela) => {
+    Cat.ficha("s", card.id).then((f) => {
+      ficha = f || { eps: [] };
+      eps = (ficha.eps || []).slice().sort((a, b) => ((a[0] || 999) - (b[0] || 999)) || (a[1] - b[1]));
+      porTemp = {}; temps = [];
+      eps.forEach((ep, i) => { if (!porTemp[ep[0]]) { porTemp[ep[0]] = []; temps.push(ep[0]); } porTemp[ep[0]].push(i); });
+      if (!temVersao(versao)) versao = temVersao("dub") ? "dub" : "leg";
+      tempSel = temps[0];
+      const prog = Usuario.progresso();
+      let em = 0;
+      eps.forEach((ep) => { const p = prog[chaveEp(ep[0], ep[1])]; if (p && p.em > em) { em = p.em; tempSel = ep[0]; } });
+      if (f && f.s) syn.textContent = f.s;
+      desenharTemporadas(); desenharEps();
+      const b = desenharBotoes();
+      if (Telas.topo() === tela) Foco.definir(b);
+    }).catch(() => {
+      ficha = { eps: [] };
+      syn.textContent = "Não consegui buscar os episódios agora (sem internet?). Volte e abra de novo.";
+      desenharBotoes();
+    });
+  };
+  return {
+    montar(ui) {
+      Fundo.cor("#000"); Fundo.imagem(Cat.fundo(card) || card.p);
+      const tela = h("div.screen.detail", { style: { top: "0", height: "1080px" } });
+      tela.appendChild(h("div.poster-big", { bg: card.p || null, style: { top: "80px", width: "260px", height: "390px" } }));
+      const info = h("div.info", { style: { top: "70px", left: "380px" } });
+      info.appendChild(h("h1", { text: card.t, style: { fontSize: "52px", lineHeight: "60px" } }));
+      info.appendChild(h("div.meta", { text: [card.a, card.nt ? card.nt + (card.nt > 1 ? " temporadas" : " temporada") : null, card.ne ? card.ne + " episódios" : null, (card.g || []).slice(0, 3).join(", ")].filter(Boolean).join("  ·  ") }));
+      syn = h("div.syn", { style: { maxHeight: "114px" } });
+      info.appendChild(syn);
+      btns = h("div.btns", { "data-grupo": "btns", style: { marginTop: "24px" } });
+      info.appendChild(btns);
+      tela.appendChild(info);
+      seasonsBox = h("div.seasons", { "data-grupo": "temps", "data-rola": "x", style: { left: "380px", width: "1460px", overflow: "hidden" } });
+      tela.appendChild(seasonsBox);
+      epsBox = h("div.eps", { "data-rola": "y", style: { left: "380px" } });
+      epsInner = h("div.eps-inner");
+      epsBox.appendChild(epsInner);
+      tela.appendChild(epsBox);
+      ui.appendChild(tela);
+      const prim = desenharBotoes();
+      carregar(this);
+      return prim;
+    },
+    voltou() { if (!ficha) return null; desenharEps(); return desenharBotoes(); },
+  };
+}
+
+// ======================= Player =======================
+
+/** http://host/live/u/p/123.ts ou http://host/u/p/123 -> http://host/live/u/p/123.m3u8 (servidor Xtream). */
+function xtreamHls(url) {
+  const m = /^(https?:\/\/[^/]+)\/(.*?)(\?.*)?$/.exec(url);
+  if (!m) return null;
+  const segs = m[2].split("/"), q = m[3] || "";
+  const last = segs[segs.length - 1];
+  if (segs.length === 4 && segs[0] === "live" && /\.ts$/.test(last)) return m[1] + "/live/" + segs[1] + "/" + segs[2] + "/" + last.replace(/\.ts$/, "") + ".m3u8" + q;
+  if (segs.length === 3 && /^\d+(\.ts)?$/.test(last)) return m[1] + "/live/" + segs[0] + "/" + segs[1] + "/" + last.replace(/\.ts$/, "") + ".m3u8" + q;
+  return null;
+}
+
+const Player = {
+  video: null, hls: null,
+  ativo: false, modo: null, // "previa" | "cheia"
+  aoVivo: false,
+  canalAtual: null, canais: [], idx: 0, catLive: null,
+  item: null, fila: [], filaIdx: 0, serieCard: null,
+  tentativas: [], tentIdx: 0, tocouUmaVez: false,
+  vigia: null, ultimoTempo: -1, paradoDesde: 0, reconexoes: 0,
+  ui: null, esconderT: null,
+  seekAlvo: null, seekT: null, seekInicio: 0, seekUltimo: 0,
+  zapIdx: -1, zapT: null,
+  salvarT: 0,
+
+  iniciar() {
+    this.video = $("#video");
+    const v = this.video;
+    v.addEventListener("playing", () => { this.tocouUmaVez = true; this.reconexoes = 0; this.carregando(false); this.ultimoTempo = -1; });
+    v.addEventListener("waiting", () => this.carregando(true));
+    v.addEventListener("error", () => this.falhou("erro do vídeo " + (v.error ? v.error.code : "")));
+    v.addEventListener("ended", () => this.terminou());
+    v.addEventListener("timeupdate", () => this.tempo());
+  },
+
+  // ---------- fontes ----------
+  /** Tentativas de um canal/vídeo: cada fonte (sem cabeçalho especial primeiro); no ao vivo, também a versão .m3u8. */
+  montarTentativas(fontes, aoVivo) {
+    const ordem = fontes.filter((f) => !f.h).concat(fontes.filter((f) => f.h)).slice(0, 10);
+    const out = [];
+    ordem.forEach((f) => {
+      out.push({ url: f.u, q: f.q });
+      if (aoVivo) { const hls = xtreamHls(f.u); if (hls && hls !== f.u) out.push({ url: hls, q: f.q, hls: true }); }
+    });
+    return out;
+  },
+
+  carregarUrl(url) {
+    const v = this.video;
+    if (this.hls) { try { this.hls.destroy(); } catch (e) { /* ignore */ } this.hls = null; }
+    v.removeAttribute("src");
+    try { v.load(); } catch (e) { /* ignore */ }
+    const m3u8 = /\.m3u8(\?|$)/i.test(url);
+    // TV LG toca .m3u8 sozinha; se não der, a próxima tentativa usa o hls.js
+    if (m3u8 && this._usarHlsJs && window.Hls && window.Hls.isSupported()) {
+      this.hls = new window.Hls({ enableWorker: true, lowLatencyMode: false, backBufferLength: 30 });
+      this.hls.on(window.Hls.Events.ERROR, (_, d) => { if (d && d.fatal) this.falhou("hls " + d.details); });
+      this.hls.loadSource(url);
+      this.hls.attachMedia(v);
+    } else {
+      v.src = url;
+    }
+    const p = v.play();
+    if (p && p.catch) p.catch(() => {});
+  },
+
+  tentar() {
+    clearTimeout(this._abrirT);
+    if (this.tentIdx >= this.tentativas.length) {
+      // depois das fontes normais, uma rodada com o hls.js para as que são .m3u8
+      const m3u8 = this.tentativas.filter((t) => /\.m3u8(\?|$)/i.test(t.url) && !t.js);
+      if (!this._rodadaJs && m3u8.length && window.Hls && window.Hls.isSupported()) {
+        this._rodadaJs = true;
+        this.tentativas = this.tentativas.concat(m3u8.map((t) => ({ url: t.url, q: t.q, js: true })));
+      } else { this.semFonte(); return; }
+    }
+    const t = this.tentativas[this.tentIdx];
+    this._usarHlsJs = !!t.js;
+    this.tocouUmaVez = false;
+    this.carregando(true);
+    this.carregarUrl(t.url);
+    const minha = this.tentIdx;
+    // não abriu a tempo: próxima fonte
+    this._abrirT = setTimeout(() => { if (this.tentIdx === minha && !this.tocouUmaVez) this.falhou("demorou"); }, this.aoVivo ? 12000 : 25000);
+  },
+
+  falhou(motivo) {
+    if (!this.ativo) return;
+    if (this.tocouUmaVez && this.reconexoes < 2) {
+      // estava tocando e caiu: reabre a mesma fonte antes de trocar
+      this.reconexoes++;
+      const pos = this.aoVivo ? 0 : this.video.currentTime;
+      this.tocouUmaVez = false;
+      this.carregarUrl(this.tentativas[this.tentIdx].url);
+      if (pos) this._retomar = pos;
+      return;
+    }
+    console.log("player: fonte falhou (" + motivo + ")");
+    this.tentIdx++;
+    this.reconexoes = 0;
+    this.tentar();
+  },
+
+  // ---------- vigia: imagem parada ----------
+  ligarVigia() {
+    clearInterval(this.vigia);
+    this.ultimoTempo = -1; this.paradoDesde = Date.now();
+    this.vigia = setInterval(() => {
+      const v = this.video;
+      if (!this.ativo || v.paused || !this.tocouUmaVez) { this.paradoDesde = Date.now(); this.ultimoTempo = v.currentTime; return; }
+      if (v.currentTime !== this.ultimoTempo) { this.ultimoTempo = v.currentTime; this.paradoDesde = Date.now(); return; }
+      if (Date.now() - this.paradoDesde > (this.aoVivo ? 10000 : 20000)) {
+        this.paradoDesde = Date.now();
+        console.log("player: imagem parada, reconectando");
+        this.falhou("parado");
+      }
+    }, 2000);
+  },
+
+  // ---------- abrir ----------
+  comecar(fontes, aoVivo) {
+    this.parar(true);
+    this.ativo = true;
+    this.aoVivo = aoVivo;
+    this.tentativas = this.montarTentativas(fontes, aoVivo);
+    this.tentIdx = 0; this._rodadaJs = false; this.reconexoes = 0;
+    this.ligarVigia();
+    this.tentar();
+  },
+
+  previa(canal, box, canais, idx) {
+    this.canais = canais; this.idx = idx; this.canalAtual = canal; this.item = null;
+    this.modo = "previa";
+    this.comecar(canal.f || [], true);
+    this.mostrarPrevia(box);
+  },
+  mostrarPrevia(box) {
+    if (!box || !this.ativo) return;
+    this.modo = "previa";
+    const r = box.getBoundingClientRect();
+    const v = this.video;
+    v.classList.remove("full");
+    v.style.left = r.left + "px"; v.style.top = r.top + "px"; v.style.width = r.width + "px"; v.style.height = r.height + "px";
+    box.classList.add("video");
+    v.muted = false;
+  },
+  esconderVideo() { const v = this.video; v.style.width = "0"; v.style.height = "0"; },
+
+  abrirCanal(canais, idx, catLive) {
+    const c = canais[idx];
+    const mesmo = this.ativo && this.canalAtual && this.canalAtual.id === c.id;
+    this.canais = canais; this.idx = idx; this.canalAtual = c; this.catLive = catLive; this.item = null;
+    if (!mesmo) this.comecar(c.f || [], true);
+    this.aoVivo = true;
+    this.telaCheia();
+  },
+  abrirVod(item) {
+    this.canalAtual = null; this.fila = [item]; this.filaIdx = 0; this.serieCard = null;
+    this.tocarItem(item);
+  },
+  abrirSerie(card, fila, idx, pos) {
+    this.canalAtual = null; this.fila = fila; this.filaIdx = idx; this.serieCard = card;
+    this.tocarItem(Object.assign({}, fila[idx], { inicio: pos }));
+  },
+  tocarItem(item) {
+    this.item = item;
+    this.comecar(item.fontes || [], false);
+    this._retomar = item.inicio || 0;
+    this.telaCheia();
+  },
+
+  telaCheia() {
+    this.modo = "cheia";
+    const v = this.video;
+    v.style.left = "0"; v.style.top = "0"; v.style.width = ""; v.style.height = "";
+    v.classList.add("full");
+    $("#ui").classList.add("hidden");
+    Telas.abrir(TelaPlayer());
+  },
+
+  parar(trocando) {
+    clearTimeout(this._abrirT); clearInterval(this.vigia); clearTimeout(this.zapT); clearTimeout(this.seekT);
+    this.salvar(true);
+    if (this.hls) { try { this.hls.destroy(); } catch (e) { /* ignore */ } this.hls = null; }
+    const v = this.video;
+    if (v) { try { v.pause(); } catch (e) { /* ignore */ } v.removeAttribute("src"); try { v.load(); } catch (e) { /* ignore */ } }
+    if (!trocando) { this.ativo = false; this.canalAtual = null; this.esconderVideo(); v && v.classList.remove("full"); this.modo = null; }
+  },
+
+  // ---------- eventos ----------
+  tempo() {
+    const v = this.video;
+    if (this._retomar && v.duration && isFinite(v.duration)) {
+      const p = this._retomar; this._retomar = 0;
+      if (p < v.duration - 5) { try { v.currentTime = p; } catch (e) { /* ignore */ } }
+    }
+    if (this.ui && this.ui.atualizar) this.ui.atualizar();
+    if (Date.now() - this.salvarT > 10000) this.salvar(false);
+  },
+  salvar(forcar) {
+    const v = this.video, it = this.item;
+    if (!it || !it.chave || this.aoVivo || !v || !v.duration || !isFinite(v.duration)) return;
+    this.salvarT = Date.now();
+    const pos = v.currentTime, dur = v.duration;
+    if (pos < 10 && !forcar) return;
+    if (pos > dur * 0.92) { Usuario.marcarVisto(it.chave); Usuario.salvarProgresso(it.chave, null); return; }
+    if (pos > 10) Usuario.salvarProgresso(it.chave, { pos, dur, em: Date.now() });
+  },
+  terminou() {
+    if (this.aoVivo) { this.falhou("fim da transmissão"); return; }
+    if (this.item) { Usuario.marcarVisto(this.item.chave); Usuario.salvarProgresso(this.item.chave, null); }
+    if (this.fila && this.filaIdx + 1 < this.fila.length) { this.filaIdx++; this.tocarItemNaMesmaTela(this.fila[this.filaIdx]); return; }
+    Telas.voltar();
+  },
+  tocarItemNaMesmaTela(item) {
+    this.item = item;
+    this.comecar(item.fontes || [], false);
+    if (this.ui) this.ui.trocou();
+  },
+  semFonte() {
+    clearTimeout(this._abrirT);
+    this.carregando(false);
+    if (this.modo === "previa") { const t = Telas.topo(); toast("Este canal não abriu agora"); this.parar(); if (t && t.atualizarPainel) t.atualizarPainel(); return; }
+    if (this.ui) this.ui.erro();
+  },
+  carregando(on) { if (this.ui && this.ui.carregando) this.ui.carregando(on); },
+
+  // ---------- pulo (filme/série) ----------
+  passoSeek() {
+    const seg = (Date.now() - this.seekInicio) / 1000;
+    return seg < 1.5 ? 10 : seg < 3 ? 30 : seg < 5 ? 60 : 300;
+  },
+  pular(dir) {
+    const v = this.video;
+    if (!v.duration || !isFinite(v.duration)) return;
+    const agora = Date.now();
+    if (this.seekAlvo == null || agora - this.seekUltimo > 700) { this.seekAlvo = v.currentTime; this.seekInicio = agora; }
+    this.seekUltimo = agora;
+    this.seekAlvo = Math.max(0, Math.min(v.duration - 3, this.seekAlvo + dir * this.passoSeek()));
+    clearTimeout(this.seekT);
+    this.seekT = setTimeout(() => {
+      try { v.currentTime = this.seekAlvo; } catch (e) { /* ignore */ }
+      this.seekAlvo = null;
+      if (this.ui) this.ui.atualizar();
+    }, 600);
+    if (this.ui) { this.ui.mostrar(4000); this.ui.atualizar(); }
+  },
+
+  // ---------- troca de canal na tela cheia ----------
+  zap(delta) {
+    if (this.canais.length < 2) return;
+    const base = this.zapIdx >= 0 ? this.zapIdx : this.idx;
+    this.zapIdx = (base + delta + this.canais.length) % this.canais.length;
+    if (this.ui) this.ui.zap(this.canais[this.zapIdx], this.zapIdx);
+    clearTimeout(this.zapT);
+    this.zapT = setTimeout(() => {
+      const i = this.zapIdx; this.zapIdx = -1;
+      if (i === this.idx) return;
+      this.idx = i; this.canalAtual = this.canais[i];
+      this.comecar(this.canalAtual.f || [], true);
+      if (this.ui) this.ui.trocou();
+    }, 700);
+  },
+};
+
+function TelaPlayer() {
+  const P = Player;
+  const anterior = Telas.topo();
+  let raiz, topo, baixo, centro, barra, pos, buf, seek, tAtual, tTotal, zapBox, errBox;
+  const ui = {
+    mostrar(ms) {
+      topo.classList.remove("hidden");
+      if (!P.aoVivo) baixo.classList.remove("hidden");
+      clearTimeout(P.esconderT);
+      P.esconderT = setTimeout(() => { if (!P.video.paused || P.aoVivo) { topo.classList.add("hidden"); baixo.classList.add("hidden"); } }, ms || 5000);
+    },
+    esconder() { topo.classList.add("hidden"); baixo.classList.add("hidden"); },
+    visivel() { return !topo.classList.contains("hidden"); },
+    textos() {
+      topo.innerHTML = "";
+      if (P.aoVivo && P.canalAtual) {
+        const c = P.canalAtual, prog = Cat.agora(c, Date.now());
+        topo.appendChild(h("h2", { text: (P.idx + 1) + "  " + c.n }));
+        topo.appendChild(h("div.sub", { text: prog ? hora(prog.ini) + " – " + hora(prog.fim) + "  ·  " + prog.t : "Ao vivo" }));
+        topo.appendChild(h("div.sub", { text: "▲▼ trocar de canal  ·  Voltar: lista de canais", style: { color: "#9a9a9a", fontSize: "20px" } }));
+      } else if (P.item) {
+        topo.appendChild(h("h2", { text: P.item.titulo }));
+        if (P.item.sub) topo.appendChild(h("div.sub", { text: P.item.sub }));
+      }
+    },
+    atualizar() {
+      if (P.aoVivo) return;
+      const v = P.video, d = v.duration;
+      if (!d || !isFinite(d)) return;
+      const cur = P.seekAlvo != null ? P.seekAlvo : v.currentTime;
+      pos.style.width = (100 * v.currentTime / d) + "%";
+      seek.style.left = (100 * cur / d) + "%";
+      try { if (v.buffered.length) buf.style.width = (100 * v.buffered.end(v.buffered.length - 1) / d) + "%"; } catch (e) { /* ignore */ }
+      tAtual.textContent = relogio(cur);
+      tTotal.textContent = "-" + relogio(d - cur);
+    },
+    carregando(on) {
+      centro.innerHTML = "";
+      if (on) centro.appendChild(h("div", { style: { display: "inline-block" } }, h("div.spinner")));
+    },
+    zap(c, i) {
+      zapBox.innerHTML = "";
+      const prog = Cat.agora(c, Date.now());
+      zapBox.appendChild(h("div.num", { text: i + 1 }));
+      if (c.l) zapBox.appendChild(h("div.lg", { bg: c.l }));
+      zapBox.appendChild(h("div", null, [h("div.nm", { text: c.n }), h("div.now", { text: prog ? prog.t : "" })]));
+      zapBox.classList.remove("hidden");
+      clearTimeout(zapBox._t);
+      zapBox._t = setTimeout(() => zapBox.classList.add("hidden"), 3500);
+    },
+    trocou() { errBox.classList.add("hidden"); ui.textos(); ui.mostrar(4000); },
+    erro() {
+      ui.carregando(false);
+      errBox.innerHTML = "";
+      const btns = h("div.btns", { "data-grupo": "err" });
+      const b1 = h("div.btn.foc", { text: "Tentar de novo" });
+      b1._ok = () => { errBox.classList.add("hidden"); P.comecar(P.aoVivo ? P.canalAtual.f : P.item.fontes, P.aoVivo); Foco.atual = null; };
+      const b2 = h("div.btn.foc", { text: "Voltar" });
+      b2._ok = () => Telas.voltar();
+      btns.appendChild(b1); btns.appendChild(b2);
+      errBox.appendChild(h("h2", { text: "Este conteúdo não está abrindo agora" }));
+      errBox.appendChild(h("p", { text: "Tente de novo ou escolha outro." }));
+      errBox.appendChild(btns);
+      errBox.classList.remove("hidden");
+      Foco.definir(b1);
+    },
+  };
+  return {
+    montar() {
+      // o player fica na camada de cima (a #ui some para o vídeo aparecer inteiro)
+      $("#ui").classList.add("hidden");
+      const ov = $("#overlay");
+      raiz = h("div.pl.player-layer");
+      topo = h("div.topinfo");
+      barra = h("div.bar", null, [buf = h("div.buf"), pos = h("div.pos"), seek = h("div.seek")]);
+      baixo = h("div.bottom", null, [barra, h("div.times", null, [tAtual = h("b", { text: "00:00" }), tTotal = h("span", { text: "" })]),
+        h("div.keys", { text: "OK pausar  ·  ◀ ▶ voltar/avançar (segure para pular mais)  ·  Voltar: sair" })]);
+      centro = h("div.center");
+      zapBox = h("div.zap.hidden");
+      errBox = h("div.errcard.hidden");
+      [topo, baixo, centro, zapBox, errBox].forEach((x) => raiz.appendChild(x));
+      ov.appendChild(raiz);
+      P.ui = ui;
+      ui.textos();
+      ui.mostrar(P.aoVivo ? 4000 : 5000);
+      if (P.aoVivo) baixo.classList.add("hidden");
+      if (P.ativo && P.tocouUmaVez) ui.carregando(false); else ui.carregando(true);
+      return null;
+    },
+    tecla(e) {
+      const k = e.keyCode;
+      if (!errBox.classList.contains("hidden")) return false; // cartão de erro: navegação normal
+      if (k === KEY.OK) {
+        if (P.aoVivo) { ui.mostrar(6000); return true; }
+        const v = P.video;
+        if (v.paused) { v.play(); ui.mostrar(3000); } else { v.pause(); ui.mostrar(600000); }
+        return true;
+      }
+      if (k === KEY.PLAY) { P.video.play(); ui.mostrar(3000); return true; }
+      if (k === KEY.PAUSE || k === KEY.PLAYPAUSE) { const v = P.video; if (v.paused) v.play(); else { v.pause(); ui.mostrar(600000); } return true; }
+      if (k === KEY.STOP) { Telas.voltar(); return true; }
+      if (P.aoVivo) {
+        if (k === KEY.UP) { P.zap(-1); return true; }
+        if (k === KEY.DOWN || k === KEY.CH_DOWN) { P.zap(k === KEY.DOWN ? 1 : -1); return true; }
+        if (k === KEY.CH_UP) { P.zap(1); return true; }
+        if (k === KEY.LEFT || k === KEY.RIGHT) { ui.mostrar(6000); return true; }
+        return false;
+      }
+      if (k === KEY.LEFT || k === KEY.RW) { P.pular(-1); return true; }
+      if (k === KEY.RIGHT || k === KEY.FF) { P.pular(1); return true; }
+      if (k === KEY.UP || k === KEY.DOWN) { ui.mostrar(5000); return true; }
+      if (k === KEY.CH_UP && P.fila.length > 1 && P.filaIdx + 1 < P.fila.length) { P.filaIdx++; P.tocarItemNaMesmaTela(P.fila[P.filaIdx]); return true; }
+      if (k === KEY.CH_DOWN && P.filaIdx > 0) { P.filaIdx--; P.tocarItemNaMesmaTela(P.fila[P.filaIdx]); return true; }
+      return false;
+    },
+    voltar() {
+      if (P.seekAlvo != null) { clearTimeout(P.seekT); P.seekAlvo = null; ui.atualizar(); return true; }
+      if (!P.aoVivo && ui.visivel() && !P.video.paused) { ui.esconder(); return true; }
+      return false;
+    },
+    sair() {
+      P.ui = null;
+      if (raiz && raiz.parentNode) raiz.parentNode.removeChild(raiz);
+      $("#ui").classList.remove("hidden");
+      // ao vivo aberto pela lista de canais: o vídeo volta para a prévia, sem recarregar
+      if (P.aoVivo && P.ativo && anterior && anterior.atualizarPainel && Telas.pilha.indexOf(anterior) >= 0) { P.modo = "previa"; P.video.classList.remove("full"); P.esconderVideo(); }
+      else P.parar();
+    },
+  };
+}
+
+// ======================= teclado / controle =======================
+
+let okDesde = 0, okLongoFeito = false;
+
+function aoTeclar(e) {
+  const k = e.keyCode;
+  const input = document.activeElement && document.activeElement.tagName === "INPUT";
+  if (input && (k === KEY.LEFT || k === KEY.RIGHT || (k === KEY.BACKSPACE))) return; // editando o texto
+  if (KEY.BACK.indexOf(k) >= 0 || (k === KEY.BACKSPACE && !input)) {
+    e.preventDefault();
+    if (Dialogo.aberto) { Dialogo.aberto(); return; }
+    Telas.voltar();
+    return;
+  }
+  if (Dialogo.aberto) {
+    if (k === KEY.OK) { e.preventDefault(); if (Foco.atual && Foco.atual._ok) Foco.atual._ok(); return; }
+    const dir = { 37: "left", 38: "up", 39: "right", 40: "down" }[k];
+    if (dir) { e.preventDefault(); Foco.mover(dir); }
+    return;
+  }
+  const tela = Telas.topo();
+  if (tela && tela.tecla && tela.tecla(e)) { e.preventDefault(); return; }
+  if (k === KEY.OK) {
+    e.preventDefault();
+    if (input) { document.activeElement.blur(); Foco.mover("down"); return; }
+    // segurar OK (canal): Minha lista
+    if (!e.repeat) { okDesde = Date.now(); okLongoFeito = false; return; }
+    if (!okLongoFeito && Date.now() - okDesde > 800 && Foco.atual && Foco.atual._longo) { okLongoFeito = true; Foco.atual._longo(); }
+    return;
+  }
+  const dir = { 37: "left", 38: "up", 39: "right", 40: "down" }[k];
+  if (dir) {
+    e.preventDefault();
+    if (input && (dir === "up" || dir === "down")) document.activeElement.blur();
+    Foco.mover(dir);
+  }
+}
+
+function aoSoltar(e) {
+  if (e.keyCode !== KEY.OK) return;
+  if (okLongoFeito) { okLongoFeito = false; okDesde = 0; return; }
+  if (okDesde && Foco.atual && Foco.atual._ok) { okDesde = 0; Foco.atual._ok(); }
+}
+
+// ======================= início do app =======================
+
+async function iniciar() {
+  Player.iniciar();
+  document.addEventListener("keydown", aoTeclar, true);
+  document.addEventListener("keyup", aoSoltar, true);
+  // app voltou do segundo plano: o vídeo da prévia continua; o player de tela cheia segue
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden && Player.ativo) { try { Player.video.pause(); } catch (e) { /* ignore */ } }
+    else if (!document.hidden && Player.ativo) { const p = Player.video.play(); if (p && p.catch) p.catch(() => {}); }
+  });
+  await Cache.abrir();
+  if (!Cat.token()) { pedirChave(); return; }
+  carregarCatalogo();
+}
+
+function splash(texto, botoes, comInput) {
+  Telas.limpar();
+  const ui = $("#ui");
+  ui.classList.remove("hidden");
+  const kids = [h("img", { src: "logo.png" }), h("h1", { html: "BAD WOLF <b>TV</b>" })];
+  const p = h("p", { text: texto || "" });
+  kids.push(p);
+  let input = null;
+  if (comInput) { input = h("input.foc", { type: "text", placeholder: "Chave de acesso" }); kids.push(input); }
+  if (botoes) kids.push(h("div.btns", null, botoes.map((b) => { const el = h("div.btn.foc", { text: b.t }); el._ok = b.f; return el; })));
+  else if (!comInput) kids.push(h("div.spinner", { style: { marginTop: "30px" } }));
+  const s = h("div.splash", null, kids);
+  ui.appendChild(s);
+  Telas.pilha = [{ montar: () => null, voltar: () => { perguntarSair(); return true; }, _caixa: s }];
+  Foco.atual = null;
+  const f = $(".foc", s);
+  if (f) Foco.definir(f);
+  return { p, input };
+}
+
+function pedirChave(erro) {
+  const s = splash(erro || "Digite a chave de acesso do Bad Wolf TV (a mesma usada como senha no modo Xtream).", [
+    { t: "Entrar", f: () => { const v = s.input.value.trim(); if (!v) return; store("token", v); carregarCatalogo(); } },
+  ], true);
+  s.input._ok = () => s.input.focus();
+}
+
+async function carregarCatalogo() {
+  const s = splash("Carregando o catálogo…");
+  try {
+    await Cat.carregar((feitas, total) => { s.p.textContent = "Carregando o catálogo… " + Math.round(100 * feitas / total) + "%"; });
+  } catch (e) {
+    if (e.message === "chave") { store("token", null); pedirChave("Chave de acesso não aceita pelo servidor. Confira e digite de novo."); return; }
+    splash("Não consegui carregar o catálogo (" + e.message + "). Confira a internet da TV.", [
+      { t: "Tentar de novo", f: carregarCatalogo },
+      { t: "Trocar a chave", f: () => { store("token", null); pedirChave(); } },
+    ]);
+    return;
+  }
+  trocarAba("inicio");
+  const pri = $(".card", $("#ui"));
+  if (pri) Foco.definir(pri);
+  // confere o catálogo de novo a cada 3 h, só se a tela estiver parada no menu (nada de recarregar no meio do filme)
+  setInterval(() => {
+    if (Player.ativo) return;
+    const antes = Cat.manifesto && Cat.manifesto.versao;
+    Cat.baixar("manifesto.json", 15000).then((t) => {
+      const m = JSON.parse(t);
+      if (m.versao !== antes) Cat.carregar(() => {}).then(() => toast("Catálogo atualizado")).catch(() => {});
+    }).catch(() => {});
+  }, 3 * 3600 * 1000);
+}
+
+window.BadWolf = { Cat, Player, Telas, Foco, Usuario, versao: VERSAO_APP };
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", iniciar); else iniciar();

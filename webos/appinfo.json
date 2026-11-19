@@ -1,0 +1,15 @@
+{
+  "id": "dev.guisousa.badwolftv",
+  "version": "1.0.0",
+  "vendor": "Bad Wolf TV",
+  "type": "web",
+  "main": "index.html",
+  "title": "Bad Wolf TV",
+  "icon": "icon.png",
+  "largeIcon": "largeIcon.png",
+  "bgColor": "#000000",
+  "resolution": "1920x1080",
+  "disableBackHistoryAPI": true,
+  "supportQuickStart": true,
+  "uiRevision": 2
+}
