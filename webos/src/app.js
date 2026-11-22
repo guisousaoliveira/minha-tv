@@ -1100,10 +1100,24 @@ const Player = {
     this.video = $("#video");
     const v = this.video;
     v.addEventListener("playing", () => { this.tocouUmaVez = true; this.reconexoes = 0; this.carregando(false); this.ultimoTempo = -1; });
-    v.addEventListener("waiting", () => this.carregando(true));
+    // "esperando dados" vem a cada oscilação: só mostra o carregando se o vídeo ficar parado mais de 1,5 s
+    v.addEventListener("waiting", () => {
+      clearTimeout(this._esperaT);
+      const t0 = v.currentTime;
+      this._esperaT = setTimeout(() => { if (this.ativo && v.currentTime === t0 && !v.paused) this.carregando(true); }, 1500);
+    });
+    let ultimo = -1;
+    v.addEventListener("timeupdate", () => {
+      if (v.currentTime !== ultimo) { ultimo = v.currentTime; clearTimeout(this._esperaT); if (this.tocouUmaVez) this.carregando(false); }
+    });
     v.addEventListener("error", () => this.falhou("erro do vídeo " + (v.error ? v.error.code : "")));
     v.addEventListener("ended", () => this.terminou());
     v.addEventListener("timeupdate", () => this.tempo());
+    // o player da própria TV nem sempre manda "playing" no .ts ao vivo: conta como aberto quando o vídeo anda
+    const abriu = () => { if (this.ativo && !this.tocouUmaVez && (v.currentTime > 0 || this.quadros() > 0)) { this.tocouUmaVez = true; this.carregando(false); } };
+    v.addEventListener("timeupdate", abriu);
+    v.addEventListener("loadeddata", abriu);
+    v.addEventListener("canplay", abriu);
   },
 
   // ---------- fontes ----------
@@ -1115,12 +1129,12 @@ const Player = {
     ordem.forEach((f) => {
       const ehM3u8 = /\.m3u8(\?|$)/i.test(f.u);
       const m3u8 = ehM3u8 ? f.u : (aoVivo ? xtreamHls(f.u) : null);
-      // 1) o link do jeito que veio, no player da TV: no ao vivo é o .ts direto, uma conexão só (como os apps de
-      //    IPTV). Pelo HLS o servidor manda cada atualização da lista para uma máquina diferente e a imagem
-      //    "voltava no tempo" em jogo com muita gente.
-      if (!ehM3u8 || !temJs) out.push({ url: f.u, q: f.q, tipo: ehM3u8 ? "HLS (TV)" : aoVivo ? "TS" : "" });
-      // 2) reserva: HLS pelo hls.js, com a lista sempre pedida no link original (o endereço redirecionado vence)
+      // 1) HLS pelo hls.js, com a lista sempre pedida no link original (o endereço redirecionado vence em
+      //    segundos). Lista que chega de outra máquina do servidor fora de sincronia recomeça do zero (ver
+      //    carregarUrl). Na LG o .ts direto no player da TV piscava a cada 8-15 s; por isso o HLS vem antes.
       if (m3u8 && temJs) out.push({ url: m3u8, q: f.q, js: true, tipo: "HLS" });
+      // 2) reserva: o link do jeito que veio, no player da TV
+      if (!ehM3u8 || !temJs) out.push({ url: f.u, q: f.q, tipo: ehM3u8 ? "HLS (TV)" : aoVivo ? "TS" : "" });
     });
     return out;
   },
