@@ -30,7 +30,6 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import dev.guisousa.minhatv.data.Entry
 import dev.guisousa.minhatv.data.Repository
-import dev.guisousa.minhatv.data.SourceHealth
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
@@ -84,7 +83,9 @@ fun LivePreviewVideo(entry: Entry?, active: Boolean, modifier: Modifier = Modifi
             override fun onPlayerError(error: PlaybackException) {
                 if (LiveSession.fullscreen) return // na tela cheia quem cuida dos erros é o player de lá
                 // ficou para trás da janela ao vivo (pausa, rede lenta): volta para o ao vivo em vez de esconder o vídeo
-                if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
+                if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW ||
+                    error.cause is androidx.media3.exoplayer.hls.playlist.HlsPlaylistTracker.PlaylistResetException ||
+                    error.cause is androidx.media3.exoplayer.hls.playlist.HlsPlaylistTracker.PlaylistStuckException) {
                     player.seekToDefaultPosition(); player.prepare(); return
                 }
                 failed = true; firstFrame = false
@@ -155,8 +156,9 @@ fun LivePreviewVideo(entry: Entry?, active: Boolean, modifier: Modifier = Modifi
         val attempts = buildList {
             ordered.forEach { src ->
                 val host = hostOf(src.url)
-                val hls = if (!SourceHealth.tsOnly(src.url) && host !in LivePreview.noHls) xtreamHls(src.url) else null
-                listOfNotNull(hls, src.url).distinct().forEach { add(Triple(src, it, hls)) }
+                val hls = if (host !in LivePreview.noHls) xtreamHls(src.url) else null
+                // .ts primeiro (uma conexão só, como os apps de IPTV); o HLS fica de reserva (ver tsFailed no PlayerActivity)
+                listOfNotNull(src.url, hls).distinct().forEach { add(Triple(src, it, hls)) }
             }
         }.sortedBy { if (it.second == remembered) 0 else 1 }
         // as fontes que falham voltam em menos de 1 s: dá para tentar várias (o player de tela cheia faz igual)
@@ -168,7 +170,14 @@ fun LivePreviewVideo(entry: Entry?, active: Boolean, modifier: Modifier = Modifi
                 val http = OkHttpDataSource.Factory(PlayerHttp.client)
                     .setUserAgent(src.userAgent ?: PlayerHttp.SAFARI_UA)
                     .setDefaultRequestProperties(buildMap { put("Accept", "*/*"); src.referrer?.let { put("Referer", it) } })
-                val factory = DefaultMediaSourceFactory(DefaultDataSource.Factory(context, StableRedirectDataSource.Factory(http)))
+                val factory = DefaultMediaSourceFactory(
+                    DefaultDataSource.Factory(context, StableRedirectDataSource.Factory(http)),
+                    // acha os quadros mesmo em .ts sem marcação (senão parece preso carregando)
+                    androidx.media3.extractor.DefaultExtractorsFactory().setTsExtractorFlags(
+                        androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS or
+                            androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES,
+                    ),
+                )
                 val item = MediaItem.Builder().setUri(url)
                     .apply { if (url.lowercase().substringBefore('?').endsWith(".m3u8")) setMimeType(MimeTypes.APPLICATION_M3U8) }
                     // igual à tela cheia: nunca desacelera e acelera no máximo 4% para alcançar o vivo

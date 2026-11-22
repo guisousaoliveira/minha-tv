@@ -422,7 +422,7 @@ class PlayerActivity : ComponentActivity() {
                         readyOnce = true
                         stallExtends = 0
                         sourcePlayed = true
-                        playing?.url?.let { if (it != markedWorking) { markedWorking = it; SourceHealth.markWorking(it); if (!usingHlsVariant && it in hlsFailed) SourceHealth.markTsOnly(it) } }
+                        playing?.url?.let { if (it != markedWorking) { markedWorking = it; SourceHealth.markWorking(it); } }
                         reopenFails = 0
                         wraps = 0
                         sameReopens = 0
@@ -650,9 +650,20 @@ class PlayerActivity : ComponentActivity() {
         }
     }
 
-    /** Links em que a versão .m3u8 não abriu: usa o original direto. */
-    private val hlsFailed = HashSet<String>()
+    /**
+     * Links em que o .ts direto não abriu: usa a versão HLS (.m3u8) do canal.
+     * O ao vivo vai primeiro pelo .ts, como os apps de IPTV (TiviMate, Smarters): é uma conexão só e contínua.
+     * No HLS o servidor manda cada atualização da lista para uma máquina diferente, cada uma num ponto da
+     * transmissão: a imagem "voltava no tempo" e ficava piscando o carregando em jogo com muita gente.
+     */
+    private val tsFailed = HashSet<String>()
     private var usingHlsVariant = false
+
+    /** Leitor de .ts que acha os quadros mesmo em transmissão sem marcação (canais que pareciam presos carregando). */
+    private fun leitorTs() = androidx.media3.extractor.DefaultExtractorsFactory().setTsExtractorFlags(
+        androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory.FLAG_DETECT_ACCESS_UNITS or
+            androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES,
+    )
 
     /** http://host/live/user/pass/123.ts ou http://host/user/pass/123 -> http://host/live/user/pass/123.m3u8 */
     private fun hlsVariant(url: String): String? {
@@ -695,7 +706,7 @@ class PlayerActivity : ComponentActivity() {
             })
         // ao vivo de servidor Xtream: toca a versão HLS (.m3u8) do mesmo canal, como os apps de IPTV.
         // O .ts direto é cortado pelo servidor a cada poucos segundos; se o HLS não abrir, volta para o .ts.
-        val hls = if (isLive && !hlsFailed.contains(src.url) && !SourceHealth.tsOnly(src.url)) hlsVariant(src.url) else null
+        val hls = if (isLive && tsFailed.contains(src.url)) hlsVariant(src.url) else null
         usingHlsVariant = hls != null
         val url = hls ?: src.url
         val path = url.lowercase().substringBefore('?')
@@ -713,7 +724,7 @@ class PlayerActivity : ComponentActivity() {
                 return super.getRetryDelayMsFor(info)
             }
         }
-        val factory = DefaultMediaSourceFactory(base).setLoadErrorHandlingPolicy(retry404)
+        val factory = DefaultMediaSourceFactory(base, leitorTs()).setLoadErrorHandlingPolicy(retry404)
         val item = MediaItem.Builder()
             .setUri(url)
             .apply {
@@ -788,8 +799,8 @@ class PlayerActivity : ComponentActivity() {
             return
         }
         // a versão HLS não abriu: tenta o link original (.ts) antes de qualquer outra coisa
-        if (usingHlsVariant && !readyOnce) {
-            playing?.let { hlsFailed += it.url; android.util.Log.w("MinhaTV", "player: HLS não abriu (${error.errorCodeName}), usando o .ts"); playSource(it, resume = false) }
+        if (isLive && !usingHlsVariant && !readyOnce && playing?.let { it.url !in tsFailed && hlsVariant(it.url) != null } == true) {
+            playing?.let { tsFailed += it.url; android.util.Log.w("MinhaTV", "player: .ts não abriu (${error.errorCodeName}), tentando o HLS"); playSource(it, resume = false) }
             return
         }
         // recusa (401/403) logo depois de reconectar: é o limite de telas do servidor contando a conexão velha.
@@ -830,10 +841,13 @@ class PlayerActivity : ComponentActivity() {
         android.util.Log.w("MinhaTV", "player: erro ao vivo ${error.errorCodeName} http=$http")
         handler.removeCallbacks(firstFrameWatch)
         val recent = lastPlayingAt > 0 && System.currentTimeMillis() - lastPlayingAt < 30_000
-        if ((recent || error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) && reopenSame("Reconectando…")) return
-        // a versão HLS (.m3u8) do canal não abriu: tenta o link original (.ts) antes de trocar de fonte
-        if (usingHlsVariant && !readyOnce) {
-            playing?.let { hlsFailed += it.url; android.util.Log.w("MinhaTV", "player: HLS não abriu, usando o .ts"); playSource(it, resume = false) }
+        // HLS com a lista indo e voltando (servidores diferentes a cada atualização): reabre do zero em vez de travar
+        val listaPerdida = error.cause is androidx.media3.exoplayer.hls.playlist.HlsPlaylistTracker.PlaylistResetException ||
+            error.cause is androidx.media3.exoplayer.hls.playlist.HlsPlaylistTracker.PlaylistStuckException
+        if ((recent || listaPerdida || error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) && reopenSame("Reconectando…")) return
+        // o .ts do canal não abriu: tenta a versão HLS (.m3u8) da mesma fonte antes de trocar de fonte
+        if (!usingHlsVariant && !readyOnce && playing?.let { it.url !in tsFailed && hlsVariant(it.url) != null } == true) {
+            playing?.let { tsFailed += it.url; android.util.Log.w("MinhaTV", "player: .ts não abriu, tentando o HLS"); playSource(it, resume = false) }
             return
         }
         nextOrRound(frozen = false)

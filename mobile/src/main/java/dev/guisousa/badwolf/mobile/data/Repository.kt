@@ -169,7 +169,9 @@ object Repository {
 
     private fun canalEntry(d: Dados, c: Canal) = Entry(
         name = c.n, url = C + c.id, group = d.nomeCat[c.c] ?: "", logo = c.l, tvgId = c.id.toString(),
-        type = ContentType.LIVE, quality = c.f.firstOrNull()?.q,
+        type = ContentType.LIVE,
+        // canal separado por qualidade no servidor ("SporTV FHD"): a etiqueta não repete o que o nome já diz
+        quality = c.f.firstOrNull()?.q?.takeUnless { q -> c.n.endsWith(" " + q.substringBefore(' ')) },
     )
 
     private fun filmeEntry(d: Dados, f: CardFilme, cat: String? = null) = Entry(
