@@ -816,6 +816,7 @@ fun SettingsScreen() {
     val lib by Repository.library.collectAsState()
     var autoplay by remember { mutableStateOf(Repository.autoplayLast) }
     var arrowsZap by remember { mutableStateOf(Repository.arrowsZap) }
+    var smoothVod by remember { mutableStateOf(Repository.smoothVod && !Repository.tunnelBroken) }
     val prefsFocus = remember { FocusRequester() }
 
     LazyColumn(
@@ -866,6 +867,16 @@ fun SettingsScreen() {
         item {
             ToggleRow("Setas ▲▼ trocam de canal", "No canal ao vivo, ▲ volta um canal e ▼ passa para o próximo", arrowsZap) {
                 arrowsZap = !arrowsZap; Repository.arrowsZap = arrowsZap
+            }
+        }
+        item {
+            ToggleRow(
+                "Filmes mais lisos",
+                if (Repository.tunnelBroken && Repository.smoothVod) "Esta TV não aceitou: o app desligou sozinho. Ligue para tentar de novo"
+                else "Os quadros do filme saem no ritmo certo da TV, sem pulinhos (como no Netflix). Se a imagem não aparecer, desligue",
+                smoothVod,
+            ) {
+                smoothVod = !smoothVod; Repository.smoothVod = smoothVod
             }
         }
 

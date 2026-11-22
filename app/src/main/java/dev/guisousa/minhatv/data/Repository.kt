@@ -693,6 +693,20 @@ object Repository {
         get() = prefs.getString("last_channel", null)
         set(v) { prefs.edit().putString("last_channel", v).apply() }
 
+    /**
+     * Filmes e séries em "modo túnel": o vídeo vai direto para o chip da TV, que decide a hora de cada quadro
+     * (como Netflix e YouTube na TV). Filme é 24 quadros/s e a TV 60 Hz: sem isso, em TVs que não trocam a
+     * frequência (TCL e outras), os quadros saíam fora do ritmo e a imagem dava "pulinhos".
+     */
+    var smoothVod: Boolean
+        get() = prefs.getBoolean("tunel_vod", true)
+        set(v) { prefs.edit().putBoolean("tunel_vod", v).putBoolean("tunel_quebrado", false).apply() }
+
+    /** O modo túnel não funcionou nesta TV (sem imagem ou erro de vídeo): o app desligou sozinho. */
+    var tunnelBroken: Boolean
+        get() = prefs.getBoolean("tunel_quebrado", false)
+        set(v) { prefs.edit().putBoolean("tunel_quebrado", v).apply() }
+
     /** No canal ao vivo, ▲▼ trocam de canal (desligado: só mostram o que está passando). */
     var arrowsZap: Boolean
         get() = prefs.getBoolean("arrows_zap", true)
