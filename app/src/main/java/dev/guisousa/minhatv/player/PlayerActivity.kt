@@ -191,6 +191,36 @@ class PlayerActivity : ComponentActivity() {
     private var lastPlayingAt = 0L
     /** Já apareceu a primeira imagem desta fonte. */
     private var firstFrame = false
+
+    /** Filme/série tocando em modo túnel (ver Repository.smoothVod). */
+    private var tunnelOn = false
+
+    /** Liga/desliga o modo túnel. Só em filme/série, a 1x (o túnel não aceita outra velocidade). */
+    private fun setTunnel(on: Boolean) {
+        val sel = player?.trackSelector as? androidx.media3.exoplayer.trackselection.DefaultTrackSelector ?: return
+        tunnelOn = on
+        sel.setParameters(sel.buildUponParameters().setTunnelingEnabled(on))
+        android.util.Log.i("MinhaTV", "player: modo túnel ${if (on) "ligado" else "desligado"}")
+    }
+
+    private fun wantTunnel() = !isLive && Repository.smoothVod && !Repository.tunnelBroken &&
+        (player?.playbackParameters?.speed ?: 1f) == 1f
+
+    /** O túnel não deu imagem (ou deu erro de vídeo): desliga de vez nesta TV e reabre a mesma fonte, do mesmo ponto. */
+    private fun tunnelFailed(why: String): Boolean {
+        if (!tunnelOn || firstFrame) return false
+        android.util.Log.w("MinhaTV", "player: modo túnel sem imagem ($why), desligando nesta TV")
+        Repository.tunnelBroken = true
+        setTunnel(false)
+        val pos = player?.currentPosition ?: 0L
+        playing?.let { playSource(it, resume = false); if (pos > 0) player?.seekTo(pos) } ?: play(index)
+        return true
+    }
+
+    /** 8 s com o som tocando e sem nenhuma imagem: o túnel não funciona nesta TV. */
+    private val tunnelCheck = Runnable {
+        if (tunnelOn && !firstFrame && !isFinishing && player?.playbackState == Player.STATE_READY) tunnelFailed("8 s sem imagem")
+    }
     /** Rodadas em que todas as fontes falharam (máx. 6, espera min(1,6^n s, 15 s)). */
     private var rounds = 0
     private var livePos = -1L
@@ -362,6 +392,8 @@ class PlayerActivity : ComponentActivity() {
         val live = items[index].type == ContentType.LIVE
         sharedLive = live
         val exo = if (live) LiveSession.player(this).also { LiveSession.fullscreen = true } else buildPlayer(this, live = false)
+        player = exo
+        if (wantTunnel()) setTunnel(true)
         analyticsListener = object : androidx.media3.exoplayer.analytics.AnalyticsListener {
             override fun onDroppedVideoFrames(t: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime, dropped: Int, elapsedMs: Long) {
                 android.util.Log.w("MinhaTV", "player: $dropped quadros perdidos em ${elapsedMs}ms")
@@ -719,6 +751,8 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private fun playSource(src: Entry, resume: Boolean) {
+        handler.removeCallbacks(tunnelCheck)
+        if (tunnelOn) handler.postDelayed(tunnelCheck, 8_000)
         // item do catálogo (v2:...) não é link: toca a primeira fonte dele (ou busca as fontes de novo)
         if (src.url.startsWith("v2:")) {
             val first = sources.firstOrNull()
@@ -798,6 +832,8 @@ class PlayerActivity : ComponentActivity() {
     private fun handleError(error: PlaybackException) {
         val exo = player ?: return
         if (isLive) { handleLiveError(error); return }
+        if (error.errorCode in PlaybackException.ERROR_CODE_DECODER_INIT_FAILED..PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED &&
+            tunnelFailed(error.errorCodeName)) return
         if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
             exo.seekToDefaultPosition(); exo.prepare(); return
         }
@@ -1078,6 +1114,7 @@ class PlayerActivity : ComponentActivity() {
         val cur = player?.playbackParameters?.speed ?: 1f
         controls.showPanel("Velocidade", speeds.map { PlayerControls.Choice(speedName(it), selected = it == cur) }) { i ->
             player?.playbackParameters = PlaybackParameters(speeds[i])
+            if (!isLive && Repository.smoothVod && !Repository.tunnelBroken) setTunnel(speeds[i] == 1f)
         }
     }
 
