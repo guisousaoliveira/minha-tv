@@ -770,7 +770,7 @@ function TelaAoVivo() {
       h("div.num", { text: i + 1 }),
       h("div.lg", { bg: c.l || null }, c.l ? null : c.n.slice(0, 14)),
       h("div.info", null, [
-        h("div.nm", null, [c.n, (c.f[0] && c.f[0].q) ? h("span.q", { text: c.f[0].q }) : null, fav ? h("span.fav", { text: "Minha lista" }) : null]),
+        h("div.nm", null, [c.n, (c.f[0] && c.f[0].q && !c.n.endsWith(" " + c.f[0].q.split(" ")[0])) ? h("span.q", { text: c.f[0].q }) : null, fav ? h("span.fav", { text: "Minha lista" }) : null]),
         prog ? h("div.now", { text: hora(prog.ini) + " – " + hora(prog.fim) + "   " + prog.t }) : h("div.now", { text: "" }),
         prog ? h("div.prog", null, h("i", { style: { width: Math.round(100 * (agora() - prog.ini) / Math.max(1, prog.fim - prog.ini)) + "%" } })) : null,
       ]),
@@ -1113,12 +1113,14 @@ const Player = {
     const temJs = !!(window.Hls && window.Hls.isSupported());
     const out = [];
     ordem.forEach((f) => {
-      const m3u8 = /\.m3u8(\?|$)/i.test(f.u) ? f.u : (aoVivo ? xtreamHls(f.u) : null);
-      // 1) HLS pelo hls.js: a cada atualização a lista é pedida no link original (o servidor redireciona para
-      //    um endereço com senha que vence em segundos; o player da TV ficava preso nele e o canal parava)
+      const ehM3u8 = /\.m3u8(\?|$)/i.test(f.u);
+      const m3u8 = ehM3u8 ? f.u : (aoVivo ? xtreamHls(f.u) : null);
+      // 1) o link do jeito que veio, no player da TV: no ao vivo é o .ts direto, uma conexão só (como os apps de
+      //    IPTV). Pelo HLS o servidor manda cada atualização da lista para uma máquina diferente e a imagem
+      //    "voltava no tempo" em jogo com muita gente.
+      if (!ehM3u8 || !temJs) out.push({ url: f.u, q: f.q, tipo: ehM3u8 ? "HLS (TV)" : aoVivo ? "TS" : "" });
+      // 2) reserva: HLS pelo hls.js, com a lista sempre pedida no link original (o endereço redirecionado vence)
       if (m3u8 && temJs) out.push({ url: m3u8, q: f.q, js: true, tipo: "HLS" });
-      // 2) o link do jeito que veio, no player da TV
-      if (f.u !== m3u8 || !temJs) out.push({ url: f.u, q: f.q, tipo: /\.m3u8(\?|$)/i.test(f.u) ? "HLS (TV)" : aoVivo ? "TS" : "" });
     });
     return out;
   },
@@ -1153,11 +1155,20 @@ const Player = {
     if (t.js) {
       const hls = new window.Hls({
         enableWorker: true, lowLatencyMode: false, backBufferLength: 30, maxBufferLength: 30,
-        liveSyncDurationCount: 3, manifestLoadingMaxRetry: 4, levelLoadingMaxRetry: 6, fragLoadingMaxRetry: 6,
+        liveSyncDurationCount: 3, liveMaxLatencyDurationCount: 10, manifestLoadingMaxRetry: 4, levelLoadingMaxRetry: 6, fragLoadingMaxRetry: 6,
         pLoader: this.carregadorEstavel(url),
       });
       hls.on(window.Hls.Events.ERROR, (_, d) => {
-        if (!d || !d.fatal) return;
+        if (!d) return;
+        // lista que veio de outra máquina do servidor, fora de sincronia: recomeça do zero (sem misturar os pedaços)
+        if (d.details === window.Hls.ErrorDetails.LEVEL_PARSING_ERROR && this.hls === hls) {
+          const agora = Date.now();
+          this._trocasLista = (this._trocasLista || []).filter((t) => agora - t < 60000).concat(agora);
+          if (this._trocasLista.length <= 5) { console.log("player: lista de outro servidor, recomeçando"); this.carregarUrl(t); return; }
+          this.falhou("lista instável");
+          return;
+        }
+        if (!d.fatal) return;
         // erro de rede/mídia no meio: o hls.js tenta se recuperar antes de trocar de fonte
         if (d.type === window.Hls.ErrorTypes.MEDIA_ERROR && !this._recuperouMidia) { this._recuperouMidia = true; hls.recoverMediaError(); return; }
         this.falhou("hls " + d.details);
