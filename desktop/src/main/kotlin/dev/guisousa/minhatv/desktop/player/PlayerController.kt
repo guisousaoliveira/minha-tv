@@ -102,7 +102,7 @@ class PlayerController {
         val p = f.mediaPlayers().newEmbeddedMediaPlayer()
         p.videoSurface().set(f.videoSurfaces().newVideoSurface(frames.formatCallback, frames.renderCallback, true))
         p.events().addMediaPlayerEventListener(object : MediaPlayerEventAdapter() {
-            override fun playing(mediaPlayer: MediaPlayer) = ui { playing = true; buffering = false }
+            override fun playing(mediaPlayer: MediaPlayer) = ui { playing = true; buffering = false; aplicarSom() }
             override fun paused(mediaPlayer: MediaPlayer) = ui { playing = false }
             override fun stopped(mediaPlayer: MediaPlayer) = ui { playing = false }
             override fun finished(mediaPlayer: MediaPlayer) = ui { onEnd() }
@@ -112,7 +112,7 @@ class PlayerController {
             override fun buffering(mediaPlayer: MediaPlayer, newCache: Float) = ui { buffering = newCache < 100f }
             override fun videoOutput(mediaPlayer: MediaPlayer, newCount: Int) = ui { if (newCount > 0) onFirstFrame() }
         })
-        p.audio().setVolume(volume)
+        p.audio().setVolume(volume.coerceAtMost(100))
         mp = p
         p
     }
@@ -225,6 +225,9 @@ class PlayerController {
         status = null
         liveRetries = 0
         attempt?.cancel()
+        aplicarSom()
+        // o som do VLC às vezes só fica pronto um pouco depois da imagem
+        scope.launch { delay(1500); aplicarSom() }
         val url = sources.getOrNull(sourceIndex)?.url ?: return
         SourceHealth.markWorking(url)
         if (variants.size > 1 && variantIndex == variants.size - 1) SourceHealth.markTsOnly(url)
@@ -280,6 +283,23 @@ class PlayerController {
         Settings.edit { it.copy(volume = volume) }
     }
     fun toggleMute() { muted = !muted; mp?.audio()?.isMute = muted }
+
+    /**
+     * Reaplica volume e mudo quando o vídeo começa. Antes disso o VLC ignora o volume, e o Windows guarda
+     * o volume/mudo do app no mixer de uma vez para outra: sem isso o app podia abrir mudo ou sem som.
+     */
+    private fun aplicarSom() {
+        val p = mp ?: return
+        val v = volume
+        val m = muted
+        p.submit {
+            runCatching {
+                p.audio().setVolume(v)
+                p.audio().isMute = m
+                Log.i("som: pedido $v% mudo=$m, VLC diz ${p.audio().volume()}% mudo=${p.audio().isMute}")
+            }.onFailure { Log.w("não consegui ajustar o som", it) }
+        }
+    }
 
     class Track(val id: Int, val name: String)
     fun audioTracks(): List<Track> = mp?.audio()?.trackDescriptions().orEmpty().map { Track(it.id(), it.description()) }
