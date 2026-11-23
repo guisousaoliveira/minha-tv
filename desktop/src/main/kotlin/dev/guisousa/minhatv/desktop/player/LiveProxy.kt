@@ -31,6 +31,7 @@ object LiveProxy {
     private val proximo = AtomicInteger(1)
 
     private val http = OkHttpClient.Builder()
+        .dns(dev.guisousa.minhatv.core.DohDns)
         .followRedirects(true).followSslRedirects(true)
         .connectTimeout(10, TimeUnit.SECONDS).readTimeout(15, TimeUnit.SECONDS)
         .build()
@@ -66,22 +67,29 @@ object LiveProxy {
         } else canal.url
         if (alvo == null) { ex.sendResponseHeaders(400, -1); ex.close(); return }
 
-        val req = Request.Builder().url(alvo)
+        fun pedir(u: String) = Request.Builder().url(u)
             .header("User-Agent", canal.ua).header("Accept", "*/*")
             .apply { canal.referrer?.let { header("Referer", it) } }
             .build()
-        http.newCall(req).execute().use { resp ->
-            val corpo = resp.body?.bytes() ?: ByteArray(0)
-            if (!resp.isSuccessful) {
-                Log.w("proxy ao vivo: HTTP ${resp.code} em $alvo")
-                ex.sendResponseHeaders(resp.code, -1); ex.close(); return
+
+        var resp = http.newCall(pedir(alvo)).execute()
+        // sub-playlist com token expirado (403/404/410): volta ao link original do canal para renovar
+        if (alvo != canal.url && resp.code in setOf(401, 403, 404, 410)) {
+            resp.close()
+            resp = http.newCall(pedir(canal.url)).execute()
+        }
+        resp.use { r ->
+            val corpo = r.body?.bytes() ?: ByteArray(0)
+            if (!r.isSuccessful) {
+                Log.w("proxy ao vivo: HTTP ${r.code} em $alvo")
+                ex.sendResponseHeaders(r.code, -1); ex.close(); return
             }
             val texto = String(corpo, Charsets.UTF_8)
             val saida = if (texto.trimStart().startsWith("#EXTM3U")) {
-                reescrever(texto, resp.request.url.toString(), ex.requestURI.path.split('/').take(3).joinToString("/"))
+                reescrever(texto, r.request.url.toString(), ex.requestURI.path.split('/').take(3).joinToString("/"))
                     .toByteArray(Charsets.UTF_8)
             } else corpo
-            ex.responseHeaders.add("Content-Type", resp.header("Content-Type") ?: "application/vnd.apple.mpegurl")
+            ex.responseHeaders.add("Content-Type", r.header("Content-Type") ?: "application/vnd.apple.mpegurl")
             ex.responseHeaders.add("Cache-Control", "no-cache")
             ex.sendResponseHeaders(200, saida.size.toLong())
             ex.responseBody.use { it.write(saida) }

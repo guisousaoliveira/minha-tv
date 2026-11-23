@@ -83,7 +83,7 @@ fun rememberHover(): Pair<MutableInteractionSource, Boolean> {
  * que ficam borrados/pixelados esticados numa tela grande ou com escala do Windows.
  */
 fun nitida(url: String?, fundo: Boolean = false): String? =
-    url?.replace(tmdbTamanho, if (fundo) "/t/p/original/" else "/t/p/w500/")
+    url?.replace(tmdbTamanho, if (fundo) "/t/p/w1280/" else "/t/p/w500/")
 
 private val tmdbTamanho = Regex("""/t/p/(w\d+(_and_h\d+_bestv2)?|original)/""")
 

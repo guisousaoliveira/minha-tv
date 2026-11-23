@@ -36,7 +36,7 @@ class StableRedirectDataSource(private val upstream: DataSource) : DataSource {
         val length = upstream.open(spec)
         val landed = upstream.uri
         val root = original ?: asked
-        if (landed != null && landed != spec.uri && isPlaylist(root)) {
+        if (landed != null && landed != spec.uri && (isPlaylist(root) || isPlaylist(landed))) {
             if (originals.size > 200) originals.clear()
             if (original == null) android.util.Log.w("MinhaTV", "player: playlist redirecionada, as próximas atualizações vão pelo link original")
             originals[landed.toString()] = root

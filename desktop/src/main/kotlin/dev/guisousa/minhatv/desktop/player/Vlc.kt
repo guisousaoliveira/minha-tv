@@ -109,5 +109,8 @@ class VideoFrames(private val onFrame: () -> Unit) {
     /** Usa o quadro da frente sem o VLC trocar no meio do desenho. */
     fun <T> withFront(block: (Bitmap) -> T): T? = synchronized(lock) { front?.let(block) }
 
-    fun clear() = synchronized(lock) { front = null; back = null; width = 0; height = 0; frames = 0 }
+    fun clear() = synchronized(lock) {
+        front?.close(); back?.close()
+        front = null; back = null; width = 0; height = 0; frames = 0
+    }
 }

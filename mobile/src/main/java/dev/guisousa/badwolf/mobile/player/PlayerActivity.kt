@@ -252,15 +252,17 @@ class PlayerActivity : ComponentActivity() {
         }
     }
 
-    /** Reabre a mesma fonte do zero, na hora. Devolve false se já tentou 8 vezes seguidas. */
-    private fun reopenSame(message: String): Boolean {
+    /** Reabre a mesma fonte do zero com atraso progressivo (evita loop em 0ms / ban por 1 tela). Devolve false se já tentou 8 vezes seguidas. */
+    private fun reopenSame(message: String, httpCode: Int = 0): Boolean {
         if (sameReopens >= 8) return false
         sameReopens++
-        android.util.Log.w("MinhaTV", "player: reabrindo a mesma fonte ($sameReopens de 8)")
+        val waitMs = dev.guisousa.minhatv.core.LiveBackoff.delayMs(sameReopens, httpCode)
+        android.util.Log.w("MinhaTV", "player: reabrindo a mesma fonte ($sameReopens de 8) em ${waitMs}ms")
         loadingText.text = message
         loadingBox.visibility = View.VISIBLE
         val src = playing ?: current
-        handler.post { if (!isFinishing) playSource(src, resume = false) }
+        val mine = index
+        handler.postDelayed({ if (!isFinishing && index == mine) playSource(src, resume = false) }, waitMs)
         return true
     }
 
@@ -271,7 +273,15 @@ class PlayerActivity : ComponentActivity() {
         if (rounds >= 6) {
             hideLoading()
             player?.stop()
-            notice("Este canal não abriu em nenhuma fonte. Aperte OK e escolha outro em Canais.", 15_000)
+            android.app.AlertDialog.Builder(this)
+                .setTitle("Canal indisponível")
+                .setMessage("Este canal não abriu em nenhuma fonte no momento.")
+                .setPositiveButton("Tentar novamente") { _, _ ->
+                    rounds = 0; sourceIndex = -1
+                    if (!nextSource(false)) playSource(current, resume = false)
+                }
+                .setNegativeButton("Voltar") { _, _ -> finish() }
+                .show()
             return
         }
         rounds++
@@ -841,11 +851,23 @@ class PlayerActivity : ComponentActivity() {
         val http = (error.cause as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)?.responseCode
         android.util.Log.w("MinhaTV", "player: erro ao vivo ${error.errorCodeName} http=$http")
         handler.removeCallbacks(firstFrameWatch)
+        // recusa (401/403) logo depois de trocar/reconectar: limite de 1 tela do painel liberando a conexão velha
+        val justReconnected = System.currentTimeMillis() - maxOf(lastReopenAt, lastReconnectAt) < 15_000
+        if (http in setOf(401, 403) && justReconnected && !limitRetried) {
+            limitRetried = true
+            val waitMs = dev.guisousa.minhatv.core.LiveBackoff.delayMs(1, http ?: 403)
+            android.util.Log.w("MinhaTV", "player: HTTP $http logo após reconectar, aguardando ${waitMs}ms")
+            loadingText.text = "Reconectando…"
+            loadingBox.visibility = View.VISIBLE
+            val mine = index
+            handler.postDelayed({ if (!isFinishing && index == mine) playing?.let { playSource(it, resume = false) } }, waitMs)
+            return
+        }
         val recent = lastPlayingAt > 0 && System.currentTimeMillis() - lastPlayingAt < 30_000
         // HLS com a lista indo e voltando (servidores diferentes a cada atualização): reabre do zero em vez de travar
         val listaPerdida = error.cause is androidx.media3.exoplayer.hls.playlist.HlsPlaylistTracker.PlaylistResetException ||
             error.cause is androidx.media3.exoplayer.hls.playlist.HlsPlaylistTracker.PlaylistStuckException
-        if ((recent || listaPerdida || error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) && reopenSame("Reconectando…")) return
+        if ((recent || listaPerdida || error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) && reopenSame("Reconectando…", http ?: 0)) return
         // o .ts do canal não abriu: tenta a versão HLS (.m3u8) da mesma fonte antes de trocar de fonte
         if (!usingHlsVariant && !readyOnce && playing?.let { it.url !in tsFailed && hlsVariant(it.url) != null } == true) {
             playing?.let { tsFailed += it.url; android.util.Log.w("MinhaTV", "player: .ts não abriu, tentando o HLS"); playSource(it, resume = false) }

@@ -18,6 +18,9 @@ android {
         targetSdk = 35
         versionCode = buildNumber
         versionName = "1.0.$buildNumber"
+        val catalogUrl = (project.findProperty("CATALOG_URL") as? String)?.takeIf { it.isNotBlank() }
+            ?: "https://badwolf.pages.dev/app/v2/"
+        buildConfigField("String", "CATALOG_URL", "\"${if (catalogUrl.endsWith("/")) catalogUrl else "$catalogUrl/"}\"")
     }
 
     signingConfigs {
@@ -60,6 +63,7 @@ android {
 }
 
 dependencies {
+    implementation(project(":core"))
     val composeBom = platform("androidx.compose:compose-bom:2024.12.01")
     implementation(composeBom)
     implementation("androidx.profileinstaller:profileinstaller:1.4.1")

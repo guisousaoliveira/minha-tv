@@ -13,6 +13,7 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "MinhaTV"
+include(":core")
 include(":app")
 include(":mobile")
 include(":desktop")

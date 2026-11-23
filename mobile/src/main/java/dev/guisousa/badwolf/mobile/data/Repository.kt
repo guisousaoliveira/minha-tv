@@ -90,17 +90,23 @@ object Repository {
         val todosFilmes = filmesPorCat.values.flatten().filter { vistosF.add(it.id) }
         val vistosS = HashSet<Long>()
         val todasSeries = seriesPorCat.values.flatten().filter { vistosS.add(it.id) }
+        val canalPorId = canais.associateBy { it.id }
+        val catsLiveOrd = ordemAoVivo(cats.canais)
+        val canaisPorCat = canais.groupBy { it.c }.toMutableMap()
+        catsLiveOrd.forEach { cat ->
+            if (cat.ids != null) canaisPorCat[cat.id] = canaisPorIds(cat.ids!!, canalPorId)
+        }
         val d = Dados(
             canais = canais,
-            canalPorId = canais.associateBy { it.id },
-            canaisPorCat = canais.groupBy { it.c },
+            canalPorId = canalPorId,
+            canaisPorCat = canaisPorCat,
             filmesPorCat = filmesPorCat,
             filmePorId = filmePorId,
             seriesPorCat = seriesPorCat,
             seriePorId = seriePorId,
             inicio = catalogo.inicio().orEmpty(),
             nomeCat = nomeCat,
-            catLive = cats.canais.associate { nomeCurto(it.nome) to it.id },
+            catLive = catsLiveOrd.associate { nomeCurto(it.nome) to it.id },
             catFilme = cats.filmes.associate { nomeCurto(it.nome) to it.id },
             catSerie = cats.series.associate { nomeCurto(it.nome) to it.id },
             todosFilmes = todosFilmes,
@@ -120,7 +126,7 @@ object Repository {
         _epg.value = EpgData(catalogo.guia())
         _library.value = Library(
             ++libVersion,
-            cats.canais.map { GroupInfo(nomeCurto(it.nome), d.canaisPorCat[it.id]?.size ?: 0) }.filter { it.count > 0 },
+            catsLiveOrd.map { GroupInfo(nomeCurto(it.nome), d.canaisPorCat[it.id]?.size ?: 0) }.filter { it.count > 0 },
             cats.filmes.map { GroupInfo(nomeCurto(it.nome), filmesPorCat[it.id]?.size ?: 0) }.filter { it.count > 0 },
             cats.series.map { GroupInfo(nomeCurto(it.nome), seriesPorCat[it.id]?.size ?: 0) }.filter { it.count > 0 },
         )
@@ -192,7 +198,7 @@ object Repository {
             }
         }
         SourceHealth.init(app)
-        catalogo = Catalogo(File(app.filesDir, "v2"), Catalogo.defaultHttp())
+        catalogo = Catalogo(File(app.filesDir, "v2"), Catalogo.defaultHttp(), base = dev.guisousa.badwolf.mobile.BuildConfig.CATALOG_URL)
         scope.launch {
             val temLocal = try { runCatching { carregar() }.getOrDefault(false) } finally { _isLoading.value = false }
             if (!temLocal) _status.value = "Baixando o catálogo…"

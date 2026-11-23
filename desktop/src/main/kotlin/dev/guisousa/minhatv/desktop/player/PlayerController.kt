@@ -78,12 +78,14 @@ class PlayerController {
 
     val frames = VideoFrames { scope.launch { frameTick++ } }
     private var attempt: Job? = null
+    private var watchdog: Job? = null
     private var saver: Job? = null
-    /** Links da fonte atual a tentar (HLS e depois .ts). */
+    /** Links da fonte atual a tentar (.ts primeiro, depois HLS de reserva — igual à TV). */
     private var variants: List<String> = emptyList()
     private var variantIndex = 0
     private var currentUrl: String? = null
     private var gotFrame = false
+    private var playedOnce = false
     private var liveRetries = 0
 
     var onFinished: (() -> Unit)? = null
@@ -168,9 +170,11 @@ class PlayerController {
     fun playSource(i: Int, startMs: Long = if (live) 0 else time) {
         val src = sources.getOrNull(i) ?: run { giveUp(); return }
         sourceIndex = i
+        playedOnce = false
+        liveRetries = 0
         val url = src.url
         val hls = if (live && !SourceHealth.tsOnly(url)) hlsVariant(url) else null
-        variants = listOfNotNull(hls, url).distinct()
+        variants = listOfNotNull(url, hls).distinct()
         variantIndex = 0
         start(src, startMs)
     }
@@ -208,6 +212,7 @@ class PlayerController {
         }
         Log.i("tocando ${item?.name} fonte ${sourceIndex + 1}/${sources.size}: $url")
         attempt?.cancel()
+        watchdog?.cancel()
         val myUrl = url
         // HLS ao vivo passa pelo proxy local, que atualiza a lista sempre pelo link original
         val playUrl = if (live && isHls(url)) LiveProxy.endereco(url, src.userAgent ?: SAFARI_UA, src.referrer) else url
@@ -221,6 +226,7 @@ class PlayerController {
     private fun onFirstFrame() {
         if (gotFrame) return
         gotFrame = true
+        playedOnce = true
         hasVideo = true
         status = null
         liveRetries = 0
@@ -228,19 +234,49 @@ class PlayerController {
         aplicarSom()
         // o som do VLC às vezes só fica pronto um pouco depois da imagem
         scope.launch { delay(1500); aplicarSom() }
+        if (live) {
+            val myUrl = currentUrl
+            watchdog?.cancel()
+            watchdog = scope.launch {
+                var lastFrames = frames.frames
+                var frozenMs = 0L
+                while (isActive && currentUrl == myUrl) {
+                    delay(2_000)
+                    if (!playing) { frozenMs = 0L; lastFrames = frames.frames; continue }
+                    val cur = frames.frames
+                    if (cur != lastFrames) {
+                        lastFrames = cur
+                        frozenMs = 0L
+                    } else {
+                        frozenMs += 2_000
+                        if (frozenMs >= 10_000) {
+                            onError("imagem parada 10s")
+                            break
+                        }
+                    }
+                }
+            }
+        }
         val url = sources.getOrNull(sourceIndex)?.url ?: return
         SourceHealth.markWorking(url)
-        if (variants.size > 1 && variantIndex == variants.size - 1) SourceHealth.markTsOnly(url)
+        if (variants.size > 1 && variantIndex == 0 && !isHls(currentUrl ?: "")) SourceHealth.markTsOnly(url)
     }
 
     private fun onError(why: String) {
         val e = item ?: return
+        watchdog?.cancel()
         Log.w("falhou ${e.name} fonte ${sourceIndex + 1} (${currentUrl}): $why")
         val src = sources.getOrNull(sourceIndex) ?: return
-        if (gotFrame && live && liveRetries < 8) {
-            // canal que já estava tocando e caiu: reabre a mesma fonte
+        if (playedOnce && live && liveRetries < 8) {
+            // canal que já estava tocando e caiu: reabre a mesma fonte com backoff progressivo
             liveRetries++
-            start(src, 0)
+            val waitMs = dev.guisousa.minhatv.core.LiveBackoff.delayMs(liveRetries)
+            status = "Reconectando ($liveRetries/8)…"
+            attempt?.cancel()
+            attempt = scope.launch {
+                delay(waitMs)
+                if (item === e) start(src, 0)
+            }
             return
         }
         if (variantIndex + 1 < variants.size) { variantIndex++; start(src, 0); return }
@@ -320,6 +356,7 @@ class PlayerController {
         saveProgress()
         saver?.cancel()
         attempt?.cancel()
+        watchdog?.cancel()
         item = null
         currentUrl = null
         playing = false

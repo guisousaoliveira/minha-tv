@@ -144,27 +144,20 @@ fun LivePreviewVideo(entry: Entry?, active: Boolean, modifier: Modifier = Modifi
         LiveSession.channelUrl = null
         val sources = runCatching { Repository.sources(entry) }.getOrDefault(emptyList())
             .filter { !it.url.startsWith("v2:") }.ifEmpty { if (entry.url.startsWith("v2:")) emptyList() else listOf(entry) }
-        fun hostOf(u: String) = android.net.Uri.parse(u).host.orEmpty()
-        // primeiro os servidores que já tocaram, por último os que já travaram
-        val ordered = sources.take(8).sortedBy { s ->
-            val h = hostOf(s.url)
-            when (h) { in LivePreview.goodHosts -> 0; in LivePreview.badHosts -> 2; else -> 1 }
-        }
+        // ordena pelo SourceHealth compartilhado ANTES de limitar a 8 fontes
+        val ordered = dev.guisousa.minhatv.data.SourceHealth.order(sources) { it.url }.take(8)
         val key = entry.name.lowercase()
         val remembered = LivePreview.lastOk[key]
         // o endereço que tocou da última vez vai na frente de tudo
         val attempts = buildList {
             ordered.forEach { src ->
-                val host = hostOf(src.url)
-                val hls = if (host !in LivePreview.noHls) xtreamHls(src.url) else null
+                val hls = if (!dev.guisousa.minhatv.data.SourceHealth.tsOnly(src.url)) xtreamHls(src.url) else null
                 // .ts primeiro (uma conexão só, como os apps de IPTV); o HLS fica de reserva (ver tsFailed no PlayerActivity)
                 listOfNotNull(src.url, hls).distinct().forEach { add(Triple(src, it, hls)) }
             }
         }.sortedBy { if (it.second == remembered) 0 else 1 }
         // as fontes que falham voltam em menos de 1 s: dá para tentar várias (o player de tela cheia faz igual)
         for ((src, url, hls) in attempts) {
-            val host = hostOf(url)
-            if (url == hls && host in LivePreview.noHls) continue
             run {
                 firstFrame = false; failed = false
                 val http = OkHttpDataSource.Factory(PlayerHttp.client)
@@ -191,12 +184,13 @@ fun LivePreviewVideo(entry: Entry?, active: Boolean, modifier: Modifier = Modifi
                 // servidor que não responde em 8 s: passa para o próximo (alguns levam ~4 s só para responder)
                 val ok = withTimeoutOrNull(8_000) { snapshotFlow { firstFrame || failed }.first { it } } == true && firstFrame
                 if (ok) {
-                    LivePreview.lastOk[key] = url; LivePreview.goodHosts += host; LivePreview.badHosts -= host
+                    LivePreview.lastOk[key] = url
+                    dev.guisousa.minhatv.data.SourceHealth.markWorking(src.url)
                     if (vigiar(player, { firstFrame }, { failed }, onShowing)) return@LaunchedEffect
                     // caiu de vez: tenta a próxima fonte
                 }
-                if (url == hls && failed) LivePreview.noHls += host
-                else if (host !in LivePreview.goodHosts) LivePreview.badHosts += host
+                if (url == hls && failed) dev.guisousa.minhatv.data.SourceHealth.markTsOnly(src.url)
+                else if (url == src.url && hls == null) dev.guisousa.minhatv.data.SourceHealth.markFailed(src.url)
                 if (LivePreview.lastOk[key] == url) LivePreview.lastOk.remove(key)
                 player.stop()
                 LiveSession.channelUrl = null
@@ -224,6 +218,7 @@ fun LivePreviewVideo(entry: Entry?, active: Boolean, modifier: Modifier = Modifi
  */
 private suspend fun vigiar(player: ExoPlayer, firstFrame: () -> Boolean, failed: () -> Boolean, onShowing: (Boolean) -> Unit): Boolean {
     var reconexoes = 0
+    var estavelDesde = 0L
     var ultimaPos = -1L
     var paradoDesde = 0L
     while (true) {
@@ -234,7 +229,14 @@ private suspend fun vigiar(player: ExoPlayer, firstFrame: () -> Boolean, failed:
         val agora = android.os.SystemClock.uptimeMillis()
         val pos = player.currentPosition
         val andando = player.playbackState == Player.STATE_READY && player.isPlaying && pos != ultimaPos
-        if (andando || ultimaPos < 0) { ultimaPos = pos; paradoDesde = agora; continue }
+        if (andando || ultimaPos < 0) {
+            if (andando) {
+                if (estavelDesde == 0L) estavelDesde = agora
+                else if (reconexoes > 0 && agora - estavelDesde >= 15_000) reconexoes = 0
+            }
+            ultimaPos = pos; paradoDesde = agora; continue
+        }
+        estavelDesde = 0L
         val limite = if (player.playbackState == Player.STATE_BUFFERING) 10_000 else 8_000
         if (agora - paradoDesde < limite) continue
         if (reconexoes >= 2) { onShowing(false); return false }

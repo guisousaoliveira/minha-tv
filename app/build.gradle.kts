@@ -18,6 +18,9 @@ android {
         versionCode = buildNumber
         versionName = "1.0.$buildNumber"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        val catalogUrl = (project.findProperty("CATALOG_URL") as? String)?.takeIf { it.isNotBlank() }
+            ?: "https://badwolf.pages.dev/app/v2/"
+        buildConfigField("String", "CATALOG_URL", "\"${if (catalogUrl.endsWith("/")) catalogUrl else "$catalogUrl/"}\"")
     }
 
     signingConfigs {
@@ -63,6 +66,7 @@ android {
 }
 
 dependencies {
+    implementation(project(":core"))
     val composeBom = platform("androidx.compose:compose-bom:2024.12.01")
     implementation(composeBom)
     // instala os perfis prontos do Compose: as telas já abrem compiladas, sem travar nas primeiras vezes

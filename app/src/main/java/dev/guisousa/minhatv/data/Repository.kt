@@ -81,6 +81,10 @@ object Repository {
 
     private fun carregar(): Boolean {
         val cats = catalogo.categorias() ?: return false
+        // libera caches auxiliares antes de montar o novo catálogo (evita pico de RAM em TV Box 1,5 GB)
+        searchIndex = null
+        favCache = null
+        catalogo.clearFichaCache()
         val canais = catalogo.canais().orEmpty()
         // ao vivo: "Principais" (lista pronta de ids) primeiro; os canais dela continuam na categoria normal também
         val catsCanais = ordemAoVivo(cats.canais)
@@ -229,7 +233,7 @@ object Repository {
         app = context.applicationContext
         prefs = app.getSharedPreferences("minhatv", Context.MODE_PRIVATE)
         SourceHealth.init(app)
-        catalogo = Catalogo(File(app.filesDir, "v2"), Catalogo.defaultHttp())
+        catalogo = Catalogo(File(app.filesDir, "v2"), Catalogo.defaultHttp(), base = dev.guisousa.minhatv.BuildConfig.CATALOG_URL)
         // Minha lista guarda a série, não um episódio: converte os favoritos antigos ("v2:e:id:T:E" -> "v2:e:id")
         val favsSalvos = prefs.getStringSet(FAV_KEY, emptySet())!!.toSet()
         val favsSerie = FavRefs.converter(favsSalvos)

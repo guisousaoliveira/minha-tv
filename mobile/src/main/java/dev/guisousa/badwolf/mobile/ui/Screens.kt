@@ -390,7 +390,7 @@ fun LiveScreen(nav: Nav) {
             channels.isEmpty() -> Message("Nenhum canal aqui.")
             else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 itemsIndexed(channels, key = { i, e -> e.url + "#" + i }) { i, e ->
-                    ChannelRow(e, i + 1, epg.current(e, now), e.url in favs, onLongClick = { toggleFav(context, e) }) {
+                    ChannelRow(e, i + 1, epg.current(e, now), epg.next(e, now), e.url in favs, onLongClick = { toggleFav(context, e) }) {
                         if (current == RECENT || current == FAVS) PlaybackQueue.start(context, channels, i)
                         else PlaybackQueue.startLoadingGroup(context, channels, i) { Repository.entries(ContentType.LIVE, current) }
                     }
@@ -400,10 +400,18 @@ fun LiveScreen(nav: Nav) {
     }
 }
 
-/** Canal em cartão: número, logo, nome, o que está passando e quanto falta. */
+/** Canal em cartão: número, logo, nome, o que está passando, quanto falta e próximo programa. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ChannelRow(e: Entry, number: Int, now: dev.guisousa.badwolf.mobile.data.Programme?, fav: Boolean, onLongClick: () -> Unit, onClick: () -> Unit) {
+private fun ChannelRow(
+    e: Entry,
+    number: Int,
+    now: dev.guisousa.badwolf.mobile.data.Programme?,
+    next: dev.guisousa.badwolf.mobile.data.Programme?,
+    fav: Boolean,
+    onLongClick: () -> Unit,
+    onClick: () -> Unit,
+) {
     Row(
         Modifier.fillMaxWidth().clip(CardShape).background(Palette.Surface).combinedClickable(onClick = onClick, onLongClick = onLongClick).padding(10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -423,6 +431,9 @@ private fun ChannelRow(e: Entry, number: Int, now: dev.guisousa.badwolf.mobile.d
                 Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.width(110.dp).clip(RoundedCornerShape(2.dp))) { ProgressLine((System.currentTimeMillis() - now.start).toFloat() / span) }
                     Text("  até ${timeFmt.format(Date(now.stop))}", fontSize = 11.sp, color = Palette.TextFaint)
+                }
+                if (next != null) {
+                    Text("A seguir: ${timeFmt.format(Date(next.start))} ${next.title}", fontSize = 11.sp, color = Palette.TextFaint, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 3.dp))
                 }
             } else if (!e.quality.isNullOrBlank()) {
                 Text(e.quality, fontSize = 12.sp, color = Palette.TextFaint, maxLines = 1, modifier = Modifier.padding(top = 2.dp))

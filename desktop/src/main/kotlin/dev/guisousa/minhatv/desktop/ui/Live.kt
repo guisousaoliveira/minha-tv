@@ -36,6 +36,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.text.font.FontWeight
@@ -54,7 +59,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 
 private val hhmm = SimpleDateFormat("HH:mm")
-fun hora(ms: Long): String = hhmm.format(Date(ms))
+fun hora(ms: Long): String = synchronized(hhmm) { hhmm.format(Date(ms)) }
 
 private const val RECENT = "\u0000recentes"
 
@@ -82,7 +87,26 @@ fun LiveScreen() {
     }
     val selected = player.item?.takeIf { it.type == ContentType.LIVE }
 
-    Row(Modifier.fillMaxSize().padding(top = 8.dp)) {
+    Row(
+        Modifier.fillMaxSize().padding(top = 8.dp).onPreviewKeyEvent { ev ->
+            if (ev.type != KeyEventType.KeyDown || channels.isEmpty()) return@onPreviewKeyEvent false
+            val curIdx = channels.indexOfFirst { it.url == selected?.url }
+            when (ev.key) {
+                Key.DirectionDown -> {
+                    val next = channels[(curIdx + 1).coerceIn(0, channels.lastIndex)]
+                    player.open(next); true
+                }
+                Key.DirectionUp -> {
+                    val prev = channels[(if (curIdx <= 0) 0 else curIdx - 1)]
+                    player.open(prev); true
+                }
+                Key.Enter -> {
+                    if (selected != null) { nav.play(selected); true } else false
+                }
+                else -> false
+            }
+        },
+    ) {
         // categorias
         val catState = rememberLazyListState()
         LazyColumn(Modifier.width(230.dp).fillMaxHeight(), state = catState, contentPadding = PaddingValues(start = 24.dp, end = 8.dp, bottom = 24.dp)) {
