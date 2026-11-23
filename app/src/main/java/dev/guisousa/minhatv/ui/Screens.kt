@@ -901,11 +901,20 @@ private fun ContaRow() {
             error = false,
         ) { TvButton("Entrar", onClick = { entrando = true }) }
     } else {
+        val ultima by dev.guisousa.minhatv.data.Nuvem.ultima.collectAsState()
+        val sincronizando by dev.guisousa.minhatv.data.Nuvem.sincronizando.collectAsState()
+        val quando = when {
+            sincronizando -> "sincronizando agora…"
+            ultima == 0L -> "ainda não sincronizou"
+            else -> "sincronizado às " + java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(ultima))
+        }
         ListRow(
             title = "Conectado como ${u.nome.ifBlank { "sua conta" }}",
-            subtitle = "Histórico e Minha lista sincronizam com esta conta.",
+            subtitle = "Onde parou, Minha lista e já assisti iguais na TV, no celular e no site · $quando",
             error = false,
         ) {
+            TvButton("Sincronizar", onClick = { dev.guisousa.minhatv.data.Nuvem.sincronizar(forcar = true) })
+            Spacer(Modifier.width(12.dp))
             TvButton("Sair", onClick = {
                 confirm(context, "Sair da conta?", "O app continua funcionando nesta TV, só para de sincronizar.", "Sair") { Conta.sair() }
             })

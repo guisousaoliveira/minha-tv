@@ -82,7 +82,7 @@ object LocalStore {
         val nearEnd = duration > 0 && position >= duration - 120_000
         if (nearEnd && position > 60_000) markWatched(url)
         if (position > MIN_RESUME_MS && !nearEnd) {
-            edit(key) { putLong(key, position).putLong("dur_" + url.hashCode(), duration) }
+            edit(key) { putLong(key, position).putLong("dur_" + url.hashCode(), duration).putLong("resume_t_" + url.hashCode(), System.currentTimeMillis()) }
             _recentsVersion.value++
         } else if (nearEnd && position > 60_000) {
             edit(key) { remove(key).remove("dur_" + url.hashCode()) }
@@ -118,6 +118,33 @@ object LocalStore {
         _watched.value = _watched.value - h
         edit(WATCHED_KEY) { putStringSet(WATCHED_KEY, _watched.value) }
     }
+
+    // ---------- Conta (o que a Nuvem aplica; não manda de volta) ----------
+
+    /** Onde parou: posição, duração (ms) e quando foi guardado. */
+    fun ondeComHora(url: String): Triple<Long, Long, Long>? {
+        val h = url.hashCode()
+        val pos = prefs.getLong("resume_$h", 0)
+        if (pos <= 0) return null
+        return Triple(pos, prefs.getLong("dur_$h", 0), prefs.getLong("resume_t_$h", 0))
+    }
+
+    fun aplicarOnde(url: String, posicaoMs: Long, duracaoMs: Long, emMs: Long) {
+        val h = url.hashCode()
+        edit("resume_$h") { putLong("resume_$h", posicaoMs).putLong("dur_$h", duracaoMs).putLong("resume_t_$h", emMs) }
+        _recentsVersion.value++
+    }
+
+    fun aplicarVisto(url: String) {
+        val h = url.hashCode().toString()
+        if (h in _watched.value) return
+        _watched.value = _watched.value + h
+        edit(WATCHED_KEY) { putStringSet(WATCHED_KEY, _watched.value).remove("resume_${url.hashCode()}") }
+        _recentsVersion.value++
+    }
+
+    fun lerTexto(chave: String): String? = prefs.getString(chave, null)
+    fun gravarTexto(chave: String, valor: String?) = edit(chave) { if (valor == null) remove(chave) else putString(chave, valor) }
 
     // ---------- Recentes ----------
 

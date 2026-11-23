@@ -122,6 +122,13 @@ object Repository {
             principais = catsCanais.firstOrNull { it.ids != null && canaisPorCat[it.id].orEmpty().isNotEmpty() }?.let { nomeCurto(it.nome) },
         )
         dados = d
+        // código do TMDB <-> nosso id, para a sincronização com a conta
+        catalogo.tmdbIds()?.let { t ->
+            tmdbFilme = t.f.entries.mapNotNull { (k, v) -> k.toLongOrNull()?.let { it to v } }.toMap()
+            tmdbSerie = t.s.entries.mapNotNull { (k, v) -> k.toLongOrNull()?.let { it to v } }.toMap()
+            filmeTmdb = tmdbFilme.entries.associate { (k, v) -> v to k }
+            serieTmdb = tmdbSerie.entries.associate { (k, v) -> v to k }
+        }
         runCatching { migrarApelidos() }.onFailure { android.util.Log.w("MinhaTV", "apelidos: não migrou", it) }
         searchIndex = null
         favCache = null
@@ -156,6 +163,62 @@ object Repository {
         return out
     }
 
+    // ---------- Conta (sincronização) ----------
+
+    @Volatile private var tmdbFilme: Map<Long, Long> = emptyMap() // TMDB -> filme
+    @Volatile private var tmdbSerie: Map<Long, Long> = emptyMap()
+    @Volatile private var filmeTmdb: Map<Long, Long> = emptyMap() // filme -> TMDB
+    @Volatile private var serieTmdb: Map<Long, Long> = emptyMap()
+
+    /** O que a [Nuvem] lê e grava no aparelho (sem mandar de volta para a nuvem). */
+    private val localNuvem = object : Nuvem.Local {
+        override fun pronto() = dados != null && filmeTmdb.isNotEmpty()
+        override fun tmdbDoFilme(id: Long) = filmeTmdb[id]
+        override fun tmdbDaSerie(id: Long) = serieTmdb[id]
+        override fun filmeDoTmdb(tmdb: Long) = tmdbFilme[tmdb]
+        override fun serieDoTmdb(tmdb: Long) = tmdbSerie[tmdb]
+        override fun tituloECapa(url: String): Pair<String, String?>? {
+            val d = dados ?: return null
+            return when {
+                url.startsWith(F) -> idOf(url, F)?.let { d.filmePorId[it]?.first }?.let { it.t to it.p }
+                url.startsWith(E) -> idOf(url, E)?.let { d.seriePorId[it]?.first }?.let { it.t to it.p }
+                else -> null
+            }
+        }
+        override fun onde(url: String): Triple<Long, Long, Long>? {
+            val h = url.hashCode()
+            val pos = prefs.getLong("resume_$h", 0)
+            if (pos <= 0) return null
+            return Triple(pos, prefs.getLong("dur_$h", 0), prefs.getLong("resume_t_$h", 0))
+        }
+        override fun aplicarOnde(url: String, posicaoMs: Long, duracaoMs: Long, emMs: Long) {
+            val h = url.hashCode()
+            prefs.edit().putLong("resume_$h", posicaoMs).putLong("dur_$h", duracaoMs).putLong("resume_t_$h", emMs).apply()
+        }
+        override fun favoritos(): Set<String> = _favorites.value
+        override fun aplicarFavorito(url: String, ligado: Boolean) {
+            val now = _favorites.value.toMutableSet()
+            if (ligado) now += url else now -= url
+            if (now == _favorites.value) return
+            _favorites.value = now
+            prefs.edit().putStringSet(FAV_KEY, now).apply()
+            favCache = null
+        }
+        override fun aplicarVisto(url: String) {
+            val h = url.hashCode().toString()
+            if (h in _watched.value) return
+            _watched.value = _watched.value + h
+            prefs.edit().putStringSet("watched", _watched.value).remove("resume_${url.hashCode()}").apply()
+        }
+        override fun recentesVod(): List<String> = readRecent("v2_recent_vod").map { it.url }
+        override fun aplicarRecentes(urls: List<String>) {
+            val d = dados ?: return
+            urls.asReversed().forEach { u -> entryOf(d, u)?.let { addRecent(it) } }
+        }
+        override fun ler(chave: String): String? = prefs.getString(chave, null)
+        override fun gravar(chave: String, valor: String?) { prefs.edit().apply { if (valor == null) remove(chave) else putString(chave, valor) }.apply() }
+    }
+
     @Synchronized
     fun init(context: Context) {
         if (::app.isInitialized) return
@@ -169,6 +232,16 @@ object Repository {
         if (favsSerie != favsSalvos) prefs.edit().putStringSet(FAV_KEY, favsSerie).apply()
         _favorites.value = favsSerie
         cleanupOld()
+        Nuvem.ligar(localNuvem)
+        scope.launch {
+            // entrou na conta: sincroniza na hora; saiu: esquece o que sabia da nuvem
+            var antes: String? = null
+            Conta.usuario.collect { u ->
+                if (u != null && u.id != antes) Nuvem.sincronizar(forcar = true)
+                if (u == null && antes != null) Nuvem.esquecer()
+                antes = u?.id
+            }
+        }
         scope.launch {
             val temLocal = try { runCatching { carregar() }.getOrDefault(false) } finally { _isLoading.value = false }
             if (!temLocal) _status.value = "Baixando o catálogo…"
@@ -202,14 +275,15 @@ object Repository {
             lastSync = now
             if (mudou || dados == null) carregar()
             _status.value = null
+            Nuvem.sincronizar()
         } catch (e: Exception) {
             android.util.Log.w("MinhaTV", "catálogo: não atualizou", e)
             _status.value = if (dados == null) "Não consegui baixar o catálogo. Confira a internet; tento de novo sozinho." else null
         }
     }
 
-    /** Ao voltar para o app: confere se o catálogo mudou (no máximo a cada 10 min). */
-    fun refreshIfChanged() { if (::app.isInitialized) scope.launch { sync() } }
+    /** Ao voltar para o app: confere se o catálogo mudou (no máximo a cada 10 min) e o que mudou na conta. */
+    fun refreshIfChanged() { if (::app.isInitialized) { scope.launch { sync() }; Nuvem.sincronizar() } }
 
     /** Botão "Atualizar agora". */
     fun refreshAllAsync() { scope.launch { sync(force = true) } }
@@ -504,6 +578,7 @@ object Repository {
         val added = if (url in now) { now.remove(url); false } else { now.add(url); true }
         _favorites.value = now
         prefs.edit().putStringSet(FAV_KEY, now).apply()
+        Nuvem.favorito(url, added)
         return added
     }
 
@@ -539,7 +614,8 @@ object Repository {
         val nearEnd = duration > 0 && position >= duration - 120_000
         if (nearEnd && position > 60_000) markWatched(url)
         if (position > MIN_RESUME_MS && !nearEnd) {
-            prefs.edit().putLong(key, position).putLong("dur_" + url.hashCode(), duration).apply()
+            prefs.edit().putLong(key, position).putLong("dur_" + url.hashCode(), duration).putLong("resume_t_" + url.hashCode(), System.currentTimeMillis()).apply()
+            Nuvem.onde(url, position, duration)
         } else if (nearEnd && position > 60_000) {
             prefs.edit().remove(key).remove("dur_" + url.hashCode()).apply()
         }
@@ -554,6 +630,7 @@ object Repository {
         if (h in _watched.value) return
         _watched.value = _watched.value + h
         prefs.edit().putStringSet("watched", _watched.value).apply()
+        Nuvem.visto(url, true)
     }
 
     /** Duração conhecida (ms). 0 = não sei. */
