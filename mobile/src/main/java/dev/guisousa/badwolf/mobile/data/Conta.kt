@@ -159,6 +159,8 @@ object Conta {
                 post("/auth/v1/token?grant_type=password", body).use { r ->
                     val text = r.body?.string().orEmpty()
                     if (r.code == 400 || r.code == 401) return@withLock "Usuário ou senha incorretos."
+                    // 402: o Supabase do W4LLE passou do limite do plano e pausou o serviço (vale para o site também)
+                    if (r.code == 402) return@withLock "O servidor da conta W4LLE está pausado (passou do limite do plano). Tente mais tarde."
                     if (!r.isSuccessful) return@withLock "Não consegui entrar agora (erro ${r.code}). Tente de novo."
                     val o = json.parseToJsonElement(text).jsonObject
                     val access = o["access_token"]?.jsonPrimitive?.content ?: return@withLock "Resposta inesperada do servidor."

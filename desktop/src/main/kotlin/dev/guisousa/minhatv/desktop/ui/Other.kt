@@ -1,5 +1,20 @@
 package dev.guisousa.minhatv.desktop.ui
 
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import dev.guisousa.minhatv.data.Conta
+import dev.guisousa.minhatv.data.Nuvem
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.input.pointer.PointerIcon
@@ -160,6 +175,7 @@ fun SettingsScreen() {
             Column(Modifier.widthIn(max = 760.dp)) {
                 Text("Ajustes", fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, color = Palette.Text)
                 Spacer(Modifier.height(24.dp))
+                ContaGroup()
                 Group("Reprodução") {
                     Line("Versão preferida", "Usada quando o título tem dublado e legendado.") {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -200,6 +216,109 @@ fun SettingsScreen() {
                 }
             }
         }
+    }
+}
+
+// ---------- Conta W4LLE ----------
+
+/** true enquanto um campo de texto dos Ajustes tem o foco (os atalhos de teclado do app ficam quietos). */
+@Volatile var campoDeTextoFocado = false
+
+@Composable
+private fun ContaGroup() {
+    val u by Conta.usuario.collectAsState()
+    val ultima by Nuvem.ultima.collectAsState()
+    val sincronizando by Nuvem.sincronizando.collectAsState()
+    Group("Conta W4LLE") {
+        val usuario = u
+        if (usuario != null) {
+            val sub = when {
+                sincronizando -> "Sincronizando…"
+                ultima > 0 -> "Sincronizado às ${horaDe(ultima)}. Onde parou, Minha lista e Já assisti ficam iguais na TV, no celular e no site."
+                else -> "Onde parou, Minha lista e Já assisti ficam iguais na TV, no celular e no site."
+            }
+            Line("Conectado como ${usuario.nome.ifBlank { "você" }}", sub) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PillButton("Sincronizar", { Nuvem.sincronizar(forcar = true) }, Ic.Restart, enabled = !sincronizando)
+                    PillButton("Sair", { Conta.sair() })
+                }
+            }
+        } else {
+            LoginForm()
+        }
+    }
+}
+
+private fun horaDe(ms: Long): String =
+    java.time.Instant.ofEpochMilli(ms).atZone(java.time.ZoneId.systemDefault()).toLocalTime()
+        .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
+
+@Composable
+private fun LoginForm() {
+    var nome by rememberSaveable { mutableStateOf("") }
+    var senha by remember { mutableStateOf("") }
+    var erro by remember { mutableStateOf<String?>(null) }
+    var entrando by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    fun entrar() {
+        if (entrando) return
+        entrando = true
+        erro = null
+        scope.launch {
+            erro = Conta.entrarComSenha(nome, senha)
+            entrando = false
+            if (erro == null) senha = ""
+        }
+    }
+    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp)) {
+        Text("Entre com a sua conta W4LLE", color = Palette.Text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+        Text(
+            "A mesma do site, da TV e do celular. Assistiu num, continua no outro do mesmo ponto; Minha lista e Já assisti também.",
+            color = Palette.TextDim, fontSize = 13.sp,
+        )
+        Spacer(Modifier.height(14.dp))
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Campo(nome, { nome = it; erro = null }, "Usuário", Modifier.weight(1f), onEnter = ::entrar)
+            Campo(senha, { senha = it; erro = null }, "Senha", Modifier.weight(1f), senha = true, onEnter = ::entrar)
+            PillButton(if (entrando) "Entrando…" else "Entrar", ::entrar, primary = true, enabled = !entrando)
+        }
+        erro?.let {
+            Spacer(Modifier.height(10.dp))
+            Text(it, color = Palette.Error, fontSize = 13.sp)
+        }
+    }
+}
+
+@Composable
+private fun Campo(
+    valor: String, onChange: (String) -> Unit, dica: String, modifier: Modifier = Modifier,
+    senha: Boolean = false, onEnter: () -> Unit = {},
+) {
+    val focus = LocalFocusManager.current
+    var focado by remember { mutableStateOf(false) }
+    Box(
+        modifier.height(44.dp).background(Palette.SurfaceHigh, RoundedCornerShape(22.dp))
+            .border(1.dp, if (focado) Color(0x66FFFFFF) else Palette.Hairline, RoundedCornerShape(22.dp))
+            .padding(horizontal = 18.dp),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        if (valor.isEmpty()) Text(dica, color = Palette.TextFaint, fontSize = 15.sp)
+        BasicTextField(
+            valor, onChange,
+            Modifier.fillMaxWidth()
+                .onFocusChanged { focado = it.isFocused; campoDeTextoFocado = it.isFocused }
+                .onPreviewKeyEvent { ev ->
+                    if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when (ev.key) {
+                        Key.Enter, Key.NumPadEnter -> { onEnter(); true }
+                        Key.Tab -> { focus.moveFocus(if (ev.isShiftPressed) FocusDirection.Previous else FocusDirection.Next); true }
+                        else -> false
+                    }
+                },
+            singleLine = true,
+            textStyle = TextStyle(color = Palette.Text, fontSize = 15.sp), cursorBrush = SolidColor(Palette.Text),
+            visualTransformation = if (senha) PasswordVisualTransformation() else VisualTransformation.None,
+        )
     }
 }
 
