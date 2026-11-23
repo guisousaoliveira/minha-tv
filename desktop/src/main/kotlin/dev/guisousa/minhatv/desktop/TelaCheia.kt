@@ -40,6 +40,8 @@ object TelaCheia {
         fun GetMonitorInfoW(monitor: Pointer, info: MonitorInfo): Boolean
         fun IsZoomed(hwnd: Pointer): Boolean
         fun ShowWindow(hwnd: Pointer, cmd: Int): Boolean
+        fun FindWindowW(className: String?, title: String?): Pointer?
+        fun GetForegroundWindow(): Pointer?
     }
 
     private const val GWL_STYLE = -16
@@ -68,10 +70,19 @@ object TelaCheia {
     private var maximizada = false
     private val antes = Rect()
 
-    /** Liga ou desliga. Devolve false se não deu (aí quem chamou usa a tela cheia normal). */
-    fun definir(janela: Window, ligar: Boolean): Boolean {
+    /**
+     * Acha a janela no Windows. O jeito normal (JAWT) falha em alguns PCs com o app instalado; aí procura
+     * pelo título e, por último, pega a janela em primeiro plano (quem apertou F11/clicou é ela).
+     */
+    private fun hwndDe(u: User32, janela: Window, titulo: String?): Pointer? =
+        runCatching { Native.getWindowPointer(janela) }.onFailure { Log.w("tela cheia: JAWT falhou (${it.message}), procurando pelo título") }.getOrNull()
+            ?: titulo?.let { t -> runCatching { u.FindWindowW(null, t) }.getOrNull() }
+            ?: runCatching { u.GetForegroundWindow() }.getOrNull()
+
+    /** Liga ou desliga. Devolve false se não deu (aí quem chamou maximiza a janela, sem a tela cheia exclusiva). */
+    fun definir(janela: Window, ligar: Boolean, titulo: String? = null): Boolean {
         val u = user32 ?: return false
-        val hwnd = runCatching { Native.getWindowPointer(janela) }.getOrNull() ?: return false
+        val hwnd = hwndDe(u, janela, titulo) ?: return false
         if (ligar == ativa) return true
         return runCatching {
             if (ligar) {

@@ -226,7 +226,7 @@ fun PlayerScreen() {
                         Spacer(Modifier.width(8.dp))
                         IconBtn(if (p.muted || p.volume == 0) Ic.VolumeOff else Ic.Volume, { p.toggleMute() }, size = 40.dp)
                         VolumeBar(if (p.muted) 0 else p.volume) { p.changeVolume(it); lastMove = System.currentTimeMillis() }
-                        Text(if (p.muted) "Mudo" else "${p.volume}%", Modifier.padding(start = 10.dp).width(44.dp), color = Palette.TextDim, fontSize = 13.sp)
+                        Text(if (p.muted) "Mudo" else "${p.volume}%", Modifier.padding(start = 10.dp).width(52.dp), color = Palette.TextDim, fontSize = 13.sp)
                         Spacer(Modifier.weight(1f))
                         if (!p.live && p.resumedFrom > 0 && p.time < p.resumedFrom + 60_000) {
                             PillButton("Do início", { p.seekTo(0) }, Ic.Restart)
@@ -284,20 +284,25 @@ private fun SeekBar(time: Long, length: Long, onSeek: (Long) -> Unit) {
     }
 }
 
+/** Volume máximo (%): acima de 100 o VLC amplifica o som. */
+internal const val VOLUME_MAX = 150
+
 @Composable
 internal fun VolumeBar(volume: Int, onChange: (Int) -> Unit) {
     BoxWithConstraints(Modifier.width(110.dp).height(20.dp).pointerHoverIcon(PointerIcon.Hand)) {
         val wPx = constraints.maxWidth.toFloat().coerceAtLeast(1f)
-        fun v(x: Float) = ((x / wPx).coerceIn(0f, 1f) * 100).toInt()
+        // vai até 150% (filme com som baixo); a marquinha mostra onde fica o 100%
+        fun v(x: Float) = ((x / wPx).coerceIn(0f, 1f) * VOLUME_MAX).toInt()
         Box(
             Modifier.fillMaxSize()
                 .pointerInput(Unit) { detectTapGestures { onChange(v(it.x)) } }
                 .pointerInput(Unit) { detectDragGestures { change, _ -> onChange(v(change.position.x)) } },
             contentAlignment = Alignment.CenterStart,
         ) {
-            val f = (volume.coerceAtMost(100) / 100f)
+            val f = (volume.coerceIn(0, VOLUME_MAX) / VOLUME_MAX.toFloat())
             Box(Modifier.fillMaxWidth().height(3.dp).background(Color(0x44FFFFFF)))
-            Box(Modifier.fillMaxWidth(f).height(3.dp).background(Color.White))
+            Box(Modifier.fillMaxWidth(f).height(3.dp).background(if (volume > 100) Palette.Brand else Color.White))
+            Box(Modifier.padding(start = with(androidx.compose.ui.platform.LocalDensity.current) { (wPx * 100f / VOLUME_MAX).toDp() }).width(2.dp).height(10.dp).background(Color(0x99FFFFFF)))
         }
     }
 }
