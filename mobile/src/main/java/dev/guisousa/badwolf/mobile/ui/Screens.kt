@@ -2,6 +2,7 @@ package dev.guisousa.badwolf.mobile.ui
 
 import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -26,12 +27,23 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
@@ -52,19 +64,23 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.guisousa.badwolf.mobile.R
 import dev.guisousa.badwolf.mobile.data.ContentType
 import dev.guisousa.badwolf.mobile.data.Entry
 import dev.guisousa.badwolf.mobile.data.LocalStore
 import dev.guisousa.badwolf.mobile.data.Repository
 import dev.guisousa.badwolf.mobile.data.Show
+import dev.guisousa.badwolf.mobile.data.Updater
 import dev.guisousa.badwolf.mobile.player.PlaybackQueue
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -81,7 +97,7 @@ private fun StatusBanner() {
     status?.let {
         Text(
             it, fontSize = 13.sp, color = Palette.Text,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp).clip(RoundedCornerShape(6.dp)).background(Palette.SurfaceHigh).padding(10.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp).clip(CardShape).background(Palette.SurfaceHigh).padding(12.dp),
         )
     }
 }
@@ -90,7 +106,7 @@ private fun StatusBanner() {
 private fun EmptyCatalog() {
     val loading by Repository.isLoading.collectAsState()
     val status by Repository.status.collectAsState()
-    if (loading || status != null && status!!.startsWith("Baixando")) Loading() else Message("Nada por aqui ainda.")
+    if (loading || status != null && status!!.startsWith("Baixando")) Loading() else Message("Nada por aqui ainda.", detail = "Confira a internet e toque em Ajustes > Atualizar o catálogo.")
 }
 
 // ======================= Início =======================
@@ -107,36 +123,115 @@ fun HomeScreen(nav: Nav) {
     val cont = remember(recents, lib.version) { Repository.continueWatching() }
     val myList = load(favs, lib.version) { Repository.favoriteItems() }
     val recentLive = remember(recents, lib.version) { Repository.recentLive().take(15) }
+    // destaque no topo: os primeiros "Em alta" que têm imagem de fundo
+    val destaques = remember(lib.version) {
+        rows.flatMap { it.items }.distinctBy { if (it is Entry) it.url else (it as Show).key }
+            .mapNotNull { item -> Repository.destaque(refOf(item))?.takeIf { it.fundo != null }?.let { item to it } }.take(6)
+    }
 
-    Column(Modifier.fillMaxSize()) {
-        TopTitle("Bad Wolf TV", nav)
-        StatusBanner()
-        if (rows.isEmpty() && cont.isEmpty()) { EmptyCatalog(); return@Column }
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
-            if (cont.isNotEmpty()) item("cont") {
-                SectionTitle("Continuar assistindo")
-                MediaRow(cont, 200.dp) { _, e ->
-                    WideCard(e, Repository.progress(e.url)) {
-                        if (e.type == ContentType.MOVIE) PlaybackQueue.start(context, listOf(e), 0)
-                        else scope.launch { playEpisode(context, e) }
-                    }
-                }
-            }
-            if (recentLive.isNotEmpty()) item("live") {
-                SectionTitle("Canais recentes")
-                MediaRow(recentLive, 120.dp) { i, e -> ChannelTile(e) { PlaybackQueue.start(context, recentLive, i) } }
-            }
-            if (!myList.isNullOrEmpty()) item("fav") {
-                SectionTitle("Minha lista")
-                MediaRow(myList, 112.dp) { _, it -> AnyPoster(it, nav, watched) }
-            }
-            rows.forEachIndexed { i, r ->
-                item("row$i") {
-                    SectionTitle(r.title)
-                    MediaRow(r.items, 112.dp) { _, it -> AnyPoster(it, nav, watched) }
+    if (rows.isEmpty() && cont.isEmpty()) {
+        Column(Modifier.fillMaxSize()) { TopBar("Bad Wolf", { nav.openSearch() }); StatusBanner(); EmptyCatalog() }
+        return
+    }
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 28.dp)) {
+        item("hero") {
+            if (destaques.isNotEmpty()) HeroPager(destaques, nav, favs) else TopBar("Bad Wolf", { nav.openSearch() })
+            StatusBanner()
+        }
+        if (cont.isNotEmpty()) item("cont") {
+            SectionTitle("Continuar assistindo")
+            MediaRow(cont, 230.dp) { _, e ->
+                WideCard(e, Repository.progress(e.url)) {
+                    if (e.type == ContentType.MOVIE) PlaybackQueue.start(context, listOf(e), 0)
+                    else scope.launch { playEpisode(context, e) }
                 }
             }
         }
+        if (recentLive.isNotEmpty()) item("live") {
+            SectionTitle("Canais recentes")
+            MediaRow(recentLive, 128.dp) { i, e -> ChannelTile(e) { PlaybackQueue.start(context, recentLive, i) } }
+        }
+        if (!myList.isNullOrEmpty()) item("fav") {
+            SectionTitle("Minha lista")
+            MediaRow(myList, 116.dp) { _, it -> AnyPoster(it, nav, watched) }
+        }
+        rows.forEachIndexed { i, r ->
+            item("row$i") {
+                SectionTitle(r.title)
+                MediaRow(r.items, 116.dp) { _, it -> AnyPoster(it, nav, watched) }
+            }
+        }
+    }
+}
+
+private fun refOf(item: Any): String? = when (item) {
+    is Entry -> item.url
+    is Show -> Repository.showRef(item)
+    else -> null
+}
+
+/** Destaque do Início: imagem grande que passa sozinha a cada 6 s, com título e botões. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun HeroPager(itens: List<Pair<Any, Repository.Destaque>>, nav: Nav, favs: Set<String>) {
+    val context = LocalContext.current
+    val pager = rememberPagerState { itens.size }
+    LaunchedEffect(itens.size) {
+        while (itens.size > 1) { delay(6_000); pager.animateScrollToPage((pager.currentPage + 1) % itens.size) }
+    }
+    Box(Modifier.fillMaxWidth().height(500.dp)) {
+        HorizontalPager(pager, Modifier.fillMaxSize()) { page ->
+            val (item, d) = itens[page]
+            val nome = if (item is Entry) item.name else (item as Show).name
+            Box(Modifier.fillMaxSize().clickable { nav.open(item) }) {
+                Backdrop(d.fundo, Modifier.fillMaxSize())
+                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.45f to Color.Transparent, 1f to Palette.Background)))
+                Column(Modifier.align(Alignment.BottomStart).padding(start = 20.dp, end = 20.dp, bottom = 38.dp)) {
+                    Text(if (d.serie) "SÉRIE" else "FILME", fontSize = 12.sp, color = Palette.Brand, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                    Text(nome, fontSize = 30.sp, lineHeight = 34.sp, fontWeight = FontWeight.ExtraBold, color = Palette.Text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Spacer(Modifier.height(6.dp))
+                    Meta(listOfNotNull(d.ano?.toString(), d.generos.take(2).joinToString(", ").ifBlank { null }, "4K".takeIf { d.k4 },
+                        if (d.serie && d.temporadas > 0) "${d.temporadas} temporada${if (d.temporadas > 1) "s" else ""}" else null))
+                    Spacer(Modifier.height(14.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        PillButton("Assistir", Icons.Filled.PlayArrow, primary = true) {
+                            if (item is Entry) PlaybackQueue.start(context, listOf(item), 0) else nav.open(item)
+                        }
+                        val naLista = when (item) { is Entry -> item.url in favs; is Show -> Repository.isShowFavorite(item, favs); else -> false }
+                        PillButton(if (naLista) "Na lista" else "Minha lista", if (naLista) Icons.Filled.Check else Icons.Filled.Add) {
+                            when (item) { is Entry -> toggleFav(context, item); is Show -> toggleFav(context, item) }
+                        }
+                        PillButton("Detalhes", Icons.Filled.Info) { nav.open(item) }
+                    }
+                }
+            }
+        }
+        // marca e busca por cima da imagem
+        Row(Modifier.fillMaxWidth().statusBarsPadding().padding(start = 16.dp, end = 8.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Image(painterResource(R.drawable.logo_lobo), null, Modifier.size(34.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("BAD WOLF", fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, color = Palette.Text, letterSpacing = 1.sp, modifier = Modifier.weight(1f))
+            IconButton(onClick = { nav.openSearch() }) { Icon(Icons.Filled.Search, "Buscar", tint = Palette.Text, modifier = Modifier.size(26.dp)) }
+        }
+        // bolinhas de página
+        Row(Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            repeat(itens.size) { i ->
+                Box(Modifier.size(if (i == pager.currentPage) 18.dp else 6.dp, 6.dp).clip(CircleShape).background(if (i == pager.currentPage) Palette.Brand else Color(0x66FFFFFF)))
+            }
+        }
+    }
+}
+
+/** Botão em pílula (destaque e detalhes). */
+@Composable
+fun PillButton(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector?, primary: Boolean = false, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Row(
+        modifier.clip(RoundedCornerShape(50)).background(if (primary) Palette.Text else Color(0x33FFFFFF)).clickable(onClick = onClick)
+            .padding(horizontal = if (primary) 20.dp else 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (icon != null) { Icon(icon, null, tint = if (primary) Color.Black else Palette.Text, modifier = Modifier.size(20.dp)); Spacer(Modifier.width(6.dp)) }
+        Text(text, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = if (primary) Color.Black else Palette.Text, maxLines = 1)
     }
 }
 
@@ -165,17 +260,21 @@ fun AnyPoster(item: Any, nav: Nav, watched: Set<String>, modifier: Modifier = Mo
     }
 }
 
-/** Cartão largo do "Continuar assistindo". */
+/** Cartão largo do "Continuar assistindo": imagem, botão de play, barra e título. */
 @Composable
 private fun WideCard(e: Entry, progress: Float?, onClick: () -> Unit) {
     Column {
-        Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(6.dp)).clickable(onClick = onClick)) {
+        Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(CardShape).clickable(onClick = onClick)) {
             Logo(e.logo, Modifier.fillMaxSize(), fallback = e.name, crop = true)
-            Box(Modifier.fillMaxSize().background(Color(0x55000000)))
-            Text("▶", color = Color.White, fontSize = 28.sp, modifier = Modifier.align(Alignment.Center))
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.4f to Color.Transparent, 1f to Color(0xCC000000))))
+            Box(Modifier.align(Alignment.Center).size(46.dp).clip(CircleShape).background(Color(0xB3000000)), contentAlignment = Alignment.Center) {
+                Icon(Icons.Filled.PlayArrow, null, tint = Color.White, modifier = Modifier.size(28.dp))
+            }
             if (progress != null) ProgressLine(progress, Modifier.align(Alignment.BottomCenter))
         }
-        Text(e.name, fontSize = 12.sp, color = Palette.TextDim, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
+        val sub = if (e.season != null && e.episode != null) "T${e.season} · E${e.episode}" else null
+        Text(e.seriesName ?: e.name, fontSize = 13.sp, color = Palette.Text, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
+        if (sub != null) Text(sub, fontSize = 12.sp, color = Palette.TextFaint, maxLines = 1)
     }
 }
 
@@ -183,10 +282,11 @@ private fun WideCard(e: Entry, progress: Float?, onClick: () -> Unit) {
 @Composable
 private fun ChannelTile(e: Entry, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Column(modifier) {
-        Box(Modifier.fillMaxWidth().aspectRatio(16f / 10f).clip(RoundedCornerShape(6.dp)).background(Palette.Surface).clickable(onClick = onClick)) {
-            Logo(e.logo, Modifier.fillMaxSize().padding(8.dp), fallback = e.name)
+        Box(Modifier.fillMaxWidth().aspectRatio(16f / 10f).clip(CardShape).background(Palette.Surface).clickable(onClick = onClick)) {
+            Logo(e.logo, Modifier.fillMaxSize().padding(10.dp), fallback = e.name)
+            LiveDot(Modifier.align(Alignment.TopEnd).padding(8.dp))
         }
-        Text(e.name, fontSize = 12.sp, color = Palette.TextDim, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
+        Text(e.name, fontSize = 12.sp, color = Palette.TextDim, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
     }
 }
 
@@ -199,14 +299,15 @@ fun MoviesScreen(nav: Nav) {
     val lib by Repository.library.collectAsState()
     val watched by Repository.watched.collectAsState()
     var group by rememberSaveable { mutableStateOf(ALL) }
-    val options = remember(lib.version) { listOf(ALL) + lib.movieGroups.map { it.name } }
-    val items = load(group, lib.version) { Repository.moviesPage(group.takeIf { it != ALL }, null) }
+    val options = remember(lib.version) { listOf(ALL) + lib.movieGroups.map { it.name.removePrefix("Filmes · ") } }
+    val real = remember(lib.version, group) { lib.movieGroups.firstOrNull { it.name.removePrefix("Filmes · ") == group }?.name }
+    val items = load(group, lib.version) { Repository.moviesPage(real, null) }
     Column(Modifier.fillMaxSize()) {
-        TopTitle("Filmes", nav)
+        TopBar("Filmes", { nav.openSearch() })
         StatusBanner()
         if (lib.movieGroups.isEmpty()) { EmptyCatalog(); return@Column }
         Chips(options, group) { group = it }
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(10.dp))
         when {
             items == null -> Loading()
             items.isEmpty() -> Message("Nenhum filme nesta categoria.")
@@ -219,14 +320,15 @@ fun MoviesScreen(nav: Nav) {
 fun ShowsScreen(nav: Nav) {
     val lib by Repository.library.collectAsState()
     var group by rememberSaveable { mutableStateOf(ALL) }
-    val options = remember(lib.version) { listOf(ALL) + lib.showGroups.map { it.name } }
-    val items = load(group, lib.version) { Repository.showsPage(group.takeIf { it != ALL }, null) }
+    val options = remember(lib.version) { listOf(ALL) + lib.showGroups.map { it.name.removePrefix("Séries · ") } }
+    val real = remember(lib.version, group) { lib.showGroups.firstOrNull { it.name.removePrefix("Séries · ") == group }?.name }
+    val items = load(group, lib.version) { Repository.showsPage(real, null) }
     Column(Modifier.fillMaxSize()) {
-        TopTitle("Séries", nav)
+        TopBar("Séries", { nav.openSearch() })
         StatusBanner()
         if (lib.showGroups.isEmpty()) { EmptyCatalog(); return@Column }
         Chips(options, group) { group = it }
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(10.dp))
         when {
             items == null -> Loading()
             items.isEmpty() -> Message("Nenhuma série nesta categoria.")
@@ -238,9 +340,9 @@ fun ShowsScreen(nav: Nav) {
 @Composable
 private fun PosterGrid(items: List<Any>, nav: Nav, watched: Set<String>) {
     LazyVerticalGrid(
-        GridCells.Adaptive(108.dp), Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(14.dp),
+        GridCells.Adaptive(110.dp), Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 28.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         itemsIndexed(items, key = { i, it -> (if (it is Entry) it.url else (it as Show).key) + "#" + i }) { _, it -> AnyPoster(it, nav, watched) }
     }
@@ -252,7 +354,7 @@ private const val RECENT = "Recentes"
 private const val FAVS = "Minha lista"
 
 @Composable
-fun LiveScreen() {
+fun LiveScreen(nav: Nav) {
     val context = LocalContext.current
     val lib by Repository.library.collectAsState()
     val favs by Repository.favorites.collectAsState()
@@ -278,15 +380,15 @@ fun LiveScreen() {
     LaunchedEffect(Unit) { while (true) { delay(60_000); now = System.currentTimeMillis() } }
 
     Column(Modifier.fillMaxSize()) {
-        TopTitle("Ao vivo", null)
+        TopBar("Ao vivo", { nav.openSearch() })
         StatusBanner()
         if (lib.liveGroups.isEmpty()) { EmptyCatalog(); return@Column }
         Chips(options, current) { group = it }
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(8.dp))
         when {
             channels == null -> Loading()
             channels.isEmpty() -> Message("Nenhum canal aqui.")
-            else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+            else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 itemsIndexed(channels, key = { i, e -> e.url + "#" + i }) { i, e ->
                     ChannelRow(e, i + 1, epg.current(e, now), e.url in favs, onLongClick = { toggleFav(context, e) }) {
                         if (current == RECENT || current == FAVS) PlaybackQueue.start(context, channels, i)
@@ -298,31 +400,35 @@ fun LiveScreen() {
     }
 }
 
+/** Canal em cartão: número, logo, nome, o que está passando e quanto falta. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ChannelRow(e: Entry, number: Int, now: dev.guisousa.badwolf.mobile.data.Programme?, fav: Boolean, onLongClick: () -> Unit, onClick: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = onLongClick).padding(horizontal = 16.dp, vertical = 8.dp),
+        Modifier.fillMaxWidth().clip(CardShape).background(Palette.Surface).combinedClickable(onClick = onClick, onLongClick = onLongClick).padding(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(number.toString(), fontSize = 12.sp, color = Palette.TextFaint, modifier = Modifier.width(30.dp))
-        Box(Modifier.size(72.dp, 44.dp).clip(RoundedCornerShape(4.dp)).background(Palette.Surface)) {
+        Box(Modifier.size(84.dp, 52.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFF1C1C21))) {
             Logo(e.logo, Modifier.fillMaxSize().padding(4.dp), fallback = e.name)
         }
         Column(Modifier.weight(1f).padding(start = 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(e.name, fontSize = 15.sp, color = Palette.Text, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                Text("$number", fontSize = 12.sp, color = Palette.TextFaint, modifier = Modifier.padding(end = 6.dp))
+                Text(e.name, fontSize = 15.sp, color = Palette.Text, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                 if (fav) Text("  ★", fontSize = 12.sp, color = Palette.Brand)
             }
             if (now != null) {
-                Text(now.title, fontSize = 13.sp, color = Palette.TextDim, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(now.title, fontSize = 13.sp, color = Palette.TextDim, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
                 val span = (now.stop - now.start).coerceAtLeast(1)
-                Box(Modifier.padding(top = 4.dp).width(120.dp)) { ProgressLine((System.currentTimeMillis() - now.start).toFloat() / span) }
+                Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.width(110.dp).clip(RoundedCornerShape(2.dp))) { ProgressLine((System.currentTimeMillis() - now.start).toFloat() / span) }
+                    Text("  até ${timeFmt.format(Date(now.stop))}", fontSize = 11.sp, color = Palette.TextFaint)
+                }
             } else if (!e.quality.isNullOrBlank()) {
-                Text(e.quality, fontSize = 12.sp, color = Palette.TextFaint, maxLines = 1)
+                Text(e.quality, fontSize = 12.sp, color = Palette.TextFaint, maxLines = 1, modifier = Modifier.padding(top = 2.dp))
             }
         }
-        if (now != null) Text("até ${timeFmt.format(Date(now.stop))}", fontSize = 11.sp, color = Palette.TextFaint, modifier = Modifier.padding(start = 8.dp))
+        Icon(Icons.Filled.PlayArrow, null, tint = Palette.TextFaint, modifier = Modifier.padding(start = 6.dp).size(22.dp))
     }
 }
 
@@ -344,31 +450,36 @@ fun SearchScreen(nav: Nav) {
     val save = { if (query.isNotBlank()) { Repository.addRecentSearch(query); recentVersion++ } }
 
     Column(Modifier.fillMaxSize()) {
-        Spacer(Modifier.statusBarsPadding())
-        OutlinedTextField(
-            value = query, onValueChange = { query = it },
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp).focusRequester(focus),
-            placeholder = { Text("Filmes, séries e canais") },
-            leadingIcon = { Icon(Icons.Filled.Search, null) },
-            trailingIcon = { if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Filled.Clear, "Limpar") } },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(onSearch = { save(); keyboard?.hide() }),
-            shape = RoundedCornerShape(8.dp),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedContainerColor = Palette.Surface, unfocusedContainerColor = Palette.Surface,
-                focusedBorderColor = Palette.Brand, unfocusedBorderColor = Color.Transparent, cursorColor = Palette.Brand,
-            ),
-        )
+        Row(Modifier.fillMaxWidth().statusBarsPadding().padding(start = 4.dp, end = 16.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { keyboard?.hide(); nav.back() }) { Icon(Icons.Filled.ArrowBack, "Voltar", tint = Palette.Text) }
+            OutlinedTextField(
+                value = query, onValueChange = { query = it },
+                modifier = Modifier.weight(1f).focusRequester(focus),
+                placeholder = { Text("Filmes, séries e canais") },
+                leadingIcon = { Icon(Icons.Filled.Search, null) },
+                trailingIcon = { if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Filled.Clear, "Limpar") } },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { save(); keyboard?.hide() }),
+                shape = RoundedCornerShape(50),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = Palette.Surface, unfocusedContainerColor = Palette.Surface,
+                    focusedBorderColor = Palette.Brand, unfocusedBorderColor = Color.Transparent, cursorColor = Palette.Brand,
+                ),
+            )
+        }
         if (query.trim().length < 2) {
-            if (recentSearches.isEmpty()) { Message("Digite pelo menos 2 letras."); return@Column }
-            Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Buscas recentes", fontSize = 15.sp, color = Palette.TextDim, modifier = Modifier.weight(1f))
-                TextButton(onClick = { LocalStore.clearRecentSearches(); recentVersion++ }) { Text("Limpar", color = Palette.TextDim) }
+            if (recentSearches.isEmpty()) { Message("O que você quer assistir?", detail = "Digite pelo menos 2 letras do filme, série ou canal."); return@Column }
+            Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Buscas recentes", fontSize = 16.sp, color = Palette.Text, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                TextButton(onClick = { LocalStore.clearRecentSearches(); recentVersion++ }) { Text("Limpar", color = Palette.Brand) }
             }
             LazyColumn {
                 items(recentSearches) { s ->
-                    Text(s, fontSize = 16.sp, color = Palette.Text, modifier = Modifier.fillMaxWidth().clickable { query = s }.padding(horizontal = 16.dp, vertical = 12.dp))
+                    Row(Modifier.fillMaxWidth().clickable { query = s }.padding(horizontal = 20.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Search, null, tint = Palette.TextFaint, modifier = Modifier.size(18.dp))
+                        Text(s, fontSize = 16.sp, color = Palette.Text, modifier = Modifier.padding(start = 12.dp))
+                    }
                 }
             }
             return@Column
@@ -377,20 +488,20 @@ fun SearchScreen(nav: Nav) {
         val (entries, shows) = result
         val live = entries.filter { it.type == ContentType.LIVE }
         val posters: List<Any> = entries.filter { it.type != ContentType.LIVE } + shows
-        if (live.isEmpty() && posters.isEmpty()) { Message("Nada encontrado para \"$query\"."); return@Column }
+        if (live.isEmpty() && posters.isEmpty()) { Message("Nada encontrado", detail = "Nenhum resultado para \"$query\"."); return@Column }
         LazyVerticalGrid(
-            GridCells.Adaptive(108.dp), Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(12.dp),
+            GridCells.Adaptive(110.dp), Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 28.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             if (live.isNotEmpty()) {
-                item("lh", span = { GridItemSpan(maxLineSpan) }) { Text("Canais", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Palette.Text) }
+                item("lh", span = { GridItemSpan(maxLineSpan) }) { Text("Canais", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Palette.Text, modifier = Modifier.padding(top = 8.dp)) }
                 itemsIndexed(live.take(30), key = { i, e -> "l" + e.url + i }) { i, e ->
                     ChannelTile(e) { save(); PlaybackQueue.start(context, live, i) }
                 }
             }
             if (posters.isNotEmpty()) {
-                item("ph", span = { GridItemSpan(maxLineSpan) }) { Text("Filmes e séries", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Palette.Text, modifier = Modifier.padding(top = 8.dp)) }
+                item("ph", span = { GridItemSpan(maxLineSpan) }) { Text("Filmes e séries", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Palette.Text, modifier = Modifier.padding(top = 12.dp)) }
                 itemsIndexed(posters.take(300), key = { i, it -> "p" + (if (it is Entry) it.url else (it as Show).key) + i }) { _, it ->
                     AnyPoster(it, nav, watched)
                 }
@@ -403,40 +514,78 @@ fun SearchScreen(nav: Nav) {
 // ======================= Ajustes =======================
 
 @Composable
-fun SettingsScreen(nav: Nav) {
+fun SettingsScreen(update: UpdateState) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val lib by Repository.library.collectAsState()
     var pref by remember { mutableStateOf(Repository.preferredVersion) }
+    var auto by remember { mutableStateOf(Repository.autoUpdate) }
+    var formato by remember { mutableStateOf(Repository.resizeMode) }
+    var conferindo by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
-    Column(Modifier.fillMaxSize()) {
-        BackTitle("Ajustes", nav)
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 32.dp)) {
-            item {
-                SettingHeader("Versão preferida")
-                listOf(Repository.DUB, Repository.LEG).forEach { v ->
-                    SettingRow(Repository.versionName(v), if (pref == v) "✓" else null) { pref = v; Repository.preferredVersion = v }
+    val formatos = listOf(0 to "Original", 4 to "Preencher", 3 to "Esticar")
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 32.dp)) {
+        item { TopBar("Ajustes", null) }
+        item {
+            SettingsCard("Reprodução") {
+                SettingsRow("Versão preferida", "Para títulos que você ainda não escolheu. Em cada filme ou série dá para trocar no botão Versão.",
+                    value = Repository.versionName(pref)) {
+                    pref = if (pref == Repository.DUB) Repository.LEG else Repository.DUB
+                    Repository.preferredVersion = pref
                 }
-                Text(
-                    "Vale para títulos que você ainda não escolheu. Em cada filme ou série dá para trocar no botão Versão.",
-                    fontSize = 12.sp, color = Palette.TextFaint, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                )
-                SettingHeader("Catálogo")
-                SettingRow("Atualizar agora", "${lib.liveTotal} canais · ${lib.movieTotal} filmes · ${lib.showTotal} séries") {
+                SettingsDivider()
+                SettingsRow("Formato da imagem", "Como o vídeo ocupa a tela no player", value = formatos.firstOrNull { it.first == formato }?.second ?: "Original") {
+                    val i = formatos.indexOfFirst { it.first == formato }
+                    formato = formatos[(i + 1) % formatos.size].first
+                    Repository.resizeMode = formato
+                }
+            }
+        }
+        item {
+            SettingsCard("Atualização do app") {
+                SettingsRow("Atualização automática", "Ao abrir, confere se saiu versão nova e oferece para instalar", toggle = auto) {
+                    auto = !auto; Repository.autoUpdate = auto
+                }
+                SettingsDivider()
+                SettingsRow("Procurar atualização agora", "Você está na versão ${Updater.currentName}", icon = Icons.Filled.Refresh, value = if (conferindo) "Conferindo…" else null) {
+                    if (conferindo) return@SettingsRow
+                    conferindo = true
+                    scope.launch {
+                        val r = Updater.check()
+                        conferindo = false
+                        if (r != null) update.release = r
+                        else Toast.makeText(context, "Você já está na versão mais nova (${Updater.currentName}).", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+        item {
+            SettingsCard("Catálogo") {
+                SettingsRow("Atualizar o catálogo", "${lib.liveTotal} canais · ${lib.movieTotal} filmes · ${lib.showTotal} séries", icon = Icons.Filled.Refresh) {
                     Repository.refreshAllAsync()
                     Toast.makeText(context, "Conferindo o catálogo…", Toast.LENGTH_SHORT).show()
                 }
-                SettingHeader("Histórico")
-                SettingRow("Limpar buscas recentes", null) {
+            }
+        }
+        item {
+            SettingsCard("Histórico") {
+                SettingsRow("Limpar buscas recentes", icon = Icons.Filled.Clear) {
                     LocalStore.clearRecentSearches()
                     Toast.makeText(context, "Buscas apagadas", Toast.LENGTH_SHORT).show()
                 }
-                SettingRow("Apagar o que já vi", "Continuar assistindo, recentes e marcas de visto (a Minha lista fica)") { confirmClear = true }
-                SettingHeader("Sobre")
-                SettingRow("Bad Wolf TV para celular", "Versão ${dev.guisousa.badwolf.mobile.BuildConfig.VERSION_NAME}") {}
+                SettingsDivider()
+                SettingsRow("Apagar o que já vi", "Continuar assistindo, recentes e marcas de visto (a Minha lista fica)", icon = Icons.Filled.Delete, danger = true) { confirmClear = true }
+            }
+        }
+        item {
+            Column(Modifier.fillMaxWidth().padding(top = 28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Image(painterResource(R.drawable.logo_lobo), null, Modifier.size(44.dp))
+                Text("Bad Wolf TV para celular", fontSize = 14.sp, color = Palette.TextDim, modifier = Modifier.padding(top = 8.dp))
+                Text("Versão ${Updater.currentName}", fontSize = 12.sp, color = Palette.TextFaint)
             }
         }
     }
-    if (confirmClear) androidx.compose.material3.AlertDialog(
+    if (confirmClear) AlertDialog(
         onDismissRequest = { confirmClear = false },
         title = { Text("Apagar o histórico?") },
         text = { Text("Some o Continuar assistindo, os canais recentes e as marcas de visto. A Minha lista fica.") },
@@ -446,27 +595,11 @@ fun SettingsScreen(nav: Nav) {
     )
 }
 
-@Composable
-private fun SettingHeader(text: String) {
-    Text(text.uppercase(), fontSize = 12.sp, color = Palette.Brand, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 16.dp, top = 22.dp, bottom = 6.dp))
-}
-
-@Composable
-private fun SettingRow(title: String, detail: String?, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text(title, fontSize = 16.sp, color = Palette.Text)
-            if (detail != null && detail != "✓") Text(detail, fontSize = 13.sp, color = Palette.TextDim)
-        }
-        if (detail == "✓") Text("✓", fontSize = 18.sp, color = Palette.Brand)
-    }
-}
-
 /** Título com seta de voltar (telas por cima das abas). */
 @Composable
 fun BackTitle(title: String, nav: Nav) {
     Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = { nav.back() }) { Text("←", fontSize = 22.sp, color = Palette.Text) }
+        IconButton(onClick = { nav.back() }) { Icon(Icons.Filled.ArrowBack, "Voltar", tint = Palette.Text) }
         Text(title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Palette.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }

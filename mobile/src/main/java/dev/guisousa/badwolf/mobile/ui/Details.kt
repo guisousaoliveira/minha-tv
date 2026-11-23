@@ -25,6 +25,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Button
@@ -69,7 +70,7 @@ fun seriesQueue(all: List<Entry>): List<Entry> {
 @Composable
 private fun MainButton(text: String, icon: ImageVector? = Icons.Filled.PlayArrow, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Button(
-        onClick = onClick, modifier = modifier.height(48.dp), shape = RoundedCornerShape(6.dp),
+        onClick = onClick, modifier = modifier.height(50.dp), shape = RoundedCornerShape(50),
         colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
     ) {
         if (icon != null) { Icon(icon, null); Spacer(Modifier.width(6.dp)) }
@@ -80,9 +81,9 @@ private fun MainButton(text: String, icon: ImageVector? = Icons.Filled.PlayArrow
 @Composable
 private fun SmallButton(text: String, icon: ImageVector? = null, onClick: () -> Unit) {
     OutlinedButton(
-        onClick = onClick, shape = RoundedCornerShape(6.dp),
+        onClick = onClick, shape = RoundedCornerShape(50),
         colors = ButtonDefaults.outlinedButtonColors(containerColor = Palette.SurfaceHigh, contentColor = Palette.Text),
-        border = null, contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+        border = null, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 9.dp),
     ) {
         if (icon != null) { Icon(icon, null, Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)) }
         Text(text, fontSize = 14.sp, maxLines = 1)
@@ -104,37 +105,38 @@ private fun VersionButton(e: Entry, available: Set<String>, onChange: () -> Unit
 
 private fun versionInfo(available: Set<String>?): String? = available?.singleOrNull()?.let { Repository.versionName(it) }
 
-/** Topo dos detalhes: fundo, capa, título, informações e sinopse. */
+/** Topo dos detalhes: imagem grande com capa e título por cima, botão principal largo e os outros em pílulas. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun DetailTop(
     nav: Nav, kicker: String, title: String, poster: String?, backdrop: String?, meta: List<String>, overview: String?,
     buttons: @Composable () -> Unit,
 ) {
-    Box {
-        Backdrop(backdrop ?: poster)
-        IconButton(onClick = { nav.back() }, modifier = Modifier.statusBarsPadding().padding(4.dp).clip(RoundedCornerShape(50)).background(Color(0x66000000))) {
-            Text("←", fontSize = 22.sp, color = Color.White)
+    Box(Modifier.fillMaxWidth().height(420.dp)) {
+        Backdrop(backdrop ?: poster, Modifier.fillMaxSize())
+        IconButton(onClick = { nav.back() }, modifier = Modifier.statusBarsPadding().padding(8.dp).clip(RoundedCornerShape(50)).background(Color(0x80000000))) {
+            Icon(Icons.Filled.ArrowBack, "Voltar", tint = Color.White)
+        }
+        Row(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.Bottom) {
+            Logo(poster, Modifier.width(108.dp).aspectRatio(2f / 3f).clip(CardShape), fallback = title, crop = true)
+            Column(Modifier.weight(1f).padding(start = 14.dp)) {
+                Text(kicker.uppercase(), fontSize = 12.sp, color = Palette.Brand, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                Text(title, fontSize = 24.sp, lineHeight = 28.sp, fontWeight = FontWeight.ExtraBold, color = Palette.Text, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(6.dp))
+                Meta(meta)
+            }
         }
     }
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp).offset(y = (-56).dp), verticalAlignment = Alignment.Bottom) {
-        Logo(poster, Modifier.width(104.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(6.dp)), fallback = title, crop = true)
-        Column(Modifier.weight(1f).padding(start = 14.dp)) {
-            Text(kicker.uppercase(), fontSize = 11.sp, color = Palette.Brand, fontWeight = FontWeight.SemiBold)
-            Text(title, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Palette.Text, maxLines = 3, overflow = TextOverflow.Ellipsis)
-            Spacer(Modifier.height(4.dp))
-            Meta(meta)
-        }
-    }
-    Column(Modifier.padding(horizontal = 16.dp).offset(y = (-40).dp)) {
+    Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 18.dp)) {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { buttons() }
         if (!overview.isNullOrBlank()) {
             var expanded by remember { mutableStateOf(false) }
             Text(
-                overview, fontSize = 14.sp, color = Palette.TextDim, lineHeight = 20.sp,
+                overview, fontSize = 14.sp, color = Palette.TextDim, lineHeight = 21.sp,
                 maxLines = if (expanded) Int.MAX_VALUE else 4, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 14.dp).combinedClickableCompat { expanded = !expanded },
+                modifier = Modifier.padding(top = 16.dp).combinedClickableCompat { expanded = !expanded },
             )
+            if (!expanded && overview.length > 180) Text("Toque para ler mais", fontSize = 12.sp, color = Palette.Brand, modifier = Modifier.padding(top = 4.dp).combinedClickableCompat { expanded = true })
         }
     }
 }
@@ -177,9 +179,9 @@ fun MovieDetailScreen(e: Entry, nav: Nav) {
             }
         }
         if (!similar.isNullOrEmpty()) item("similar") {
-            SectionTitle("Mais como este", Modifier.offset(y = (-32).dp))
-            Box(Modifier.offset(y = (-32).dp)) {
-                MediaRow(similar, 108.dp) { _, m ->
+            SectionTitle("Mais como este")
+            Box {
+                MediaRow(similar, 112.dp) { _, m ->
                     PosterCard(m.name, m.logo, progress = Repository.progress(m.url), seen = m.url.hashCode().toString() in watched, onLongClick = { toggleFav(context, m) }) { nav.openMovie(m) }
                 }
             }
@@ -262,14 +264,14 @@ fun SeriesDetailScreen(show: Show, nav: Nav) {
             }
         }
         if (seasons.size > 1) item("seasons") {
-            Box(Modifier.offset(y = (-28).dp)) {
+            Box(Modifier.padding(top = 18.dp, bottom = 6.dp)) {
                 Chips(seasons.map { (s, _) -> if (s == 0) "Extras" else "Temporada $s" }, if (season == 0) "Extras" else "Temporada $season") { label ->
                     season = if (label == "Extras") 0 else label.removePrefix("Temporada ").toIntOrNull() ?: season
                 }
             }
         }
         itemsIndexed(episodes, key = { _, e -> e.url }) { i, e ->
-            Box(Modifier.offset(y = (-20).dp)) {
+            Box {
                 EpisodeRow(e, i, show.logo, e.url.hashCode().toString() in watched, Repository.progress(e.url), onClick = { play(e) })
             }
         }
@@ -281,10 +283,11 @@ fun SeriesDetailScreen(show: Show, nav: Nav) {
 private fun EpisodeRow(e: Entry, i: Int, fallbackImage: String?, seen: Boolean, progress: Float?, onClick: () -> Unit) {
     val context = LocalContext.current
     Row(
-        Modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = { toggleFav(context, e) }).padding(horizontal = 16.dp, vertical = 8.dp),
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp).clip(CardShape).background(Palette.Surface)
+            .combinedClickable(onClick = onClick, onLongClick = { toggleFav(context, e) }).padding(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.width(132.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(5.dp))) {
+        Box(Modifier.width(128.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp))) {
             Logo(e.logo ?: fallbackImage, Modifier.fillMaxSize().alpha(0.55f), fallback = e.name, crop = true)
             Text((e.episode ?: (i + 1)).toString(), fontSize = 26.sp, fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.align(Alignment.Center))
             if (progress != null) ProgressLine(progress, Modifier.align(Alignment.BottomCenter))
