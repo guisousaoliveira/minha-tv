@@ -133,10 +133,12 @@ fun main() {
                 window.minimumSize = java.awt.Dimension(960, 600)
                 window.background = java.awt.Color.BLACK
             }
-            // tela cheia sem borda (não sai sozinha ao clicar em outro monitor); se não der, usa a do Java
+            // tela cheia sem borda (não sai sozinha ao clicar em outro monitor). Se não der, maximiza: a tela
+            // cheia do Java é "exclusiva" e minimiza o app quando você clica em outro monitor.
             LaunchedEffect(nav.fullscreen) {
-                if (!TelaCheia.definir(window, nav.fullscreen)) {
-                    state.placement = if (nav.fullscreen) WindowPlacement.Fullscreen else WindowPlacement.Floating
+                if (!TelaCheia.definir(window, nav.fullscreen, window.title)) {
+                    Log.w("tela cheia sem borda indisponível: maximizando a janela")
+                    state.placement = if (nav.fullscreen) WindowPlacement.Maximized else WindowPlacement.Floating
                 }
             }
             App(nav)
