@@ -13,6 +13,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.builtins.MapSerializer
+import kotlinx.serialization.builtins.serializer
 import java.io.File
 
 /**
@@ -113,6 +115,7 @@ object Repository {
             cats.filmes.map { GroupInfo(nomeCurto(it.nome), filmesPorCat[it.id]?.size ?: 0) }.filter { it.count > 0 },
             cats.series.map { GroupInfo(nomeCurto(it.nome), seriesPorCat[it.id]?.size ?: 0) }.filter { it.count > 0 },
         )
+        carregarTmdb()
         Log.i("catálogo ${catalogo.manifesto.versao}: ${canais.size} canais, ${todosFilmes.size} filmes, ${todasSeries.size} séries")
         return true
     }
@@ -121,6 +124,7 @@ object Repository {
     fun init() {
         if (::catalogo.isInitialized) return
         catalogo = Catalogo(File(AppDirs.cache, "catalogo"), Catalogo.defaultHttp())
+        ligarConta()
         scope.launch {
             val temLocal = try { runCatching { carregar() }.getOrDefault(false) } finally { _isLoading.value = false }
             if (!temLocal) _status.value = "Baixando o catálogo…"
@@ -142,12 +146,102 @@ object Repository {
             lastSync = now
             if (mudou || dados == null) carregar()
             _status.value = null
+            Nuvem.sincronizar()
         } catch (e: Exception) {
             Log.w("catálogo: não atualizou", e)
             _status.value = if (dados == null) "Não consegui baixar o catálogo. Confira a internet; tento de novo sozinho." else null
             if (dados == null) scope.launch { delay(20_000); sync(force = true) }
         }
     }
+
+    // ---------- Conta W4LLE (onde parou, Minha lista e já assisti em todos os aparelhos) ----------
+
+    @Volatile private var tmdbFilme: Map<Long, Long> = emptyMap() // TMDB -> nosso id
+    @Volatile private var tmdbSerie: Map<Long, Long> = emptyMap()
+    @Volatile private var filmeTmdb: Map<Long, Long> = emptyMap() // nosso id -> TMDB
+    @Volatile private var serieTmdb: Map<Long, Long> = emptyMap()
+
+    private fun carregarTmdb() {
+        catalogo.tmdbIds()?.let { t ->
+            tmdbFilme = t.f.entries.mapNotNull { (k, v) -> k.toLongOrNull()?.let { it to v } }.toMap()
+            tmdbSerie = t.s.entries.mapNotNull { (k, v) -> k.toLongOrNull()?.let { it to v } }.toMap()
+            filmeTmdb = tmdbFilme.entries.associate { (k, v) -> v to k }
+            serieTmdb = tmdbSerie.entries.associate { (k, v) -> v to k }
+        }
+    }
+
+    /** O que a sincronização já sabe da nuvem (%APPDATA%\BadWolfTV\nuvem.json). */
+    private val nuvemStore = JsonFile(File(AppDirs.data, "nuvem.json"), MapSerializer(String.serializer(), String.serializer())) { emptyMap() }
+    private var nuvemDados: Map<String, String> = nuvemStore.load()
+
+    /** O que a [Nuvem] lê e grava neste computador (pela [UserLibrary], sem mandar de volta para a nuvem). */
+    private val localNuvem = object : Nuvem.Local {
+        override fun pronto() = dados != null && filmeTmdb.isNotEmpty()
+        override fun tmdbDoFilme(id: Long) = filmeTmdb[id]
+        override fun tmdbDaSerie(id: Long) = serieTmdb[id]
+        override fun filmeDoTmdb(tmdb: Long) = tmdbFilme[tmdb]
+        override fun serieDoTmdb(tmdb: Long) = tmdbSerie[tmdb]
+        override fun tituloECapa(url: String): Pair<String, String?>? {
+            val d = dados ?: return null
+            return when {
+                url.startsWith(F) -> idOf(url, F)?.let { d.filmePorId[it]?.first }?.let { it.t to it.p }
+                url.startsWith(E) -> idOf(url, E)?.let { d.seriePorId[it]?.first }?.let { it.t to it.p }
+                else -> null
+            }
+        }
+        override fun onde(url: String) = UserLibrary.state.value.progresso[url]?.let { Triple(it.pos, it.dur, it.em) }
+        override fun aplicarOnde(url: String, posicaoMs: Long, duracaoMs: Long, emMs: Long) =
+            UserLibrary.daConta { u -> u.copy(progresso = u.progresso + (url to Progresso(posicaoMs, duracaoMs, emMs))) }
+        override fun favoritos(): Set<String> = UserLibrary.state.value.minhaLista.toSet()
+        override fun aplicarFavorito(url: String, ligado: Boolean) = UserLibrary.daConta { u ->
+            when {
+                ligado && url !in u.minhaLista -> u.copy(minhaLista = listOf(url) + u.minhaLista)
+                !ligado -> u.copy(minhaLista = u.minhaLista - url)
+                else -> u
+            }
+        }
+        override fun aplicarVisto(url: String) = UserLibrary.daConta { u ->
+            if (url in u.jaAssisti) u else u.copy(jaAssisti = u.jaAssisti + (url to System.currentTimeMillis()), progresso = u.progresso - url)
+        }
+        override fun recentesVod(): List<String> = UserLibrary.state.value.recentesVod.map { it.url }
+        override fun aplicarRecentes(urls: List<String>) {
+            val novos = urls.mapNotNull { itemOf(it) as? Entry }
+            if (novos.isEmpty()) return
+            val chaves = novos.map { it.url }.toSet()
+            UserLibrary.daConta { u -> u.copy(recentesVod = (novos + u.recentesVod.filterNot { it.url in chaves }).take(40)) }
+        }
+        override fun ler(chave: String): String? = synchronized(nuvemStore) { nuvemDados[chave] }
+        override fun gravar(chave: String, valor: String?) = synchronized(nuvemStore) {
+            nuvemDados = if (valor == null) nuvemDados - chave else nuvemDados + (chave to valor)
+            nuvemStore.save(nuvemDados)
+        }
+    }
+
+    private fun ligarConta() {
+        Nuvem.ligar(localNuvem)
+        scope.launch {
+            // entrou na conta: sincroniza na hora; saiu: esquece o que sabia da nuvem
+            var antes: String? = null
+            Conta.usuario.collect { u ->
+                if (u != null && u.id != antes) Nuvem.sincronizar(forcar = true)
+                if (u == null && antes != null) Nuvem.esquecer()
+                antes = u?.id
+            }
+        }
+        scope.launch {
+            // o que muda aqui sobe para a conta
+            UserLibrary.mudancas.collect { m ->
+                when (m) {
+                    is UserLibrary.Mudanca.Lista -> Nuvem.favorito(m.key, m.naLista)
+                    is UserLibrary.Mudanca.Assistido -> Nuvem.visto(m.key, m.visto)
+                    is UserLibrary.Mudanca.Posicao -> m.p?.let { Nuvem.onde(m.key, it.pos, it.dur) }
+                }
+            }
+        }
+    }
+
+    /** Voltou para o app (janela em foco): busca o que mudou nos outros aparelhos (no máximo 1x por minuto). */
+    fun sincronizarConta() = Nuvem.sincronizar()
 
     /** Botão "Atualizar agora". */
     fun refreshAllAsync() { scope.launch { _status.value = "Atualizando o catálogo…"; sync(force = true) } }

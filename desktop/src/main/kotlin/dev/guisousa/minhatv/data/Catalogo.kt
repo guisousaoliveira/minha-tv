@@ -71,6 +71,10 @@ class LinhaItem(val tipo: String, val id: Long)
 @Serializable
 class Linha(val t: String, val tipo: String, val itens: List<LinhaItem>? = null, val ids: List<Long>? = null)
 
+/** Código do TMDB -> nosso id (filmes "f", séries "s"), para sincronizar com a conta W4LLE. */
+@Serializable
+class TmdbIds(val f: Map<String, Long> = emptyMap(), val s: Map<String, Long> = emptyMap())
+
 @Serializable
 class Manifesto(val formato: Int = 0, val versao: String = "", val fichas: Int = 256, val partes: Map<String, String> = emptyMap())
 
@@ -207,6 +211,7 @@ class Catalogo(private val dir: File, private val http: OkHttpClient, private va
     fun filmes(cat: String) = read("filmes/$cat", ListSerializer(CardFilme.serializer()))
     fun series(cat: String) = read("series/$cat", ListSerializer(CardSerie.serializer()))
     fun inicio() = read("inicio", ListSerializer(Linha.serializer()))
+    fun tmdbIds() = read("tmdb", TmdbIds.serializer())
 
     /** Guia: id do canal -> programas (horários em ms). */
     fun guia(): Map<String, List<Programme>> {

@@ -65,6 +65,7 @@ import dev.guisousa.minhatv.data.UserLibrary
 import dev.guisousa.minhatv.desktop.player.PlayerController
 import dev.guisousa.minhatv.desktop.player.PlayerScreen
 import dev.guisousa.minhatv.desktop.ui.CategoryScreen
+import dev.guisousa.minhatv.desktop.ui.campoDeTextoFocado
 import dev.guisousa.minhatv.desktop.ui.HomeScreen
 import dev.guisousa.minhatv.desktop.ui.Ic
 import dev.guisousa.minhatv.desktop.ui.IconBtn
@@ -132,6 +133,10 @@ fun main() {
             LaunchedEffect(Unit) {
                 window.minimumSize = java.awt.Dimension(960, 600)
                 window.background = java.awt.Color.BLACK
+                // voltou para o app: traz o que mudou na conta nos outros aparelhos (no máximo 1x por minuto)
+                window.addWindowFocusListener(object : java.awt.event.WindowAdapter() {
+                    override fun windowGainedFocus(e: java.awt.event.WindowEvent?) = Repository.sincronizarConta()
+                })
             }
             // tela cheia sem borda (não sai sozinha ao clicar em outro monitor). Se não der, maximiza: a tela
             // cheia do Java é "exclusiva" e minimiza o app quando você clica em outro monitor.
@@ -150,7 +155,7 @@ fun main() {
 private fun handleKey(nav: Nav, key: Key, alt: Boolean): Boolean {
     val p = nav.player
     val inPlayer = nav.top == Route.Player
-    val typing = nav.top == null && nav.tab == Tab.SEARCH
+    val typing = (nav.top == null && nav.tab == Tab.SEARCH) || campoDeTextoFocado
     if (key == Key.F11 || (key == Key.Enter && alt)) { nav.fullscreen = !nav.fullscreen; return true }
     if (key == Key.Escape) {
         // Esc sai da tela cheia primeiro (como no navegador); de novo, volta uma tela

@@ -63,6 +63,9 @@ object UserLibrary {
     /** Troca tudo de uma vez (ex.: dados que vieram da conta). */
     fun aplicar(dados: UserData) = edit { dados }
 
+    /** Muda o que veio da conta W4LLE, sem avisar em [mudancas] (senão mandaria de volta). */
+    fun daConta(f: (UserData) -> UserData) = edit(null, f)
+
     /** Grava na hora (ao fechar o app). */
     fun flush() = store.writeNow(_state.value)
 
