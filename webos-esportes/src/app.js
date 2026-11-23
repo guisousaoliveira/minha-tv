@@ -544,9 +544,23 @@ const Placar = {
 
   dataEspn(d) { return d.getFullYear() + pad2(d.getMonth() + 1) + pad2(d.getDate()); },
 
-  async buscarLiga(liga, comHoje) {
-    const urls = [this.API + liga.id + "/scoreboard"];
+  /** Dias já buscados (yyyymmdd -> quando), para não pedir de novo a cada abertura da aba. */
+  diasBuscados: {},
+
+  /** Busca os jogos de alguns dias (0 = hoje, 1 = amanhã, -1 = ontem) em todos os campeonatos. */
+  async buscarDias(deslocamentos) {
+    const agora = Date.now();
+    const datas = deslocamentos.map((n) => this.dataEspn(new Date(agora + n * 86400000)))
+      .filter((d) => !this.diasBuscados[d] || agora - this.diasBuscados[d] > 30 * 60000);
+    if (!datas.length) return;
+    datas.forEach((d) => { this.diasBuscados[d] = agora; });
+    await Promise.all(this.LIGAS.map((l) => this.buscarLiga(l, false, datas)));
+  },
+
+  async buscarLiga(liga, comHoje, datas) {
+    const urls = datas ? [] : [this.API + liga.id + "/scoreboard"];
     if (comHoje) urls.push(this.API + liga.id + "/scoreboard?dates=" + this.dataEspn(new Date()));
+    (datas || []).forEach((d) => urls.push(this.API + liga.id + "/scoreboard?dates=" + d));
     const respostas = await Promise.all(urls.map((u) => comTempo(fetch(u), 12000).then((r) => (r.ok ? r.json() : null)).catch(() => null)));
     respostas.forEach((d) => {
       if (!d) return;
@@ -589,13 +603,17 @@ const Placar = {
     return this.carregando;
   },
 
-  /** Jogos para mostrar: ao vivo, de hoje/amanhã e os encerrados há pouco (com placar final). */
-  lista() {
+  /**
+   * Jogos de uma aba: "hoje" = ao vivo + os que ainda vão começar hoje; "proximos" = de amanhã até 7 dias;
+   * "encerrados" = terminados nas últimas 48 h (o mais recente primeiro).
+   */
+  lista(aba) {
     const agora = Date.now();
+    const fimDeHoje = new Date(); fimDeHoje.setHours(23, 59, 59, 999);
     return Object.keys(this.jogos).map((id) => this.jogos[id]).filter((j) => {
-      if (j.estado === "in") return true;
-      if (j.estado === "pre") return j.ini - agora < 30 * 3600 * 1000 && j.ini > agora - 3 * 3600 * 1000;
-      return agora - j.ini < 4 * 3600 * 1000; // encerrado: até ~2 h depois do fim
+      if (aba === "encerrados") return j.estado === "post" && agora - j.ini < 48 * 3600 * 1000;
+      if (aba === "proximos") return j.estado === "pre" && j.ini > fimDeHoje.getTime() && j.ini - agora < 7 * 86400000;
+      return j.estado === "in" || (j.estado === "pre" && j.ini <= fimDeHoje.getTime() && j.ini > agora - 3 * 3600 * 1000);
     }).sort((a, b) => {
       const ordem = { in: 0, pre: 1, post: 2 };
       return (ordem[a.estado] - ordem[b.estado]) || (a.estado === "post" ? b.ini - a.ini : a.ini - b.ini) ||
@@ -636,7 +654,10 @@ const Placar = {
 // ======================= Eventos =======================
 
 function TelaEventos() {
-  let lista, listaInner, onde, ondeInner, cabeca, selecionado = null, aviso;
+  let lista, listaInner, onde, ondeInner, cabeca, selecionado = null, aviso, filtros;
+  const ABAS_EV = [{ id: "hoje", t: "Hoje" }, { id: "proximos", t: "Próximos" }, { id: "encerrados", t: "Encerrados" }];
+  let abaEv = "hoje";
+  const VAZIO = { hoje: "Nenhum jogo importante hoje.", proximos: "Nenhum jogo importante nos próximos dias.", encerrados: "Nenhum jogo encerrado nas últimas 48 h." };
   const placar = (j) => (j.estado === "pre" ? "x" : (j.casa.placar || "0") + "  x  " + (j.fora.placar || "0"));
   const estadoJogo = (j) => {
     if (j.estado === "in") return "AO VIVO · " + (j.detalhe || "");
@@ -674,7 +695,9 @@ function TelaEventos() {
       opcoes = ev.onde;
     }
     if (!opcoes.length) {
-      cabeca.appendChild(h("div.hint", { text: "Não achei este jogo no guia dos canais. Procure na aba Canais." }));
+      const longe = item.jogo && item.jogo.estado === "pre" && item.jogo.ini - Date.now() > 20 * 3600 * 1000;
+      cabeca.appendChild(h("div.hint", { text: longe ? "Onde assistir aparece aqui perto do jogo, quando o guia dos canais trouxer a programação do dia."
+        : item.jogo && item.jogo.estado === "post" ? "Jogo encerrado." : "Não achei este jogo no guia dos canais. Procure na aba Canais." }));
       return;
     }
     cabeca.appendChild(h("div.hint", { text: "Onde assistir · OK no canal para abrir" }));
@@ -717,56 +740,97 @@ function TelaEventos() {
 
   const desenharLista = () => {
     const chaveFoco = Foco.atual && Foco.atual.getAttribute && Foco.atual.getAttribute("data-chave");
+    // guarda ANTES de redesenhar: depois o item focado já saiu da tela
+    const estavaNaLista = !!(Foco.atual && Foco.atual.closest("[data-zona='eventos']"));
     listaInner.innerHTML = "";
-    const jogos = Placar.lista();
-    // outros eventos do guia (UFC, NBA, F1...), sem repetir os jogos de futebol que já estão em cima
-    const chavesJogos = jogos.map((j) => [Placar.chaves(j.casa.completo + " " + j.casa.nome), Placar.chaves(j.fora.completo + " " + j.fora.nome)]);
-    const outros = Esporte.eventos().filter((ev) => !ev.reprise && !chavesJogos.some(([a, b]) => {
-      const t = semAcento(ev.jogo);
-      return a.some((k) => t.indexOf(k) >= 0) && b.some((k) => t.indexOf(k) >= 0);
-    })).slice(0, 40);
+    const jogos = Placar.lista(abaEv);
     const secao = (t) => listaInner.appendChild(h("div.secao", { text: t }));
-    const vivos = jogos.filter((j) => j.estado === "in"), proximos = jogos.filter((j) => j.estado === "pre"), fim = jogos.filter((j) => j.estado === "post");
-    if (vivos.length) { secao("Ao vivo agora"); vivos.forEach((j) => listaInner.appendChild(linhaJogo(j))); }
-    if (proximos.length) { secao("Próximos jogos"); proximos.forEach((j) => listaInner.appendChild(linhaJogo(j))); }
-    if (outros.length) { secao("Outros eventos no guia"); outros.forEach((ev) => listaInner.appendChild(linhaGuia(ev))); }
-    if (fim.length) { secao("Encerrados"); fim.forEach((j) => listaInner.appendChild(linhaJogo(j))); }
-    aviso.textContent = !jogos.length && !outros.length ? "Nenhum evento importante no momento." : "";
+    if (abaEv === "hoje") {
+      const vivos = jogos.filter((j) => j.estado === "in"), depois = jogos.filter((j) => j.estado === "pre");
+      if (vivos.length) { secao("Ao vivo agora"); vivos.forEach((j) => listaInner.appendChild(linhaJogo(j))); }
+      if (depois.length) { secao("Mais tarde"); depois.forEach((j) => listaInner.appendChild(linhaJogo(j))); }
+    } else {
+      // por dia: "Amanhã", "Quarta, 26/11"...
+      const DIAS = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
+      let dia = null;
+      jogos.forEach((j) => {
+        const d = new Date(j.ini), hoje = new Date();
+        const ontem = new Date(Date.now() - 86400000), amanha = new Date(Date.now() + 86400000);
+        const igual = (x, y) => x.getDate() === y.getDate() && x.getMonth() === y.getMonth();
+        const nome = igual(d, hoje) ? "Hoje" : igual(d, amanha) ? "Amanhã" : igual(d, ontem) ? "Ontem" : DIAS[d.getDay()] + ", " + pad2(d.getDate()) + "/" + pad2(d.getMonth() + 1);
+        if (nome !== dia) { dia = nome; secao(nome); }
+        listaInner.appendChild(linhaJogo(j));
+      });
+    }
+    aviso.textContent = jogos.length ? "" : VAZIO[abaEv];
     $$(".evento", listaInner).forEach((el) => {
       el._aoFocar = () => { clearTimeout(el._t); el._t = setTimeout(() => { if (Foco.atual === el) desenharOnde(el._item); }, 120); };
       el._ok = () => { if (!selecionado || selecionado !== el._item) desenharOnde(el._item); Foco.entrar(onde); };
     });
     // continua no mesmo jogo depois de atualizar o placar
     const volta = chaveFoco && $$(".evento", listaInner).filter((e) => e.getAttribute("data-chave") === chaveFoco)[0];
-    if (volta && Foco.atual && Foco.atual.closest("[data-zona='eventos']")) Foco.definir(volta);
+    if (estavaNaLista) {
+      if (volta) Foco.definir(volta);
+      else { lista._ultimo = null; if (!Foco.entrar(lista)) Foco.entrar(filtros); }
+    }
     return $(".evento", listaInner);
   };
 
-  return {
+  let tela0 = null, t0 = 0;
+  return tela0 = {
     montar(ui) {
       Fundo.cor("radial-gradient(1100px 700px at 1650px 330px, #0a2a33, #000)");
-      casca(ui, "eventos", "eventos");
+      casca(ui, "eventos", "filtros");
       const tela = h("div.screen");
       const cols = h("div.cols");
-      lista = h("div.evlist", { "data-rola": "y", "data-folga": "80", "data-zona": "eventos", "data-eixo": "v", "data-cima": "abas", "data-dir": "onde" });
+      const esquerda = h("div.evcol");
+      filtros = h("div.evabas", { "data-zona": "filtros", "data-eixo": "h", "data-cima": "abas", "data-baixo": "eventos", "data-dir": "onde" });
+      ABAS_EV.forEach((a) => {
+        const el = h("div.season.foc" + (a.id === abaEv ? ".sel" : ""), { text: a.t });
+        const abrir = () => {
+          if (abaEv === a.id) return;
+          abaEv = a.id;
+          $$(".season", filtros).forEach((x) => x.classList.remove("sel"));
+          el.classList.add("sel");
+          lista.scrollTop = 0; lista._ultimo = null;
+          const p = desenharLista();
+          desenharOnde(p ? p._item : null);
+          // próximos dias e ontem: busca só quando a aba abre
+          const dias = a.id === "proximos" ? [1, 2, 3, 4, 5, 6] : a.id === "encerrados" ? [-1] : [];
+          if (dias.length) {
+            if (!Placar.lista(a.id).length) aviso.textContent = "Buscando os jogos…";
+            Placar.buscarDias(dias).then(() => {
+              if (abaEv !== a.id || Telas.topo() !== tela0) return;
+              const q = desenharLista();
+              if (!selecionado && q) desenharOnde(q._item);
+            });
+          }
+        };
+        el._aoFocar = () => { clearTimeout(el._t); el._t = setTimeout(() => { if (Foco.atual === el) abrir(); }, 250); };
+        el._ok = () => { abrir(); Foco.entrar(lista); };
+        if (a.id === abaEv) filtros._ultimo = el;
+        filtros.appendChild(el);
+      });
+      lista = h("div.evlist", { "data-rola": "y", "data-folga": "80", "data-zona": "eventos", "data-eixo": "v", "data-cima": "filtros", "data-dir": "onde" });
       listaInner = h("div.evlist-inner");
       aviso = h("div.empty");
       lista.appendChild(aviso);
       lista.appendChild(listaInner);
+      esquerda.appendChild(filtros); esquerda.appendChild(lista);
       const painel = h("div.evpanel");
       cabeca = h("div.evcabeca");
       onde = h("div.onde", { "data-rola": "y", "data-folga": "60", "data-zona": "onde", "data-eixo": "v", "data-esq": "eventos", "data-cima": "abas" });
       ondeInner = h("div.onde-inner");
       onde.appendChild(ondeInner);
       painel.appendChild(cabeca); painel.appendChild(onde);
-      cols.appendChild(lista); cols.appendChild(painel);
+      cols.appendChild(esquerda); cols.appendChild(painel);
       tela.appendChild(cols);
       ui.appendChild(tela);
-      // primeiro o que já tem (guia e placares guardados); os placares chegam em seguida
+      // primeiro o que já tem (placares guardados); os de agora chegam em seguida
       let pri = desenharLista();
-      if (!Object.keys(Placar.jogos).length) aviso.textContent = "Buscando os jogos de hoje…";
+      if (!Placar.lista("hoje").length) aviso.textContent = "Buscando os jogos de hoje…";
       desenharOnde(pri ? pri._item : null);
-      const tela0 = this, t0 = Date.now();
+      t0 = Date.now();
       Placar.atualizar(true).then(() => {
         if (Telas.topo() !== tela0) return;
         const p = desenharLista();
@@ -787,6 +851,7 @@ function TelaEventos() {
     },
     voltar() {
       if (Foco.atual && Foco.atual.closest("[data-zona='onde']")) { Foco.entrar(lista); return true; }
+      if (Foco.atual && Foco.atual.closest("[data-zona='eventos']")) { Foco.entrar(filtros); return true; }
       return voltarParaAbas("eventos");
     },
     sair() { clearInterval(this._t); },

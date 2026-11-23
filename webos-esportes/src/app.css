@@ -270,3 +270,8 @@ html, body {
 .evcabeca .sub.vivo { color: var(--live); font-weight: 700; }
 .evcabeca { text-align: left; }
 .empty:empty { display: none; }
+
+/* abas Hoje / Próximos / Encerrados na coluna dos jogos */
+.evcol { width: 760px; height: 772px; flex: none; display: flex; flex-direction: column; padding: 12px 20px 0 48px; }
+.evabas { display: flex; flex: none; margin: 4px 0 6px; }
+.evcol .evlist { width: auto; height: auto; flex: 1; padding: 0 0 30px 0; }
