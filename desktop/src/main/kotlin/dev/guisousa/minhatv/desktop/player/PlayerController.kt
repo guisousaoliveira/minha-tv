@@ -296,7 +296,12 @@ class PlayerController {
             runCatching {
                 p.audio().setVolume(v)
                 p.audio().isMute = m
-                Log.i("som: pedido $v% mudo=$m, VLC diz ${p.audio().volume()}% mudo=${p.audio().isMute}")
+                // áudio desligado (faixa -1) num arquivo que tem áudio: liga a primeira faixa
+                if (p.audio().track() == -1) p.audio().trackDescriptions().firstOrNull { it.id() >= 0 }?.let { p.audio().setTrack(it.id()) }
+                val faixas = p.media().info()?.audioTracks().orEmpty()
+                    .joinToString { "${it.codecName() ?: it.codec()} ${it.channels()}ch ${it.rate()}Hz" }
+                Log.i("som: pedido $v% mudo=$m, VLC diz ${p.audio().volume()}% mudo=${p.audio().isMute}; " +
+                    "faixa ${p.audio().track()} de ${p.audio().trackCount()} [$faixas]")
             }.onFailure { Log.w("não consegui ajustar o som", it) }
         }
     }
