@@ -187,6 +187,10 @@ class Catalogo(private val dir: File, private val http: OkHttpClient, private va
      * Confere o manifesto e baixa só as partes que mudaram (fichas ficam para quando forem abertas).
      * Devolve true se algo mudou.
      */
+    /** O último [sync] baixou um tmdb.json novo (quem usa relê o mapa; as telas não precisam recarregar). */
+    @Volatile var tmdbMudou = false
+        private set
+
     suspend fun sync(): Boolean = withContext(Dispatchers.IO) {
         val bytes = get("manifesto.json")
         val novo = json.decodeFromString(Manifesto.serializer(), bytes.decodeToString())
@@ -210,7 +214,9 @@ class Catalogo(private val dir: File, private val http: OkHttpClient, private va
         saveHashes()
         // Só recarrega o catálogo (telas) se mudou alguma parte que aparece na tela. Ficha que mudou (links)
         // já foi apagada acima e é baixada de novo quando abrir: não precisa reler 16 MB de JSON por isso.
-        val mudou = faltando.isNotEmpty()
+        // tmdb.json (mapa da sincronização com a conta) também não aparece na tela: muda sozinho, sem recarregar
+        val mudou = faltando.keys.any { it != "tmdb" }
+        tmdbMudou = "tmdb" in faltando
         File(dir, "manifesto.json").writeBytes(bytes)
         manifesto = novo
         mudou

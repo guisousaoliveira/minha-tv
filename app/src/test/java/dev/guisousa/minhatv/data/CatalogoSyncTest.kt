@@ -47,9 +47,9 @@ class CatalogoSyncTest {
         manifesto("categorias" to "c1", "filmes/101" to "f1", "fichas/f_001" to "x1", "tmdb" to "t1", "apelidos" to "a1")
         val c = Catalogo(dir, http, "http://teste/app/v2/")
 
-        // 1ª vez: baixa as partes que o app usa (fichas só ao abrir; tmdb.json nunca)
+        // 1ª vez: baixa as partes que o app usa (fichas só ao abrir; tmdb.json para a sincronização da conta)
         assertTrue(c.sync())
-        assertTrue("tmdb.json não é usado pelo app", "tmdb.json" !in pedidos)
+        assertTrue("tmdb.json é usado na sincronização", "tmdb.json" in pedidos)
         assertTrue("ficha só ao abrir", pedidos.none { it.startsWith("fichas/") })
         assertEquals(1L, c.apelidos()!!.f["9"])
         assertEquals("http://x/1", c.ficha(false, 1)!!.v!!.dub[0].u)
@@ -59,12 +59,14 @@ class CatalogoSyncTest {
         assertFalse(c.sync())
         assertEquals(listOf("manifesto.json"), pedidos)
 
-        // só a ficha mudou (links): não recarrega as telas; a ficha é baixada de novo ao abrir
+        // só a ficha e o tmdb.json mudaram: não recarrega as telas; a ficha é baixada de novo ao abrir e o
+        // tmdb.json vem na hora (é só o mapa da sincronização)
         arquivos["fichas/f_001.json"] = """{"1":{"t":"A","v":{"dub":[{"u":"http://x/novo"}]}}}"""
         manifesto("categorias" to "c1", "filmes/101" to "f1", "fichas/f_001" to "x2", "tmdb" to "t2", "apelidos" to "a1")
         pedidos.clear()
         assertFalse(c.sync())
-        assertEquals(listOf("manifesto.json"), pedidos)
+        assertTrue(c.tmdbMudou)
+        assertEquals(listOf("manifesto.json", "tmdb.json"), pedidos)
         assertEquals("http://x/novo", c.ficha(false, 1)!!.v!!.dub[0].u)
 
         // mudou uma categoria: baixa só ela e recarrega

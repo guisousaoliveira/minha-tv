@@ -122,13 +122,7 @@ object Repository {
             principais = catsCanais.firstOrNull { it.ids != null && canaisPorCat[it.id].orEmpty().isNotEmpty() }?.let { nomeCurto(it.nome) },
         )
         dados = d
-        // código do TMDB <-> nosso id, para a sincronização com a conta
-        catalogo.tmdbIds()?.let { t ->
-            tmdbFilme = t.f.entries.mapNotNull { (k, v) -> k.toLongOrNull()?.let { it to v } }.toMap()
-            tmdbSerie = t.s.entries.mapNotNull { (k, v) -> k.toLongOrNull()?.let { it to v } }.toMap()
-            filmeTmdb = tmdbFilme.entries.associate { (k, v) -> v to k }
-            serieTmdb = tmdbSerie.entries.associate { (k, v) -> v to k }
-        }
+        carregarTmdb()
         runCatching { migrarApelidos() }.onFailure { android.util.Log.w("MinhaTV", "apelidos: não migrou", it) }
         searchIndex = null
         favCache = null
@@ -169,6 +163,16 @@ object Repository {
     @Volatile private var tmdbSerie: Map<Long, Long> = emptyMap()
     @Volatile private var filmeTmdb: Map<Long, Long> = emptyMap() // filme -> TMDB
     @Volatile private var serieTmdb: Map<Long, Long> = emptyMap()
+
+    /** Código do TMDB <-> nosso id (tmdb.json), para a sincronização com a conta. */
+    private fun carregarTmdb() {
+        catalogo.tmdbIds()?.let { t ->
+            tmdbFilme = t.f.entries.mapNotNull { (k, v) -> k.toLongOrNull()?.let { it to v } }.toMap()
+            tmdbSerie = t.s.entries.mapNotNull { (k, v) -> k.toLongOrNull()?.let { it to v } }.toMap()
+            filmeTmdb = tmdbFilme.entries.associate { (k, v) -> v to k }
+            serieTmdb = tmdbSerie.entries.associate { (k, v) -> v to k }
+        }
+    }
 
     /** O que a [Nuvem] lê e grava no aparelho (sem mandar de volta para a nuvem). */
     private val localNuvem = object : Nuvem.Local {
@@ -273,7 +277,7 @@ object Repository {
         try {
             val mudou = catalogo.sync()
             lastSync = now
-            if (mudou || dados == null) carregar()
+            if (mudou || dados == null) carregar() else if (catalogo.tmdbMudou) carregarTmdb()
             _status.value = null
             Nuvem.sincronizar()
         } catch (e: Exception) {
