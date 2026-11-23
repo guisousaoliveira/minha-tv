@@ -40,7 +40,7 @@ jobs:
       # TVs com o app antigo baixam o primeiro .apk do release, e o GitHub lista em ordem alfabética:
       # o do celular precisa ter nome depois de "MinhaTV.apk" (por isso "Mobile-...")
       - name: Publicar release
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.${{ github.run_number }}
@@ -49,11 +49,16 @@ jobs:
           make_latest: true
 
       - name: Juntar o APK do celular
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.${{ github.run_number }}
           files: Mobile-BadWolfTV.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Mobile-BadWolfTV-apk
+          path: Mobile-BadWolfTV.apk
 
   windows:
     needs: build
@@ -90,11 +95,43 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Copy-Item desktop\build\instalador\BadWolfTV-Windows.exe BadWolfTV-Windows.exe
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BadWolfTV-Windows-exe
+          path: BadWolfTV-Windows.exe
+
       - name: Juntar o instalador ao release
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.${{ github.run_number }}
           files: BadWolfTV-Windows.exe
+
+  webos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Gerar IPKs e zips do simulador (LG webOS)
+        env:
+          APP_VERSION: 1.0.${{ github.run_number }}
+          BADWOLF_TOKEN: ${{ secrets.BADWOLF_TOKEN }}
+        run: |
+          (cd webos && npm ci --no-audit --no-fund && python3 build.py)
+          (cd webos-esportes && npm ci --no-audit --no-fund && python3 build.py)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BadWolf-webOS-IPKs
+          path: |
+            webos/BadWolfTV-LG.ipk
+            webos/BadWolfTV-simulador.zip
+            webos-esportes/BadWolfEsportes-LG.ipk
+            webos-esportes/BadWolfEsportes-simulador.zip
 
   preview:
     needs: build
