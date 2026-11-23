@@ -458,7 +458,7 @@ const Dialogo = { aberto: null };
 
 // ======================= casca (topo com as abas) =======================
 
-const ABAS = [{ id: "eventos", t: "Eventos" }, { id: "canais", t: "Canais" }];
+const ABAS = [{ id: "canais", t: "Canais" }, { id: "eventos", t: "Eventos" }];
 
 /** Topo com as abas. [abaixo] = zona da tela que recebe o foco quando você desce das abas. */
 function casca(ui, abaAtual, abaixo) {
@@ -483,13 +483,13 @@ function casca(ui, abaAtual, abaixo) {
 
 function trocarAba(id) {
   Telas.limpar();
-  Telas.abrir(id === "canais" ? TelaCanais() : TelaEventos());
+  Telas.abrir(id === "eventos" ? TelaEventos() : TelaCanais());
 }
 
-/** Voltar dentro de uma aba: vai para as abas; nas abas, Eventos; em Eventos, pergunta se quer sair. */
+/** Voltar dentro de uma aba: vai para as abas; nas abas, Canais; em Canais, pergunta se quer sair. */
 function voltarParaAbas(aba) {
   if (Foco.atual && Foco.atual.classList.contains("tab")) {
-    if (aba !== "eventos") { trocarAba("eventos"); return true; }
+    if (aba !== "canais") { trocarAba("canais"); return true; }
     return false;
   }
   const t = $(".tab.sel");
@@ -515,33 +515,172 @@ function linhaCanal(c, num, extra) {
   return el;
 }
 
+// ======================= Placar (jogos de futebol com escudo e placar) =======================
+
+/**
+ * Jogos dos campeonatos importantes pela API pública de placares da ESPN (sem chave; não é oficial e pode
+ * mudar). Traz times com escudo, placar, minuto/estado e o logo do campeonato. "Onde assistir" vem do nosso
+ * guia: os canais de esporte cujo programa tem os dois times no título.
+ */
+const Placar = {
+  API: "https://site.api.espn.com/apis/site/v2/sports/soccer/",
+  LIGAS: [
+    { id: "bra.1", nome: "Brasileirão" },
+    { id: "conmebol.libertadores", nome: "Libertadores" },
+    { id: "conmebol.sudamericana", nome: "Sul-Americana" },
+    { id: "bra.copa_do_brazil", nome: "Copa do Brasil" },
+    { id: "uefa.champions", nome: "Champions League" },
+    { id: "eng.1", nome: "Premier League" },
+    { id: "esp.1", nome: "La Liga" },
+    { id: "ita.1", nome: "Serie A (Itália)" },
+    { id: "ger.1", nome: "Bundesliga" },
+    { id: "fra.1", nome: "Ligue 1" },
+    { id: "uefa.europa", nome: "Europa League" },
+    { id: "bra.2", nome: "Brasileirão Série B" },
+  ],
+  jogos: {}, // id -> jogo
+  ultimaCompleta: 0,
+  carregando: null,
+
+  dataEspn(d) { return d.getFullYear() + pad2(d.getMonth() + 1) + pad2(d.getDate()); },
+
+  async buscarLiga(liga, comHoje) {
+    const urls = [this.API + liga.id + "/scoreboard"];
+    if (comHoje) urls.push(this.API + liga.id + "/scoreboard?dates=" + this.dataEspn(new Date()));
+    const respostas = await Promise.all(urls.map((u) => comTempo(fetch(u), 12000).then((r) => (r.ok ? r.json() : null)).catch(() => null)));
+    respostas.forEach((d) => {
+      if (!d) return;
+      const logoLiga = d.leagues && d.leagues[0] && d.leagues[0].logos && d.leagues[0].logos[0] ? d.leagues[0].logos[0].href : null;
+      (d.events || []).forEach((e) => {
+        const c = e.competitions && e.competitions[0];
+        if (!c) return;
+        const time = (lado) => {
+          const x = (c.competitors || []).filter((t) => t.homeAway === lado)[0] || {};
+          const t = x.team || {};
+          return { nome: t.shortDisplayName || t.displayName || "?", completo: t.displayName || t.shortDisplayName || "", logo: t.logo || null, placar: x.score };
+        };
+        const st = (e.status && e.status.type) || {};
+        this.jogos[e.id] = {
+          id: e.id, liga: liga.nome, ligaId: liga.id, logoLiga,
+          ini: new Date(e.date).getTime(),
+          casa: time("home"), fora: time("away"),
+          estado: st.state, // pre | in | post
+          detalhe: (e.status && e.status.displayClock && st.state === "in") ? e.status.displayClock : st.shortDetail || "",
+          encerrado: !!st.completed,
+          atualizado: Date.now(),
+        };
+      });
+    });
+  },
+
+  /** Completa a cada 10 min; no meio tempo, só os campeonatos com jogo rolando ou começando. */
+  async atualizar(forcar) {
+    if (this.carregando) return this.carregando;
+    const agora = Date.now();
+    const completa = forcar || agora - this.ultimaCompleta > 10 * 60000;
+    const ligas = completa ? this.LIGAS : this.LIGAS.filter((l) => Object.keys(this.jogos).some((id) => {
+      const j = this.jogos[id];
+      return j.ligaId === l.id && (j.estado === "in" || (j.estado === "pre" && j.ini - agora < 15 * 60000));
+    }));
+    this.carregando = Promise.all(ligas.map((l) => this.buscarLiga(l, completa))).then(() => {
+      if (completa) this.ultimaCompleta = agora;
+      this.carregando = null;
+    });
+    return this.carregando;
+  },
+
+  /** Jogos para mostrar: ao vivo, de hoje/amanhã e os encerrados há pouco (com placar final). */
+  lista() {
+    const agora = Date.now();
+    return Object.keys(this.jogos).map((id) => this.jogos[id]).filter((j) => {
+      if (j.estado === "in") return true;
+      if (j.estado === "pre") return j.ini - agora < 30 * 3600 * 1000 && j.ini > agora - 3 * 3600 * 1000;
+      return agora - j.ini < 4 * 3600 * 1000; // encerrado: até ~2 h depois do fim
+    }).sort((a, b) => {
+      const ordem = { in: 0, pre: 1, post: 2 };
+      return (ordem[a.estado] - ordem[b.estado]) || (a.estado === "post" ? b.ini - a.ini : a.ini - b.ini) ||
+        (this.LIGAS.findIndex((l) => l.id === a.ligaId) - this.LIGAS.findIndex((l) => l.id === b.ligaId));
+    });
+  },
+
+  // ---- onde assistir: o guia dos canais de esporte ----
+  PALAVRAS_FRACAS: { fc: 1, sc: 1, ec: 1, cf: 1, ac: 1, cr: 1, afc: 1, club: 1, clube: 1, de: 1, da: 1, do: 1, del: 1, la: 1, real: 1, sport: 1, sporting: 1, futebol: 1, city: 1, united: 1, red: 1, bull: 1, atletico: 0 },
+  chaves(nome) {
+    return semAcento(nome).replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter((w) => w.length >= 4 && !this.PALAVRAS_FRACAS[w]);
+  },
+  /** Canais de esporte que passam o jogo (os dois times no título do programa, no horário do jogo). */
+  onde(jogo) {
+    const k1 = this.chaves(jogo.casa.completo + " " + jogo.casa.nome), k2 = this.chaves(jogo.fora.completo + " " + jogo.fora.nome);
+    if (!k1.length || !k2.length) return [];
+    const tem = (t, ks) => ks.some((k) => t.indexOf(k) >= 0);
+    const porBase = {};
+    Esporte.esportivos.forEach((canal) => {
+      const p = Cat.programas(canal).filter((x) => x.ini <= jogo.ini + 40 * 60000 && x.fim >= jogo.ini - 10 * 60000 &&
+        !/^\s*(vt|reprise)\b/i.test(x.t))[0];
+      if (!p) return;
+      const t = semAcento(p.t);
+      if (tem(t, k1) && tem(t, k2)) {
+        const base = canal.b || canal.n;
+        (porBase[base] || (porBase[base] = [])).push(canal);
+      }
+    });
+    const ordemQ = { FHD: 0, HD: 1, SD: 2, "4K": 3 };
+    const qual = (c) => { const m = / (4K|FHD|HD|SD)$/.exec(c.n); return m ? m[1] : ""; };
+    return Object.keys(porBase).map((base) => ({
+      base,
+      opcoes: porBase[base].sort((a, b) => (ordemQ[qual(a)] || 0) - (ordemQ[qual(b)] || 0)).map((c) => ({ canal: c, q: qual(c) })),
+    }));
+  },
+};
+
 // ======================= Eventos =======================
 
 function TelaEventos() {
-  let lista, listaInner, onde, ondeInner, cabeca, eventos = [], selecionado = null;
-  const quando = (ev) => {
-    const agora = Date.now();
-    if (ev.reprise) return "Reprise · " + hora(ev.ini);
-    if (ev.aoVivo) return "AO VIVO · começou " + hora(ev.ini);
-    const d = new Date(ev.ini), hoje = new Date();
+  let lista, listaInner, onde, ondeInner, cabeca, selecionado = null, aviso;
+  const placar = (j) => (j.estado === "pre" ? "x" : (j.casa.placar || "0") + "  x  " + (j.fora.placar || "0"));
+  const estadoJogo = (j) => {
+    if (j.estado === "in") return "AO VIVO · " + (j.detalhe || "");
+    if (j.estado === "post") return "Encerrado";
+    const d = new Date(j.ini), hoje = new Date();
     const dia = d.getDate() === hoje.getDate() ? "Hoje" : "Amanhã";
-    const falta = Math.round((ev.ini - agora) / 60000);
-    return dia + " " + hora(ev.ini) + (falta < 120 ? " · em " + (falta >= 60 ? Math.floor(falta / 60) + " h " + (falta % 60) + " min" : falta + " min") : "");
+    return dia + " · " + hora(j.ini);
   };
-  const desenharOnde = (ev) => {
-    selecionado = ev;
+  const quandoGuia = (ev) => (ev.reprise ? "Reprise · " + hora(ev.ini) : ev.aoVivo ? "AO VIVO · começou " + hora(ev.ini) : hora(ev.ini) + " · até " + hora(ev.fim));
+  const escudo = (logo, nome) => h("div.escudo", { bg: logo || null }, logo ? null : (nome || "?").slice(0, 3).toUpperCase());
+
+  /** Painel da direita: o jogo (escudos, placar) e onde assistir. */
+  const desenharOnde = (item) => {
+    selecionado = item;
     ondeInner.innerHTML = "";
     onde._ultimo = null;
     cabeca.innerHTML = "";
-    if (!ev) { cabeca.appendChild(h("h3", { text: "Nenhum evento agora" })); return; }
-    if (ev.liga) cabeca.appendChild(h("div.liga", { text: ev.liga }));
-    cabeca.appendChild(h("h3", { text: ev.jogo }));
-    cabeca.appendChild(h("div.sub", { text: quando(ev) + "  ·  até " + hora(ev.fim) }));
+    if (!item) return;
+    let opcoes;
+    if (item.jogo) {
+      const j = item.jogo;
+      cabeca.appendChild(h("div.liga", null, [j.logoLiga ? h("span.ligalogo", { bg: j.logoLiga }) : null, j.liga]));
+      cabeca.appendChild(h("div.placar-grande", null, [
+        h("div.time", null, [escudo(j.casa.logo, j.casa.nome), h("div.tnome", { text: j.casa.nome })]),
+        h("div.placar-num", { text: j.estado === "pre" ? hora(j.ini) : (j.casa.placar || "0") + " x " + (j.fora.placar || "0") }),
+        h("div.time", null, [escudo(j.fora.logo, j.fora.nome), h("div.tnome", { text: j.fora.nome })]),
+      ]));
+      cabeca.appendChild(h("div.sub" + (j.estado === "in" ? ".vivo" : ""), { text: estadoJogo(j) }));
+      opcoes = Placar.onde(j);
+    } else {
+      const ev = item.ev;
+      if (ev.liga) cabeca.appendChild(h("div.liga", { text: ev.liga }));
+      cabeca.appendChild(h("h3", { text: ev.jogo }));
+      cabeca.appendChild(h("div.sub", { text: quandoGuia(ev) }));
+      opcoes = ev.onde;
+    }
+    if (!opcoes.length) {
+      cabeca.appendChild(h("div.hint", { text: "Não achei este jogo no guia dos canais. Procure na aba Canais." }));
+      return;
+    }
     cabeca.appendChild(h("div.hint", { text: "Onde assistir · OK no canal para abrir" }));
-    // zap no player: todos os canais/qualidades deste evento, na ordem da lista
     const fila = [];
-    ev.onde.forEach((o) => o.opcoes.forEach((op) => fila.push(op.canal)));
-    ev.onde.forEach((o) => {
+    opcoes.forEach((o) => o.opcoes.forEach((op) => fila.push(op.canal)));
+    opcoes.forEach((o) => {
       ondeInner.appendChild(h("div.onde-canal", { text: o.base }));
       o.opcoes.forEach((op) => {
         const el = linhaCanal(op.canal, null, { nome: o.base + (op.q ? "  " + op.q : "") });
@@ -550,27 +689,59 @@ function TelaEventos() {
       });
     });
   };
-  const desenharLista = () => {
-    eventos = Esporte.eventos();
-    listaInner.innerHTML = "";
-    let secao = null;
-    eventos.forEach((ev) => {
-      const s = ev.reprise ? "Reprises" : ev.aoVivo ? "Ao vivo agora" : "Mais tarde";
-      if (s !== secao) { secao = s; listaInner.appendChild(h("div.secao", { text: s })); }
-      const el = h("div.evento.foc" + (ev.aoVivo ? ".vivo" : ""), null, [
-        h("div.ev-hora", { text: ev.aoVivo ? "AO VIVO" : hora(ev.ini) }),
-        h("div.ev-info", null, [
-          h("div.ev-jogo", { text: ev.jogo }),
-          h("div.ev-sub", { text: [ev.liga, ev.onde.map((o) => o.base).join(", ")].filter(Boolean).join("  ·  ") }),
-        ]),
-      ]);
-      el._ev = ev;
-      el._aoFocar = () => { clearTimeout(el._t); el._t = setTimeout(() => { if (Foco.atual === el) desenharOnde(ev); }, 120); };
-      el._ok = () => { if (selecionado !== ev) desenharOnde(ev); Foco.entrar(onde); };
-      listaInner.appendChild(el);
-    });
-    if (!eventos.length) listaInner.appendChild(h("div.empty", { text: "Nenhum jogo no guia agora. Veja a aba Canais." }));
+
+  const linhaJogo = (j) => {
+    const el = h("div.evento.jogo.foc" + (j.estado === "in" ? ".vivo" : ""), { "data-chave": "j" + j.id }, [
+      h("div.ev-hora", { text: j.estado === "in" ? (j.detalhe || "AO VIVO") : j.estado === "post" ? "FIM" : hora(j.ini) }),
+      h("div.ev-times", null, [
+        h("div.lado", null, [escudo(j.casa.logo, j.casa.nome), h("span", { text: j.casa.nome })]),
+        h("div.ev-placar", { text: placar(j) }),
+        h("div.lado.fora", null, [h("span", { text: j.fora.nome }), escudo(j.fora.logo, j.fora.nome)]),
+      ]),
+      h("div.ev-liga", { text: j.liga }),
+    ]);
+    el._item = { jogo: j };
+    return el;
   };
+  const linhaGuia = (ev) => {
+    const el = h("div.evento.foc" + (ev.aoVivo ? ".vivo" : ""), { "data-chave": "g" + ev.id }, [
+      h("div.ev-hora", { text: ev.aoVivo ? "AO VIVO" : hora(ev.ini) }),
+      h("div.ev-info", null, [
+        h("div.ev-jogo", { text: ev.jogo }),
+        h("div.ev-sub", { text: [ev.liga, ev.onde.map((o) => o.base).join(", ")].filter(Boolean).join("  ·  ") }),
+      ]),
+    ]);
+    el._item = { ev };
+    return el;
+  };
+
+  const desenharLista = () => {
+    const chaveFoco = Foco.atual && Foco.atual.getAttribute && Foco.atual.getAttribute("data-chave");
+    listaInner.innerHTML = "";
+    const jogos = Placar.lista();
+    // outros eventos do guia (UFC, NBA, F1...), sem repetir os jogos de futebol que já estão em cima
+    const chavesJogos = jogos.map((j) => [Placar.chaves(j.casa.completo + " " + j.casa.nome), Placar.chaves(j.fora.completo + " " + j.fora.nome)]);
+    const outros = Esporte.eventos().filter((ev) => !ev.reprise && !chavesJogos.some(([a, b]) => {
+      const t = semAcento(ev.jogo);
+      return a.some((k) => t.indexOf(k) >= 0) && b.some((k) => t.indexOf(k) >= 0);
+    })).slice(0, 40);
+    const secao = (t) => listaInner.appendChild(h("div.secao", { text: t }));
+    const vivos = jogos.filter((j) => j.estado === "in"), proximos = jogos.filter((j) => j.estado === "pre"), fim = jogos.filter((j) => j.estado === "post");
+    if (vivos.length) { secao("Ao vivo agora"); vivos.forEach((j) => listaInner.appendChild(linhaJogo(j))); }
+    if (proximos.length) { secao("Próximos jogos"); proximos.forEach((j) => listaInner.appendChild(linhaJogo(j))); }
+    if (outros.length) { secao("Outros eventos no guia"); outros.forEach((ev) => listaInner.appendChild(linhaGuia(ev))); }
+    if (fim.length) { secao("Encerrados"); fim.forEach((j) => listaInner.appendChild(linhaJogo(j))); }
+    aviso.textContent = !jogos.length && !outros.length ? "Nenhum evento importante no momento." : "";
+    $$(".evento", listaInner).forEach((el) => {
+      el._aoFocar = () => { clearTimeout(el._t); el._t = setTimeout(() => { if (Foco.atual === el) desenharOnde(el._item); }, 120); };
+      el._ok = () => { if (!selecionado || selecionado !== el._item) desenharOnde(el._item); Foco.entrar(onde); };
+    });
+    // continua no mesmo jogo depois de atualizar o placar
+    const volta = chaveFoco && $$(".evento", listaInner).filter((e) => e.getAttribute("data-chave") === chaveFoco)[0];
+    if (volta && Foco.atual && Foco.atual.closest("[data-zona='eventos']")) Foco.definir(volta);
+    return $(".evento", listaInner);
+  };
+
   return {
     montar(ui) {
       Fundo.cor("radial-gradient(1100px 700px at 1650px 330px, #0a2a33, #000)");
@@ -579,6 +750,8 @@ function TelaEventos() {
       const cols = h("div.cols");
       lista = h("div.evlist", { "data-rola": "y", "data-folga": "80", "data-zona": "eventos", "data-eixo": "v", "data-cima": "abas", "data-dir": "onde" });
       listaInner = h("div.evlist-inner");
+      aviso = h("div.empty");
+      lista.appendChild(aviso);
       lista.appendChild(listaInner);
       const painel = h("div.evpanel");
       cabeca = h("div.evcabeca");
@@ -589,17 +762,27 @@ function TelaEventos() {
       cols.appendChild(lista); cols.appendChild(painel);
       tela.appendChild(cols);
       ui.appendChild(tela);
-      desenharLista();
-      const pri = $(".evento", listaInner);
-      desenharOnde(pri ? pri._ev : null);
-      // a lista muda com o tempo (jogo começa/acaba): redesenha a cada 2 min se estiver parada nela
+      // primeiro o que já tem (guia e placares guardados); os placares chegam em seguida
+      let pri = desenharLista();
+      if (!Object.keys(Placar.jogos).length) aviso.textContent = "Buscando os jogos de hoje…";
+      desenharOnde(pri ? pri._item : null);
+      const tela0 = this, t0 = Date.now();
+      Placar.atualizar(true).then(() => {
+        if (Telas.topo() !== tela0) return;
+        const p = desenharLista();
+        if (!selecionado && p) desenharOnde(p._item);
+        // abriu a aba e os jogos chegaram logo depois: o foco desce para o primeiro jogo (se você não mexeu)
+        if (p && Foco.atual && Foco.atual.classList.contains("tab") && Date.now() - t0 < 5000) Foco.definir(p);
+      });
+      // placar ao vivo: a cada 1 min (só os campeonatos com jogo rolando; a lista toda a cada 10 min)
       this._t = setInterval(() => {
-        if (Telas.topo() !== this || Player.modo === "cheia") return;
-        const foco = Foco.atual && Foco.atual._ev ? Foco.atual._ev.id : null;
-        desenharLista();
-        const el = $$(".evento", listaInner).filter((e) => e._ev.id === foco)[0];
-        if (el) Foco.definir(el);
-      }, 120000);
+        if (Telas.topo() !== tela0 || Player.modo === "cheia") return;
+        Placar.atualizar(false).then(() => {
+          if (Telas.topo() !== tela0) return;
+          desenharLista();
+          if (selecionado && selecionado.jogo) { const j = Placar.jogos[selecionado.jogo.id]; if (j && !(Foco.atual && Foco.atual.closest("[data-zona='onde']"))) desenharOnde({ jogo: j }); }
+        });
+      }, 60000);
       return pri || $(".tab.sel", ui);
     },
     voltar() {
@@ -1336,7 +1519,7 @@ async function carregarCatalogo() {
     ]);
     return;
   }
-  trocarAba("eventos");
+  trocarAba("canais");
   // confere o catálogo de novo a cada 3 h, só se a tela estiver parada no menu (nada de recarregar no meio do filme)
   setInterval(() => {
     if (Player.ativo) return;
@@ -1348,5 +1531,5 @@ async function carregarCatalogo() {
   }, 60 * 60 * 1000); // o guia muda ao longo do dia: confere a cada 1 h
 }
 
-window.BadWolf = { Cat, Player, Telas, Foco, Usuario, Esporte, versao: VERSAO_APP };
+window.BadWolf = { Cat, Player, Telas, Foco, Usuario, Esporte, Placar, versao: VERSAO_APP };
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", iniciar); else iniciar();

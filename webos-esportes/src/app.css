@@ -247,3 +247,26 @@ html, body {
 .onde-canal { font-size: 16px; letter-spacing: 1px; color: var(--text-faint); margin: 12px 0 6px 4px; text-transform: uppercase; }
 .onde .ch { height: 72px; }
 .top .brand { font-size: 24px; }
+
+/* jogos com escudo e placar */
+.evento.jogo { min-height: 78px; }
+.evento .ev-times { flex: 1; display: flex; align-items: center; overflow: hidden; }
+.evento .lado { flex: 1; display: flex; align-items: center; overflow: hidden; font-size: 21px; font-weight: 700; }
+.evento .lado span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-left: 10px; }
+.evento .lado.fora { justify-content: flex-end; }
+.evento .lado.fora span { margin: 0 10px 0 0; text-align: right; }
+.evento .ev-placar { flex: none; width: 92px; text-align: center; font-size: 22px; font-weight: 800; color: var(--brand); }
+.evento .ev-liga { flex: none; width: 120px; text-align: right; font-size: 15px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-left: 10px; }
+.evento.focus .lado, .evento.focus .ev-liga { color: #000; }
+.evento.focus .ev-placar { color: #006b7a; }
+.escudo { width: 40px; height: 40px; flex: none; background: center/contain no-repeat; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 800; color: var(--text-dim); }
+.evcabeca .liga { display: flex; align-items: center; }
+.evcabeca .ligalogo { width: 30px; height: 30px; background: center/contain no-repeat; margin-right: 10px; display: inline-block; }
+.placar-grande { display: flex; align-items: center; justify-content: center; margin: 14px 0 6px; }
+.placar-grande .time { width: 230px; display: flex; flex-direction: column; align-items: center; }
+.placar-grande .escudo { width: 110px; height: 110px; font-size: 26px; }
+.placar-grande .tnome { font-size: 22px; font-weight: 700; margin-top: 10px; text-align: center; }
+.placar-grande .placar-num { font-size: 46px; font-weight: 800; min-width: 160px; text-align: center; }
+.evcabeca .sub.vivo { color: var(--live); font-weight: 700; }
+.evcabeca { text-align: left; }
+.empty:empty { display: none; }
