@@ -51,6 +51,10 @@ class CardSerie(
 @Serializable
 class Cat(val id: String, val nome: String)
 
+/** Código do TMDB -> nosso id (tmdb.json). Usado para sincronizar com a conta W4LLE, que usa o TMDB. */
+@Serializable
+class TmdbIds(val f: Map<String, Long> = emptyMap(), val s: Map<String, Long> = emptyMap())
+
 @Serializable
 class Categorias(val canais: List<Cat> = emptyList(), val filmes: List<Cat> = emptyList(), val series: List<Cat> = emptyList())
 
@@ -207,6 +211,7 @@ class Catalogo(private val dir: File, private val http: OkHttpClient, private va
     fun filmes(cat: String) = read("filmes/$cat", ListSerializer(CardFilme.serializer()))
     fun series(cat: String) = read("series/$cat", ListSerializer(CardSerie.serializer()))
     fun inicio() = read("inicio", ListSerializer(Linha.serializer()))
+    fun tmdbIds() = read("tmdb", TmdbIds.serializer())
 
     /** Guia: id do canal -> programas (horários em ms). */
     fun guia(): Map<String, List<Programme>> {

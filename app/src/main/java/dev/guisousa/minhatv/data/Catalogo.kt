@@ -85,6 +85,10 @@ class Linha(val t: String, val tipo: String, val itens: List<LinhaItem>? = null,
 @Serializable
 class Apelidos(val f: Map<String, Long> = emptyMap(), val s: Map<String, Long> = emptyMap())
 
+/** Código do TMDB -> nosso id (tmdb.json). Usado para sincronizar com a conta W4LLE, que usa o TMDB. */
+@Serializable
+class TmdbIds(val f: Map<String, Long> = emptyMap(), val s: Map<String, Long> = emptyMap())
+
 @Serializable
 class Manifesto(val formato: Int = 0, val versao: String = "", val fichas: Int = 256, val partes: Map<String, String> = emptyMap())
 
@@ -113,7 +117,7 @@ class Catalogo(private val dir: File, private val http: OkHttpClient, private va
             "fichas/" + (if (serie) "s_" else "f_") + String.format(java.util.Locale.ROOT, "%03d", Math.floorMod(id, n.toLong()))
 
         /** Partes que o app usa (o servidor publica outras, como tmdb.json, que o app não lê). */
-        private val PARTES_DO_APP = setOf("categorias", "canais", "inicio", "guia", "apelidos")
+        private val PARTES_DO_APP = setOf("categorias", "canais", "inicio", "guia", "apelidos", "tmdb")
         fun usada(parte: String) = parte in PARTES_DO_APP || parte.startsWith("filmes/") || parte.startsWith("series/")
 
         fun episodios(f: Ficha): List<Episodio> = f.eps.orEmpty().mapNotNull { a ->
@@ -183,6 +187,10 @@ class Catalogo(private val dir: File, private val http: OkHttpClient, private va
      * Confere o manifesto e baixa só as partes que mudaram (fichas ficam para quando forem abertas).
      * Devolve true se algo mudou.
      */
+    /** O último [sync] baixou um tmdb.json novo (quem usa relê o mapa; as telas não precisam recarregar). */
+    @Volatile var tmdbMudou = false
+        private set
+
     suspend fun sync(): Boolean = withContext(Dispatchers.IO) {
         val bytes = get("manifesto.json")
         val novo = json.decodeFromString(Manifesto.serializer(), bytes.decodeToString())
@@ -206,7 +214,9 @@ class Catalogo(private val dir: File, private val http: OkHttpClient, private va
         saveHashes()
         // Só recarrega o catálogo (telas) se mudou alguma parte que aparece na tela. Ficha que mudou (links)
         // já foi apagada acima e é baixada de novo quando abrir: não precisa reler 16 MB de JSON por isso.
-        val mudou = faltando.isNotEmpty()
+        // tmdb.json (mapa da sincronização com a conta) também não aparece na tela: muda sozinho, sem recarregar
+        val mudou = faltando.keys.any { it != "tmdb" }
+        tmdbMudou = "tmdb" in faltando
         File(dir, "manifesto.json").writeBytes(bytes)
         manifesto = novo
         mudou
@@ -258,6 +268,7 @@ class Catalogo(private val dir: File, private val http: OkHttpClient, private va
     fun series(cat: String) = read("series/$cat", ListSerializer(CardSerie.serializer()))
     fun inicio() = read("inicio", ListSerializer(Linha.serializer()))
     fun apelidos() = read("apelidos", Apelidos.serializer())
+    fun tmdbIds() = read("tmdb", TmdbIds.serializer())
 
     /** Guia: id do canal -> programas (horários em ms). */
     fun guia(): Map<String, List<Programme>> {

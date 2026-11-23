@@ -526,6 +526,7 @@ fun SettingsScreen(update: UpdateState) {
     val formatos = listOf(0 to "Original", 4 to "Preencher", 3 to "Esticar")
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 32.dp)) {
         item { TopBar("Ajustes", null) }
+        item { ContaCard() }
         item {
             SettingsCard("Reprodução") {
                 SettingsRow("Versão preferida", "Para títulos que você ainda não escolheu. Em cada filme ou série dá para trocar no botão Versão.",
@@ -591,6 +592,73 @@ fun SettingsScreen(update: UpdateState) {
         text = { Text("Some o Continuar assistindo, os canais recentes e as marcas de visto. A Minha lista fica.") },
         confirmButton = { TextButton(onClick = { LocalStore.clearHistory(); confirmClear = false }) { Text("Apagar", color = Palette.Error) } },
         dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("Cancelar") } },
+        containerColor = Palette.SurfaceHigh,
+    )
+}
+
+/** Conta W4LLE: entrar com usuário e senha; conectado, mostra a sincronização. */
+@Composable
+private fun ContaCard() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val usuario by dev.guisousa.badwolf.mobile.data.Conta.usuario.collectAsState()
+    val ultima by dev.guisousa.badwolf.mobile.data.Nuvem.ultima.collectAsState()
+    val sincronizando by dev.guisousa.badwolf.mobile.data.Nuvem.sincronizando.collectAsState()
+    var nome by rememberSaveable { mutableStateOf("") }
+    var senha by remember { mutableStateOf("") }
+    var erro by remember { mutableStateOf<String?>(null) }
+    var entrando by remember { mutableStateOf(false) }
+    var confirmarSair by remember { mutableStateOf(false) }
+    val u = usuario
+    SettingsCard("Conta W4LLE") {
+        if (u == null) {
+            Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                Text("Entre para o que você assiste ficar igual na TV, no celular, no Windows e no site W4LLE: onde parou, Minha lista e já assisti.",
+                    fontSize = 13.sp, color = Palette.TextDim, lineHeight = 18.sp)
+                Spacer(Modifier.height(12.dp))
+                val campo = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = Palette.SurfaceHigh, unfocusedContainerColor = Palette.SurfaceHigh,
+                    focusedBorderColor = Palette.Brand, unfocusedBorderColor = Color.Transparent, cursorColor = Palette.Brand,
+                )
+                OutlinedTextField(nome, { nome = it; erro = null }, Modifier.fillMaxWidth(), placeholder = { Text("Usuário") }, singleLine = true,
+                    shape = RoundedCornerShape(12.dp), colors = campo, keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next))
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(senha, { senha = it; erro = null }, Modifier.fillMaxWidth(), placeholder = { Text("Senha") }, singleLine = true,
+                    shape = RoundedCornerShape(12.dp), colors = campo,
+                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done, keyboardType = androidx.compose.ui.text.input.KeyboardType.Password))
+                erro?.let { Text(it, fontSize = 13.sp, color = Palette.Error, modifier = Modifier.padding(top = 8.dp)) }
+                Spacer(Modifier.height(12.dp))
+                PillButton(if (entrando) "Entrando…" else "Entrar", null, primary = true) {
+                    if (entrando) return@PillButton
+                    entrando = true
+                    scope.launch {
+                        erro = dev.guisousa.badwolf.mobile.data.Conta.entrarComSenha(nome, senha)
+                        entrando = false
+                        if (erro == null) { senha = ""; Toast.makeText(context, "Conectado. Sincronizando…", Toast.LENGTH_SHORT).show() }
+                    }
+                }
+                Text("Ainda não tem conta? Crie no site W4LLE.", fontSize = 12.sp, color = Palette.TextFaint, modifier = Modifier.padding(top = 10.dp))
+            }
+        } else {
+            val quando = when {
+                sincronizando -> "Sincronizando agora…"
+                ultima == 0L -> "Ainda não sincronizou"
+                else -> "Sincronizado às " + timeFmt.format(Date(ultima))
+            }
+            SettingsRow("Conectado como ${u.nome.ifBlank { "sua conta" }}", "Onde parou, Minha lista e já assisti iguais em todos os aparelhos. $quando.", icon = Icons.Filled.Check) {}
+            SettingsDivider()
+            SettingsRow("Sincronizar agora", icon = Icons.Filled.Refresh) { dev.guisousa.badwolf.mobile.data.Nuvem.sincronizar(forcar = true) }
+            SettingsDivider()
+            SettingsRow("Sair da conta", "O que está no celular continua; só para de sincronizar.", danger = true) { confirmarSair = true }
+        }
+    }
+    if (confirmarSair) AlertDialog(
+        onDismissRequest = { confirmarSair = false },
+        title = { Text("Sair da conta?") },
+        text = { Text("O app continua funcionando neste celular, só para de sincronizar.") },
+        confirmButton = { TextButton(onClick = { dev.guisousa.badwolf.mobile.data.Conta.sair(); confirmarSair = false }) { Text("Sair", color = Palette.Error) } },
+        dismissButton = { TextButton(onClick = { confirmarSair = false }) { Text("Cancelar") } },
         containerColor = Palette.SurfaceHigh,
     )
 }

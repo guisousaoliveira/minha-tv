@@ -107,6 +107,13 @@ object Repository {
             todasSeries = todasSeries,
         )
         dados = d
+        // código do TMDB <-> nosso id, para a sincronização com a conta
+        catalogo.tmdbIds()?.let { t ->
+            tmdbFilme = t.f.entries.mapNotNull { (k, v) -> k.toLongOrNull()?.let { it to v } }.toMap()
+            tmdbSerie = t.s.entries.mapNotNull { (k, v) -> k.toLongOrNull()?.let { it to v } }.toMap()
+            filmeTmdb = tmdbFilme.entries.associate { (k, v) -> v to k }
+            serieTmdb = tmdbSerie.entries.associate { (k, v) -> v to k }
+        }
         searchIndex = null
         favCache = null
         catalogo.clearFichaCache()
@@ -121,11 +128,69 @@ object Repository {
         return true
     }
 
+    // ---------- Conta (sincronização) ----------
+
+    @Volatile private var tmdbFilme: Map<Long, Long> = emptyMap() // TMDB -> filme
+    @Volatile private var tmdbSerie: Map<Long, Long> = emptyMap()
+    @Volatile private var filmeTmdb: Map<Long, Long> = emptyMap() // filme -> TMDB
+    @Volatile private var serieTmdb: Map<Long, Long> = emptyMap()
+
+    /** "v2:e:<id>:T:E" (como o celular guarda a série na Minha lista) -> "v2:e:<id>" (como a nuvem e a TV). */
+    private fun serieDaUrl(url: String): String = if (url.startsWith(E)) E + url.removePrefix(E).substringBefore(':') else url
+
+    /** O que a [Nuvem] lê e grava no aparelho (sem mandar de volta para a nuvem). */
+    private val localNuvem = object : Nuvem.Local {
+        override fun pronto() = dados != null && filmeTmdb.isNotEmpty()
+        override fun tmdbDoFilme(id: Long) = filmeTmdb[id]
+        override fun tmdbDaSerie(id: Long) = serieTmdb[id]
+        override fun filmeDoTmdb(tmdb: Long) = tmdbFilme[tmdb]
+        override fun serieDoTmdb(tmdb: Long) = tmdbSerie[tmdb]
+        override fun tituloECapa(url: String): Pair<String, String?>? {
+            val d = dados ?: return null
+            return when {
+                url.startsWith(F) -> idOf(url, F)?.let { d.filmePorId[it]?.first }?.let { it.t to it.p }
+                url.startsWith(E) -> idOf(url, E)?.let { d.seriePorId[it]?.first }?.let { it.t to it.p }
+                else -> null
+            }
+        }
+        override fun onde(url: String) = LocalStore.ondeComHora(url)
+        override fun aplicarOnde(url: String, posicaoMs: Long, duracaoMs: Long, emMs: Long) = LocalStore.aplicarOnde(url, posicaoMs, duracaoMs, emMs)
+        // a série vai para a nuvem como série; aqui fica guardada como um episódio dela (o 1º)
+        override fun favoritos(): Set<String> = LocalStore.favorites.value.map { serieDaUrl(it) }.toSet()
+        override fun aplicarFavorito(url: String, ligado: Boolean) {
+            val now = LocalStore.favorites.value
+            val novo = if (url.startsWith(E)) {
+                val p = "$url:"
+                if (ligado) { if (now.any { it.startsWith(p) }) now else now + "${p}1:1" } else now.filterNot { it.startsWith(p) }.toSet()
+            } else if (ligado) now + url else now - url
+            if (novo != now) { LocalStore.setFavorites(novo); favCache = null }
+        }
+        override fun aplicarVisto(url: String) = LocalStore.aplicarVisto(url)
+        override fun recentesVod(): List<String> = LocalStore.recentVod().map { it.url }
+        override fun aplicarRecentes(urls: List<String>) {
+            val d = dados ?: return
+            urls.asReversed().forEach { u -> entryOf(d, u)?.let { LocalStore.addRecent(it) } }
+        }
+        override fun ler(chave: String) = LocalStore.lerTexto(chave)
+        override fun gravar(chave: String, valor: String?) = LocalStore.gravarTexto(chave, valor)
+    }
+
     @Synchronized
     fun init(context: Context) {
         if (::app.isInitialized) return
         app = context.applicationContext
         LocalStore.init(app)
+        Conta.init(app)
+        Nuvem.ligar(localNuvem)
+        scope.launch {
+            // entrou na conta: sincroniza na hora; saiu: esquece o que sabia da nuvem
+            var antes: String? = null
+            Conta.usuario.collect { u ->
+                if (u != null && u.id != antes) Nuvem.sincronizar(forcar = true)
+                if (u == null && antes != null) Nuvem.esquecer()
+                antes = u?.id
+            }
+        }
         SourceHealth.init(app)
         catalogo = Catalogo(File(app.filesDir, "v2"), Catalogo.defaultHttp())
         scope.launch {
@@ -149,14 +214,15 @@ object Repository {
             lastSync = now
             if (mudou || dados == null) carregar()
             _status.value = null
+            Nuvem.sincronizar()
         } catch (e: Exception) {
             android.util.Log.w("MinhaTV", "catálogo: não atualizou", e)
             _status.value = if (dados == null) "Não consegui baixar o catálogo. Confira a internet; tento de novo sozinho." else null
         }
     }
 
-    /** Ao voltar para o app: confere se o catálogo mudou (no máximo a cada 10 min). */
-    fun refreshIfChanged() { if (::app.isInitialized) scope.launch { sync() } }
+    /** Ao voltar para o app: confere se o catálogo mudou (no máximo a cada 10 min) e o que mudou na conta. */
+    fun refreshIfChanged() { if (::app.isInitialized) { scope.launch { sync() }; Nuvem.sincronizar() } }
 
     /** Botão "Atualizar agora". */
     fun refreshAllAsync() { scope.launch { sync(force = true) } }
@@ -427,7 +493,7 @@ object Repository {
 
     // ---------- Minha lista ----------
 
-    fun toggleFavorite(url: String): Boolean = LocalStore.toggleFavorite(url)
+    fun toggleFavorite(url: String): Boolean = LocalStore.toggleFavorite(url).also { Nuvem.favorito(serieDaUrl(url), it) }
 
     /** Na TV a Minha lista guarda o episódio da série; aqui a série conta como na lista se algum episódio dela estiver. */
     fun isShowFavorite(s: Show, favs: Set<String> = favorites.value): Boolean {
@@ -439,8 +505,10 @@ object Repository {
     fun toggleShowFavorite(s: Show, target: String?): Boolean {
         val p = E + s.key + ":"
         val now = favorites.value
-        return if (now.any { it.startsWith(p) }) { LocalStore.setFavorites(now.filterNot { it.startsWith(p) }.toSet()); false }
+        val ligado = if (now.any { it.startsWith(p) }) { LocalStore.setFavorites(now.filterNot { it.startsWith(p) }.toSet()); false }
         else { LocalStore.setFavorites(now + (target ?: "$p" + "1:1")); true }
+        Nuvem.favorito(E + s.key, ligado)
+        return ligado
     }
 
     /** Minha lista para mostrar: canais e filmes como [Entry], séries como [Show] (uma vez cada). */
@@ -467,11 +535,18 @@ object Repository {
     // ---------- Onde parou ----------
 
     fun getResume(url: String): Long = LocalStore.getResume(url)
-    fun saveResume(url: String, position: Long, duration: Long) = LocalStore.saveResume(url, position, duration)
+    fun saveResume(url: String, position: Long, duration: Long) {
+        val jaVisto = LocalStore.isWatched(url)
+        LocalStore.saveResume(url, position, duration)
+        when {
+            !jaVisto && LocalStore.isWatched(url) -> Nuvem.visto(url, true) // chegou perto do fim: conta como visto
+            LocalStore.getResume(url) > 0 -> Nuvem.onde(url, position, duration)
+        }
+    }
     val watched: StateFlow<Set<String>> get() = LocalStore.watched
     fun isWatched(url: String) = LocalStore.isWatched(url)
-    fun markWatched(url: String) = LocalStore.markWatched(url)
-    fun unmarkWatched(url: String) = LocalStore.unmarkWatched(url)
+    fun markWatched(url: String) { LocalStore.markWatched(url); Nuvem.visto(url, true) }
+    fun unmarkWatched(url: String) { LocalStore.unmarkWatched(url); Nuvem.visto(url, false) }
     fun clearResume(url: String) = LocalStore.clearResume(url)
     fun duration(url: String): Long = LocalStore.duration(url)
     fun progress(url: String): Float? = LocalStore.progress(url)
