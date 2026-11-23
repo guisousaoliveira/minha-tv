@@ -527,6 +527,10 @@ object Repository {
         get() = LocalStore.resizeMode
         set(v) { LocalStore.resizeMode = v }
 
+    var autoUpdate: Boolean
+        get() = LocalStore.autoUpdate
+        set(v) { LocalStore.autoUpdate = v }
+
     var lastChannelUrl: String?
         get() = LocalStore.lastChannelUrl
         set(v) { LocalStore.lastChannelUrl = v }

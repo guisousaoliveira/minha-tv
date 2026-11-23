@@ -184,6 +184,11 @@ object LocalStore {
         get() = prefs.getInt("resize_mode", 0)
         set(v) = edit("resize_mode") { putInt("resize_mode", v) }
 
+    /** Confere sozinho se há versão nova do app ao abrir (Ajustes > Atualização automática). */
+    var autoUpdate: Boolean
+        get() = prefs.getBoolean("auto_update", true)
+        set(v) = edit("auto_update") { putBoolean("auto_update", v) }
+
     var lastChannelUrl: String?
         get() = prefs.getString("last_channel", null)
         set(v) = edit("last_channel") { putString("last_channel", v) }

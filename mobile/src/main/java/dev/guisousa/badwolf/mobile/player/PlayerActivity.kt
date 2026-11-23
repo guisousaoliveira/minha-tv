@@ -459,7 +459,8 @@ class PlayerActivity : ComponentActivity() {
             useController = false
             keepScreenOn = true
             // sempre começa no formato original do vídeo
-            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+            // formato escolhido em Ajustes (ou da última vez no player)
+            resizeMode = Repository.resizeMode.takeIf { it in 0..4 } ?: AspectRatioFrameLayout.RESIZE_MODE_FIT
             subtitleView?.apply {
                 setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * 1.15f)
                 setStyle(CaptionStyleCompat(Color.WHITE, 0x99000000.toInt(), Color.TRANSPARENT, CaptionStyleCompat.EDGE_TYPE_OUTLINE, Color.BLACK, Typeface.DEFAULT_BOLD))
@@ -1030,6 +1031,7 @@ class PlayerActivity : ComponentActivity() {
     private fun resizePanel() {
         controls.showPanel("Formato da tela", resizeModes.map { PlayerControls.Choice(resizeName(it), selected = it == playerView.resizeMode) }) { i ->
             playerView.resizeMode = resizeModes[i]
+            Repository.resizeMode = resizeModes[i]
         }
     }
 
