@@ -1,0 +1,3 @@
+--------- beginning of main
+--------- beginning of system
+11-24 18:31:13.555  3107  3133 I MinhaTV : catálogo 59723b7d: 52989 canais, 31122 filmes, 11452 séries

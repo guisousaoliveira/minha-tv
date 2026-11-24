@@ -1,0 +1,87 @@
+--------- beginning of main
+11-24 18:33:33.806  4260  4260 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.profilebootclasspath"
+11-24 18:33:33.806  4260  4260 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.enable_apex_image"
+11-24 18:33:33.806  4260  4260 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.disable_lock_profiling"
+11-24 18:33:33.806  4260  4260 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.enable_generational_cc"
+11-24 18:33:39.244  4300  4300 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.profilebootclasspath"
+11-24 18:33:39.244  4300  4300 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.enable_apex_image"
+11-24 18:33:39.244  4300  4300 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.disable_lock_profiling"
+11-24 18:33:39.244  4300  4300 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.enable_generational_cc"
+11-24 18:33:39.316  3107  3107 E libc    : Access denied finding property "vendor.display-size"
+11-24 18:33:39.342   335   335 E SurfaceFlinger: Attempt to set frame rate on an unrecognized IGraphicBufferProducer
+11-24 18:33:41.695  2440  2527 E cr_ClientAuthCredsWidevine: Server returned HTTP error code 401
+11-24 18:33:41.695  2440  2527 E cr_ClientAuthCredsWidevine: attemptCredsProvisioning. Received null response.
+11-24 18:33:42.631  4322  4322 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.profilebootclasspath"
+11-24 18:33:42.631  4322  4322 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.enable_apex_image"
+11-24 18:33:42.631  4322  4322 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.disable_lock_profiling"
+11-24 18:33:42.631  4322  4322 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.enable_generational_cc"
+11-24 18:33:46.009  4339  4339 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.profilebootclasspath"
+11-24 18:33:46.009  4339  4339 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.enable_apex_image"
+11-24 18:33:46.009  4339  4339 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.disable_lock_profiling"
+11-24 18:33:46.009  4339  4339 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.enable_generational_cc"
+11-24 18:33:47.123  4352  4352 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.profilebootclasspath"
+11-24 18:33:47.123  4352  4352 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.enable_apex_image"
+11-24 18:33:47.123  4352  4352 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.disable_lock_profiling"
+11-24 18:33:47.123  4352  4352 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.enable_generational_cc"
+11-24 18:33:48.229  4365  4365 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.profilebootclasspath"
+11-24 18:33:48.230  4365  4365 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.enable_apex_image"
+11-24 18:33:48.230  4365  4365 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.disable_lock_profiling"
+11-24 18:33:48.230  4365  4365 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.enable_generational_cc"
+11-24 18:33:49.351  4378  4378 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.profilebootclasspath"
+11-24 18:33:49.351  4378  4378 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.enable_apex_image"
+11-24 18:33:49.351  4378  4378 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.disable_lock_profiling"
+11-24 18:33:49.351  4378  4378 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.enable_generational_cc"
+11-24 18:33:50.464  4391  4391 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.profilebootclasspath"
+11-24 18:33:50.464  4391  4391 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.enable_apex_image"
+11-24 18:33:50.464  4391  4391 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.disable_lock_profiling"
+11-24 18:33:50.464  4391  4391 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.enable_generational_cc"
+11-24 18:33:51.574  4404  4404 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.profilebootclasspath"
+11-24 18:33:51.574  4404  4404 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.enable_apex_image"
+11-24 18:33:51.574  4404  4404 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.disable_lock_profiling"
+11-24 18:33:51.574  4404  4404 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.enable_generational_cc"
+11-24 18:33:52.681  4417  4417 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.profilebootclasspath"
+11-24 18:33:52.681  4417  4417 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.enable_apex_image"
+11-24 18:33:52.681  4417  4417 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.disable_lock_profiling"
+11-24 18:33:52.681  4417  4417 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.enable_generational_cc"
+11-24 18:33:53.804  4430  4430 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.profilebootclasspath"
+11-24 18:33:53.804  4430  4430 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.enable_apex_image"
+11-24 18:33:53.804  4430  4430 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.disable_lock_profiling"
+11-24 18:33:53.804  4430  4430 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.enable_generational_cc"
+11-24 18:33:55.275  4452  4452 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.profilebootclasspath"
+11-24 18:33:55.275  4452  4452 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.enable_apex_image"
+11-24 18:33:55.275  4452  4452 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.disable_lock_profiling"
+11-24 18:33:55.276  4452  4452 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.enable_generational_cc"
+11-24 18:33:55.932  2440  2440 E cr_LocalGrpcAuthService: Calling package not allowed.
+11-24 18:33:55.932  1151  1151 E LocalGrpcAuthClientImpl: invalid message
+11-24 18:33:55.932  1151  1151 E cr_AssistantManagerInternal$AssistantLocalGrpcAuthCallback: the port or token cannot be retrieved from local grpc client
+11-24 18:33:56.605  4465  4465 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.profilebootclasspath"
+11-24 18:33:56.605  4465  4465 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.enable_apex_image"
+11-24 18:33:56.605  4465  4465 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.disable_lock_profiling"
+11-24 18:33:56.605  4465  4465 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.enable_generational_cc"
+11-24 18:33:57.463  2440  2440 E cr_GrpcIpcUidPolicy: Unauthorized access attempt from com.google.android.katniss
+11-24 18:33:57.463  2440  2440 E cr_GrpcIpcSocketService: Calling package not allowed.
+11-24 18:33:57.463  1151  1151 E GrpcIpcSocketClientImpl: invalid message
+11-24 18:33:57.463  1151  3759 E native  : E0000 00:00:1795545237.463492    3759 grpc_ipc_socket_client.cc:77] Error for usonia-ipc-socket
+11-24 18:33:57.463  1151  3759 E native  : E0000 00:00:1795545237.463523    3759 android_grpc_builder.cc:149] Could not get a socket for binder:com.google.android.apps.mediashell:usonia-ipc-socket
+11-24 18:33:57.463  1151  3759 E native  : E0000 00:00:1795545237.463533    3759 grpc_manager_impl.cc:634] GRPC[uri=]: Grpc cannot connect to host {UNDEFINED}
+11-24 18:33:57.463  1151  3759 E native  : E0000 00:00:1795545237.463542    3759 grpc_manager_impl.cc:782] GRPC[uri=]: status=[error_code=RESOURCE_EXHAUSTED, error_message=Cannot create a channel. Call to binder:com.google.android.apps.mediashell:usonia-ipc-socket ignored.]
+11-24 18:33:57.463  1151  3759 E native  : E0000 00:00:1795545237.463555    3759 grpc_manager_impl.cc:782] GRPC[uri=]: status=[error_code=RESOURCE_EXHAUSTED, error_message=Cannot create a channel. Call to binder:com.google.android.apps.mediashell:usonia-ipc-socket ignored.]
+11-24 18:33:57.463  1151  3759 E native  : E0000 00:00:1795545237.463565    3759 grpc_manager_impl.cc:782] GRPC[uri=]: status=[error_code=RESOURCE_EXHAUSTED, error_message=Cannot create a channel. Call to binder:com.google.android.apps.mediashell:usonia-ipc-socket ignored.]
+11-24 18:33:57.463  1151  3759 E native  : E0000 00:00:1795545237.463577    3759 grpc_manager_impl.cc:782] GRPC[uri=]: status=[error_code=RESOURCE_EXHAUSTED, error_message=Cannot create a channel. Call to binder:com.google.android.apps.mediashell:usonia-ipc-socket ignored.]
+11-24 18:33:57.463  1151  3759 E native  : E0000 00:00:1795545237.463587    3759 grpc_manager_impl.cc:782] GRPC[uri=]: status=[error_code=RESOURCE_EXHAUSTED, error_message=Cannot create a channel. Call to binder:com.google.android.apps.mediashell:usonia-ipc-socket ignored.]
+11-24 18:33:57.463  1151  3759 E native  : E0000 00:00:1795545237.463597    3759 grpc_manager_impl.cc:782] GRPC[uri=]: status=[error_code=RESOURCE_EXHAUSTED, error_message=Cannot create a channel. Call to binder:com.google.android.apps.mediashell:usonia-ipc-socket ignored.]
+11-24 18:33:57.463  1151  3759 E native  : E0000 00:00:1795545237.463607    3759 grpc_manager_impl.cc:782] GRPC[uri=]: status=[error_code=RESOURCE_EXHAUSTED, error_message=Cannot create a channel. Call to binder:com.google.android.apps.mediashell:usonia-ipc-socket ignored.]
+11-24 18:33:57.463  1151  3759 E native  : E0000 00:00:1795545237.463612    3759 ipc_common.h:486] Error in fetching local device info: [error_code=RESOURCE_EXHAUSTED, error_message=Cannot create a channel. Call to binder:com.google.android.apps.mediashell:usonia-ipc-socket ignored.]
+11-24 18:33:57.463  1151  3759 E native  : E0000 00:00:1795545237.463618    3759 grpc_manager_impl.cc:782] GRPC[uri=]: status=[error_code=RESOURCE_EXHAUSTED, error_message=Cannot create a channel. Call to binder:com.google.android.apps.mediashell:usonia-ipc-socket ignored.]
+11-24 18:33:57.463  1151  3759 E native  : E0000 00:00:1795545237.463628    3759 grpc_manager_impl.cc:782] GRPC[uri=]: status=[error_code=RESOURCE_EXHAUSTED, error_message=Cannot create a channel. Call to binder:com.google.android.apps.mediashell:usonia-ipc-socket ignored.]
+11-24 18:33:57.463  1151  3759 E native  : E0000 00:00:1795545237.463632    3759 directory_service_with_grpc_ipc.cc:277] IPC for DirectoryService.UpdateStateObservers closed: status=[error_code=RESOURCE_EXHAUSTED, error_message=Cannot create a channel. Call to binder:com.google.android.apps.mediashell:usonia-ipc-socket ignored.]
+11-24 18:33:57.463  1151  3759 E native  : E0000 00:00:1795545237.463638    3759 grpc_manager_impl.cc:782] GRPC[uri=]: status=[error_code=RESOURCE_EXHAUSTED, error_message=Cannot create a channel. Call to binder:com.google.android.apps.mediashell:usonia-ipc-socket ignored.]
+11-24 18:33:57.463  1151  3759 E native  : E0000 00:00:1795545237.463642    3759 directory_service_with_grpc_ipc.cc:378] IPC for DirectoryService.UpdateMessageObservers closed: status=[error_code=RESOURCE_EXHAUSTED, error_message=Cannot create a channel. Call to binder:com.google.android.apps.mediashell:usonia-ipc-socket ignored.]
+11-24 18:33:57.463  1151  3759 E native  : E0000 00:00:1795545237.463647    3759 grpc_manager_impl.cc:782] GRPC[uri=]: status=[error_code=RESOURCE_EXHAUSTED, error_message=Cannot create a channel. Call to binder:com.google.android.apps.mediashell:usonia-ipc-socket ignored.]
+11-24 18:33:57.506  2440  2440 E chromium: [2440:2440:ERROR:ccs_transport_https.cc(1198)] CreateAndSignJwtAsync() returned invalid JWT. Not attaching to headers.
+11-24 18:33:57.506  2440  2440 E chromium: [2440:2440:ERROR:cast_auth_headers.cc(169)] Unable to update signature header
+11-24 18:33:57.531  2440  2440 E chromium: [2440:2440:ERROR:ccs_transport_https.cc(1846)] Received response code 403 for message_id = d7e3e223-ce37-4e8b-b4fa-5fd88b609204 - 
+11-24 18:33:57.710  4478  4478 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.profilebootclasspath"
+11-24 18:33:57.710  4478  4478 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.enable_apex_image"
+11-24 18:33:57.710  4478  4478 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.disable_lock_profiling"
+11-24 18:33:57.710  4478  4478 E libc    : Access denied finding property "persist.device_config.runtime_native_boot.enable_generational_cc"
