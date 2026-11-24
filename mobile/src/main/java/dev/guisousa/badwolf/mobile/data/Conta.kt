@@ -77,6 +77,13 @@ object Conta {
 
     val conectado get() = _usuario.value != null
 
+    /** Se o usuário já passou pela tela de boas-vindas (entrou, criou conta ou escolheu continuar sem conta). */
+    var jaViuBoasVindas: Boolean
+        get() = if (::prefs.isInitialized) prefs.getBoolean("ja_viu_boas_vindas", false) else false
+        set(value) {
+            if (::prefs.isInitialized) prefs.edit().putBoolean("ja_viu_boas_vindas", value).apply()
+        }
+
     // ---------- Sessão ----------
 
     private fun post(path: String, body: String, bearer: String? = null): Response {
@@ -140,7 +147,7 @@ object Conta {
             if (!runCatching { renovar(refresh) }.getOrDefault(false)) return@withLock false
             val id = prefs.getString("user_id", null) ?: return@withLock false
             val nome = buscarNome(id, prefs.getString("access", null)!!) ?: nomeDica ?: ""
-            prefs.edit().putString("nome", nome).apply()
+            prefs.edit().putString("nome", nome).putBoolean("ja_viu_boas_vindas", true).apply()
             _usuario.value = Usuario(id, nome)
             true
         }
@@ -170,7 +177,7 @@ object Conta {
                     prefs.edit().putString("access", access).putString("refresh", refresh)
                         .putLong("expira", System.currentTimeMillis() + expiresIn * 1000).putString("user_id", userId).apply()
                     val exibir = buscarNome(userId, access) ?: nome
-                    prefs.edit().putString("nome", exibir).apply()
+                    prefs.edit().putString("nome", exibir).putBoolean("ja_viu_boas_vindas", true).apply()
                     _usuario.value = Usuario(userId, exibir)
                     null
                 }
@@ -178,8 +185,79 @@ object Conta {
         }
     }
 
+    /**
+     * Cria uma nova conta W4LLE com usuário e senha.
+     * Se o Supabase devolver sessão pronta (refresh_token), autentica na hora; caso contrário, chama [entrarComSenha].
+     * Devolve null se deu certo, ou uma mensagem de erro em português.
+     */
+    suspend fun cadastrarComSenha(usuario: String, senha: String): String? = withContext(Dispatchers.IO) {
+        val nome = usuario.trim().lowercase().replace(Regex("\\s+"), "")
+        if (nome.isEmpty()) return@withContext "Digite um nome de usuário."
+        if (nome.length < 3) return@withContext "O usuário precisa ter pelo menos 3 caracteres."
+        if (senha.length < 6) return@withContext "A senha precisa ter pelo menos 6 caracteres."
+
+        val body = buildJsonObject {
+            put("email", "$nome@w4lle.tv")
+            put("password", senha)
+            putJsonObject("data") { put("username", nome) }
+        }.toString()
+
+        var precisaLogin = false
+        val erro = tokenLock.withLock {
+            runCatching {
+                post("/auth/v1/signup", body).use { r ->
+                    val text = r.body?.string().orEmpty()
+                    if (r.code == 402) return@withLock "O servidor da conta W4LLE está pausado (passou do limite do plano). Tente mais tarde."
+                    if (!r.isSuccessful) {
+                        val msgLower = text.lowercase()
+                        return@withLock when {
+                            "already" in msgLower || "registered" in msgLower || "exists" in msgLower ->
+                                "Esse usuário já existe. Escolha outro ou entre na sua conta."
+                            "password" in msgLower || "weak" in msgLower ->
+                                "A senha é muito fraca. Use pelo menos 6 caracteres."
+                            r.code == 400 || r.code == 422 ->
+                                "Não foi possível criar a conta. Confira os dados e tente de novo."
+                            else -> "Não consegui criar a conta agora (erro ${r.code}). Tente de novo."
+                        }
+                    }
+                    val o = json.parseToJsonElement(text).jsonObject
+                    val sessao = o["session"] as? JsonObject ?: o
+                    val access = sessao["access_token"]?.jsonPrimitive?.content
+                    val refresh = sessao["refresh_token"]?.jsonPrimitive?.content
+                    val userId = (o["user"] as? JsonObject ?: sessao["user"] as? JsonObject)
+                        ?.get("id")?.jsonPrimitive?.content
+                    if (!access.isNullOrBlank() && !refresh.isNullOrBlank() && !userId.isNullOrBlank()) {
+                        val expiresIn = sessao["expires_in"]?.jsonPrimitive?.longOrNull ?: 3600
+                        prefs.edit()
+                            .putString("access", access)
+                            .putString("refresh", refresh)
+                            .putLong("expira", System.currentTimeMillis() + expiresIn * 1000)
+                            .putString("user_id", userId)
+                            .apply()
+                        val exibir = buscarNome(userId, access) ?: nome
+                        prefs.edit().putString("nome", exibir).putBoolean("ja_viu_boas_vindas", true).apply()
+                        _usuario.value = Usuario(userId, exibir)
+                        null
+                    } else {
+                        precisaLogin = true
+                        null
+                    }
+                }
+            }.getOrElse { "Sem internet? Não consegui falar com o servidor." }
+        }
+        if (erro != null) return@withContext erro
+        if (precisaLogin) return@withContext entrarComSenha(usuario, senha)
+        null
+    }
+
     private fun limpar() {
-        prefs.edit().clear().apply()
+        prefs.edit()
+            .remove("access")
+            .remove("refresh")
+            .remove("expira")
+            .remove("user_id")
+            .remove("nome")
+            .apply()
         _usuario.value = null
     }
 

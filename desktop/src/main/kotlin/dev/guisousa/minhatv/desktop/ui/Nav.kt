@@ -27,6 +27,11 @@ class Nav(val player: PlayerController) {
     val stack = mutableStateListOf<Route>()
     val top: Route? get() = stack.lastOrNull()
     var fullscreen by mutableStateOf(false)
+    /** null = fechada; 0 = Entrar; 1 = Criar conta. */
+    var authModalTab by mutableStateOf<Int?>(null)
+
+    fun openAuth(initialTab: Int = 0) { authModalTab = initialTab.coerceIn(0, 1) }
+    fun closeAuth() { authModalTab = null }
 
     fun selectTab(t: Tab) {
         if (player.item != null && (t != Tab.LIVE || stack.isNotEmpty())) player.stop()

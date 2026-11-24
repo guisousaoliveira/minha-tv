@@ -2,7 +2,9 @@ package dev.guisousa.minhatv.ui
 
 import android.text.format.DateFormat
 import android.widget.Toast
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +19,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -24,6 +27,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.DisposableEffect
@@ -894,88 +898,264 @@ private fun ContaRow() {
     var entrando by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val u = usuario
-    if (u == null) {
-        ListRow(
-            title = "Sem conta",
-            subtitle = "Opcional. Entre com sua conta W4LLE para o histórico e a Minha lista irem junto para o celular, o Windows e o site.",
-            error = false,
-        ) { TvButton("Entrar", onClick = { entrando = true }) }
-    } else {
-        val ultima by dev.guisousa.minhatv.data.Nuvem.ultima.collectAsState()
-        val sincronizando by dev.guisousa.minhatv.data.Nuvem.sincronizando.collectAsState()
-        val quando = when {
-            sincronizando -> "sincronizando agora…"
-            ultima == 0L -> "ainda não sincronizou"
-            else -> "sincronizado às " + java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(ultima))
-        }
-        ListRow(
-            title = "Conectado como ${u.nome.ifBlank { "sua conta" }}",
-            subtitle = "Onde parou, Minha lista e já assisti iguais na TV, no celular e no site · $quando",
-            error = false,
-        ) {
-            TvButton("Sincronizar", onClick = { dev.guisousa.minhatv.data.Nuvem.sincronizar(forcar = true) })
-            Spacer(Modifier.width(12.dp))
-            TvButton("Sair", onClick = {
-                confirm(context, "Sair da conta?", "O app continua funcionando nesta TV, só para de sincronizar.", "Sair") { Conta.sair() }
-            })
+    val cardShape = RoundedCornerShape(14.dp)
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp)
+            .clip(cardShape)
+            .background(Palette.Surface)
+            .border(1.dp, Palette.Hairline, cardShape)
+            .padding(horizontal = 8.dp, vertical = 10.dp),
+    ) {
+        if (u == null) {
+            ListRow(
+                title = "Entre ou crie sua conta grátis",
+                subtitle = "Opcional. Sincronize Minha lista, onde parou e já assisti entre TV, celular, PC e site.",
+                error = false,
+            ) {
+                TvButton("Entrar / Criar conta", onClick = { entrando = true })
+            }
+        } else {
+            val ultima by dev.guisousa.minhatv.data.Nuvem.ultima.collectAsState()
+            val sincronizando by dev.guisousa.minhatv.data.Nuvem.sincronizando.collectAsState()
+            val quando = when {
+                sincronizando -> "sincronizando agora…"
+                ultima == 0L -> "ainda não sincronizou"
+                else -> "sincronizado às " + java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(ultima))
+            }
+            ListRow(
+                title = "Conectado como ${u.nome.ifBlank { "sua conta" }}",
+                subtitle = "Onde parou, Minha lista e já assisti iguais na TV, no celular e no site · $quando",
+                error = false,
+            ) {
+                TvButton("Sincronizar", onClick = { dev.guisousa.minhatv.data.Nuvem.sincronizar(forcar = true) })
+                Spacer(Modifier.width(12.dp))
+                TvButton("Sair", onClick = {
+                    confirm(context, "Sair da conta?", "O app continua funcionando nesta TV, só para de sincronizar.", "Sair") { Conta.sair() }
+                })
+            }
         }
     }
-    if (entrando) EntrarDialog(onClose = { entrando = false })
+    if (entrando) EntrarDialog(onClose = { entrando = false }, boasVindas = false)
 }
 
-/** Tela de entrar: QR + código. A pessoa entra pelo celular e a TV conecta sozinha. */
+/**
+ * Tela dedicada de autenticação por QR Code ("Obsidian Cinema").
+ * A pessoa aponta a câmera do celular, entra ou cria conta grátis, e a TV conecta automaticamente.
+ */
 @Composable
-private fun EntrarDialog(onClose: () -> Unit) {
+internal fun EntrarDialog(onClose: () -> Unit, boasVindas: Boolean = false) {
     var estado by remember { mutableStateOf<Conta.EstadoLogin?>(null) }
     DisposableEffect(Unit) {
         val job = Conta.esperarLogin { estado = it }
         onDispose { job.cancel() }
     }
     LaunchedEffect(estado) {
-        if (estado is Conta.EstadoLogin.Pronto) { kotlinx.coroutines.delay(1800); onClose() }
+        if (estado is Conta.EstadoLogin.Pronto) {
+            Conta.marcarBoasVindasVistas()
+            kotlinx.coroutines.delay(1600)
+            onClose()
+        }
     }
     val closeFocus = remember { FocusRequester() }
+    val dismiss = {
+        Conta.marcarBoasVindasVistas()
+        onClose()
+    }
     androidx.compose.ui.window.Dialog(
-        onDismissRequest = onClose,
+        onDismissRequest = dismiss,
         properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        Box(Modifier.fillMaxSize().background(Color(0xF2000000)), contentAlignment = Alignment.Center) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(48.dp)) {
+        Box(
+            Modifier.fillMaxSize().background(Color(0xF506070A)),
+            contentAlignment = Alignment.Center,
+        ) {
+            val cardShape = RoundedCornerShape(20.dp)
+            Row(
+                Modifier
+                    .widthIn(max = 980.dp)
+                    .padding(horizontal = 40.dp)
+                    .clip(cardShape)
+                    .background(Palette.Surface)
+                    .border(1.dp, Palette.Hairline, cardShape)
+                    .padding(36.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(44.dp),
+            ) {
                 val e = estado
                 val codigo = (e as? Conta.EstadoLogin.Aguardando)?.codigo
-                Box(Modifier.size(260.dp).background(Color.White, RoundedCornerShape(10.dp)).padding(10.dp), contentAlignment = Alignment.Center) {
-                    if (codigo != null) QrCode("${Conta.PAGINA}#$codigo", Modifier.fillMaxSize())
-                    else Spinner(32.dp)
-                }
-                Column(Modifier.width(420.dp)) {
-                    Text("Entrar com a conta W4LLE", fontSize = 26.sp, fontWeight = FontWeight.SemiBold, color = Palette.Text)
+
+                // Coluna esquerda: QR Code em moldura branca nítida + status ao vivo
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    val qrFrame = RoundedCornerShape(16.dp)
+                    Box(
+                        Modifier
+                            .size(264.dp)
+                            .clip(qrFrame)
+                            .background(Color.White)
+                            .border(2.dp, Palette.Brand.copy(alpha = 0.45f), qrFrame)
+                            .padding(14.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (codigo != null) QrCode("${Conta.PAGINA}#$codigo", Modifier.fillMaxSize())
+                        else Spinner(32.dp)
+                    }
                     Spacer(Modifier.height(16.dp))
-                    when (e) {
-                        is Conta.EstadoLogin.Pronto -> Text("Pronto! Conectado como ${e.nome.ifBlank { "sua conta" }}.", fontSize = 18.sp, color = Palette.Text)
-                        is Conta.EstadoLogin.Entrando -> Text("Conectando…", fontSize = 18.sp, color = Palette.Text)
-                        else -> {
-                            Text(
-                                "Aponte a câmera do celular para o QR Code e entre com seu usuário e senha.\n\nOu abra no celular:",
-                                fontSize = 16.sp, color = Palette.TextDim, lineHeight = 24.sp,
-                            )
-                            Spacer(Modifier.height(6.dp))
-                            Text(Conta.PAGINA.removePrefix("https://"), fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = Palette.Text)
-                            Spacer(Modifier.height(8.dp))
-                            Text("e digite o código", fontSize = 16.sp, color = Palette.TextDim)
-                            Spacer(Modifier.height(6.dp))
-                            Text(codigo?.let { Conta.mostrarCodigo(it) } ?: "…", fontSize = 40.sp, fontWeight = FontWeight.Bold, color = Palette.Text, letterSpacing = 4.sp)
-                            if (e is Conta.EstadoLogin.Erro) Text(e.msg, fontSize = 14.sp, color = Palette.Error, modifier = Modifier.padding(top = 8.dp))
-                            Spacer(Modifier.height(12.dp))
-                            Text("Não tem conta? Crie grátis em w4lle-tv.vercel.app", fontSize = 13.sp, color = Palette.TextFaint)
+                    // Indicador de status ao vivo
+                    Row(
+                        Modifier
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(Palette.SurfaceHigh)
+                            .border(1.dp, Palette.Hairline, RoundedCornerShape(999.dp))
+                            .padding(horizontal = 14.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        when (e) {
+                            is Conta.EstadoLogin.Pronto -> {
+                                Box(Modifier.size(8.dp).clip(CircleShape).background(Palette.Success))
+                                Text("Conectado!", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Palette.Success)
+                            }
+                            is Conta.EstadoLogin.Entrando -> {
+                                Spinner(13.dp)
+                                Text("Conectando conta…", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Palette.Text)
+                            }
+                            is Conta.EstadoLogin.Erro -> {
+                                Box(Modifier.size(8.dp).clip(CircleShape).background(Palette.Error))
+                                Text("Erro ao conectar", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Palette.Error)
+                            }
+                            else -> {
+                                Box(Modifier.size(8.dp).clip(CircleShape).background(Palette.Brand))
+                                Text("Aguardando celular…", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = Palette.TextDim)
+                            }
                         }
                     }
-                    Spacer(Modifier.height(24.dp))
-                    TvButton("Fechar", modifier = Modifier.focusRequester(closeFocus), onClick = onClose)
+                }
+
+                // Coluna direita: Marca Bad Wolf, 3 passos, código gigante e botão de pular/voltar
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Image(
+                            androidx.compose.ui.res.painterResource(dev.guisousa.minhatv.R.drawable.logo_lobo),
+                            contentDescription = null,
+                            modifier = Modifier.size(32.dp),
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Text("BAD WOLF", fontSize = 16.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp, color = Palette.Text)
+                        Spacer(Modifier.width(6.dp))
+                        Text("TV", fontSize = 16.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp, color = Palette.Brand)
+                        Spacer(Modifier.width(14.dp))
+                        Box(
+                            Modifier
+                                .clip(RoundedCornerShape(999.dp))
+                                .background(Palette.BrandSoft)
+                                .padding(horizontal = 10.dp, vertical = 3.dp),
+                        ) {
+                            Text("CONTA OPCIONAL", fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, color = Palette.Brand)
+                        }
+                    }
+
+                    Spacer(Modifier.height(14.dp))
+
+                    when (e) {
+                        is Conta.EstadoLogin.Pronto -> {
+                            Text(
+                                "Tudo pronto, ${e.nome.ifBlank { "bem-vindo" }}!",
+                                fontSize = 28.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Palette.Text,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                "Sua Minha lista, onde parou e já assisti já estão sincronizados nesta TV.",
+                                fontSize = 16.sp,
+                                color = Palette.TextDim,
+                                lineHeight = 23.sp,
+                            )
+                        }
+                        is Conta.EstadoLogin.Entrando -> {
+                            Text("Conectando sua conta…", fontSize = 28.sp, fontWeight = FontWeight.ExtraBold, color = Palette.Text)
+                            Spacer(Modifier.height(8.dp))
+                            Text("Só um instante enquanto preparamos sua sincronização.", fontSize = 16.sp, color = Palette.TextDim)
+                        }
+                        else -> {
+                            Text(
+                                "Entre ou crie sua conta grátis",
+                                fontSize = 26.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Palette.Text,
+                            )
+                            Spacer(Modifier.height(14.dp))
+                            AuthStep(1, "Aponte a câmera do celular para o QR Code")
+                            Spacer(Modifier.height(8.dp))
+                            AuthStep(2, "Entre ou crie sua conta grátis na página")
+                            Spacer(Modifier.height(8.dp))
+                            AuthStep(3, "A TV conecta automaticamente na hora")
+
+                            Spacer(Modifier.height(18.dp))
+
+                            // Cartão do código manual gigante (XXXX-XXXX)
+                            val codeShape = RoundedCornerShape(12.dp)
+                            Column(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clip(codeShape)
+                                    .background(Palette.SurfaceHigh)
+                                    .border(1.dp, Palette.Hairline, codeShape)
+                                    .padding(horizontal = 18.dp, vertical = 12.dp),
+                            ) {
+                                Text(
+                                    "Ou acesse ${Conta.PAGINA.removePrefix("https://")} e digite o código:",
+                                    fontSize = 13.sp,
+                                    color = Palette.TextDim,
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    codigo?.let { Conta.mostrarCodigo(it) } ?: "····-····",
+                                    fontSize = 36.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = Palette.Brand,
+                                    letterSpacing = 5.sp,
+                                )
+                            }
+
+                            if (e is Conta.EstadoLogin.Erro) {
+                                Spacer(Modifier.height(10.dp))
+                                Text(e.msg, fontSize = 14.sp, color = Palette.Error)
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(22.dp))
+                    TvButton(
+                        if (boasVindas) "Continuar sem conta" else "Voltar",
+                        modifier = Modifier.focusRequester(closeFocus),
+                        onClick = dismiss,
+                    )
                 }
             }
         }
     }
     LaunchedEffect(Unit) { runCatching { closeFocus.requestFocus() } }
+}
+
+@Composable
+private fun AuthStep(number: Int, text: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier
+                .size(24.dp)
+                .clip(CircleShape)
+                .background(Palette.BrandSoft)
+                .border(1.dp, Palette.Brand.copy(alpha = 0.55f), CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text("$number", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Palette.Brand)
+        }
+        Spacer(Modifier.width(12.dp))
+        Text(text, fontSize = 15.sp, color = Palette.Text, lineHeight = 20.sp)
+    }
 }
 
 @Composable

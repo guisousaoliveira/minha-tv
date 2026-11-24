@@ -188,9 +188,19 @@ fun AppRoot(onLoaded: () -> Unit) {
     // se o Início não tiver cartão para focar, o foco fica na aba
     androidx.compose.runtime.SideEffect { HomeFocus.fallback = { runCatching { tabRequesters[Tab.HOME.ordinal].requestFocus() } } }
 
+    // Boas-vindas opcional na 1ª abertura (1 toque em OK pula e nunca mais aparece)
+    var showWelcomeAuth by rememberSaveable { mutableStateOf(false) }
+    var welcomeChecked by rememberSaveable { mutableStateOf(false) }
+
     LaunchedEffect(loading) {
         if (!loading) {
             onLoaded()
+            if (!welcomeChecked) {
+                welcomeChecked = true
+                if (!dev.guisousa.minhatv.data.Conta.conectado && !dev.guisousa.minhatv.data.Conta.jaViuBoasVindas) {
+                    showWelcomeAuth = true
+                }
+            }
             // o Início pega o foco no primeiro cartão (HomeScreen); nas outras abas, ou sem catálogo, fica na aba
             if (Tab.entries[tab] != Tab.HOME || Repository.library.value.isEmpty || HomeFocus.done) runCatching { tabRequesters[tab].requestFocus() }
         }
@@ -288,7 +298,7 @@ fun AppRoot(onLoaded: () -> Unit) {
         Row(
             Modifier.fillMaxWidth()
                 // o menu fica por cima da tela (o fundo do destaque passa por trás dele)
-                .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(androidx.compose.ui.graphics.Color(0xE6000000), androidx.compose.ui.graphics.Color.Transparent)))
+                .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(androidx.compose.ui.graphics.Color(0xE606070A), androidx.compose.ui.graphics.Color.Transparent)))
                 // subindo da tela para o menu, o foco cai na aba aberta (e não sempre no Início)
                 .focusProperties { enter = { tabRequesters[tab] } }
                 .onFocusChanged { topFocused = it.hasFocus }
@@ -316,6 +326,9 @@ fun AppRoot(onLoaded: () -> Unit) {
             IconNav(androidx.compose.material.icons.Icons.Filled.Settings, "Ajustes", selected = Tab.entries[tab] == Tab.SETTINGS, modifier = tabModifier(Tab.SETTINGS.ordinal)) { openTab(Tab.SETTINGS.ordinal) }
         }
 
+        if (showWelcomeAuth) {
+            EntrarDialog(onClose = { showWelcomeAuth = false }, boasVindas = true)
+        }
     }
 }
 

@@ -515,6 +515,282 @@ function dialogo(titulo, texto, botoes) {
 }
 const Dialogo = { aberto: null };
 
+// ======================= Conta W4LLE + Pareamento por QR Code =======================
+
+const Conta = {
+  SUPABASE_URL: "https://hkiifyxossklpnsavujw.supabase.co",
+  ANON: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhraWlmeXhvc3NrbHBuc2F2dWp3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcxNDc1MTAsImV4cCI6MjA5MjcyMzUxMH0.GFpAWo-8yJVALJIDoiPCfDGYyMgTkVubM8JjYzll5EA",
+  PAGINA: "https://badwolf.pages.dev/entrar",
+  ALFABETO: "23456789ABCDEFGHJKMNPQRSTVWXYZ",
+  STORAGE_KEY: "bw_conta",
+
+  ler() {
+    try {
+      const s = localStorage.getItem(this.STORAGE_KEY);
+      if (!s) return null;
+      const o = JSON.parse(s);
+      return o && o.user_id && o.refresh ? o : null;
+    } catch (e) { return null; }
+  },
+  salvar(o) {
+    try {
+      if (o) localStorage.setItem(this.STORAGE_KEY, JSON.stringify(o));
+      else localStorage.removeItem(this.STORAGE_KEY);
+    } catch (e) { /* ignore */ }
+  },
+  conectado() { return !!this.ler(); },
+  usuario() {
+    const s = this.ler();
+    return s ? { id: s.user_id, nome: s.nome || "Conta W4LLE" } : null;
+  },
+  label() {
+    const u = this.usuario();
+    return u ? (u.nome || "Conta") : "Entrar";
+  },
+
+  novoCodigo() {
+    let out = "";
+    const ab = this.ALFABETO;
+    if (window.crypto && window.crypto.getRandomValues) {
+      const buf = new Uint8Array(8);
+      window.crypto.getRandomValues(buf);
+      for (let i = 0; i < 8; i++) out += ab[buf[i] % ab.length];
+    } else {
+      for (let i = 0; i < 8; i++) out += ab[Math.floor(Math.random() * ab.length)];
+    }
+    return out;
+  },
+  mostrarCodigo(c) { return c.slice(0, 4) + "-" + c.slice(4); },
+  urlPareamento(c) { return this.PAGINA + "#" + c; },
+  qrUrl(c) {
+    return "https://api.qrserver.com/v1/create-qr-code/?size=280x280&margin=8&data=" + encodeURIComponent(this.urlPareamento(c));
+  },
+
+  _utf8(str) {
+    if (typeof TextEncoder !== "undefined") return new TextEncoder().encode(str);
+    const s = unescape(encodeURIComponent(str));
+    const out = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+    return out;
+  },
+  _deUtf8(buf) {
+    const bytes = new Uint8Array(buf);
+    if (typeof TextDecoder !== "undefined") return new TextDecoder().decode(bytes);
+    let s = "";
+    for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    return decodeURIComponent(escape(s));
+  },
+  _deB64(b64) {
+    const bin = atob(String(b64).replace(/\s+/g, ""));
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  },
+  _hex(bytes) {
+    let s = "";
+    for (let i = 0; i < bytes.length; i++) s += (bytes[i] < 16 ? "0" : "") + bytes[i].toString(16);
+    return s;
+  },
+  _sha256Js(bytes) {
+    const K = [
+      0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+      0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+      0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+      0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+      0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+      0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+      0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+      0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2,
+    ];
+    const H = [0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+    const len = bytes.length, bitLen = len * 8;
+    const padLen = ((len + 9 + 63) >> 6) << 6;
+    const msg = new Uint8Array(padLen);
+    msg.set(bytes);
+    msg[len] = 0x80;
+    const dv = new DataView(msg.buffer);
+    dv.setUint32(padLen - 8, Math.floor(bitLen / 0x100000000), false);
+    dv.setUint32(padLen - 4, bitLen >>> 0, false);
+    const w = new Uint32Array(64);
+    for (let off = 0; off < padLen; off += 64) {
+      for (let i = 0; i < 16; i++) w[i] = dv.getUint32(off + i * 4, false);
+      for (let i = 16; i < 64; i++) {
+        const s0 = ((w[i - 15] >>> 7) | (w[i - 15] << 25)) ^ ((w[i - 15] >>> 18) | (w[i - 15] << 14)) ^ (w[i - 15] >>> 3);
+        const s1 = ((w[i - 2] >>> 17) | (w[i - 2] << 15)) ^ ((w[i - 2] >>> 19) | (w[i - 2] << 13)) ^ (w[i - 2] >>> 10);
+        w[i] = (w[i - 16] + s0 + w[i - 7] + s1) >>> 0;
+      }
+      let a = H[0], b = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h0 = H[7];
+      for (let i = 0; i < 64; i++) {
+        const S1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
+        const ch = (e & f) ^ (~e & g);
+        const t1 = (h0 + S1 + ch + K[i] + w[i]) >>> 0;
+        const S0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
+        const maj = (a & b) ^ (a & c) ^ (b & c);
+        const t2 = (S0 + maj) >>> 0;
+        h0 = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0;
+      }
+      H[0] = (H[0] + a) >>> 0; H[1] = (H[1] + b) >>> 0; H[2] = (H[2] + c) >>> 0; H[3] = (H[3] + d) >>> 0;
+      H[4] = (H[4] + e) >>> 0; H[5] = (H[5] + f) >>> 0; H[6] = (H[6] + g) >>> 0; H[7] = (H[7] + h0) >>> 0;
+    }
+    const out = new Uint8Array(32);
+    const odv = new DataView(out.buffer);
+    for (let i = 0; i < 8; i++) odv.setUint32(i * 4, H[i], false);
+    return out;
+  },
+  async sha256(str) {
+    const bytes = this._utf8(str);
+    try {
+      if (window.crypto && window.crypto.subtle && window.crypto.subtle.digest) {
+        return new Uint8Array(await window.crypto.subtle.digest("SHA-256", bytes));
+      }
+    } catch (e) { /* fallback para HTTP / webOS sem subtle */ }
+    return this._sha256Js(bytes);
+  },
+  async canalDo(codigo) {
+    return "pair-" + this._hex(await this.sha256("badwolf-canal:" + codigo)).slice(0, 24);
+  },
+  async decifrar(codigo, ivB64, ctB64) {
+    if (!window.crypto || !window.crypto.subtle) throw new Error("WebCrypto indisponível");
+    const chaveBytes = await this.sha256("badwolf-chave:" + codigo);
+    const key = await window.crypto.subtle.importKey("raw", chaveBytes, { name: "AES-GCM" }, false, ["decrypt"]);
+    const plain = await window.crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: this._deB64(ivB64) },
+      key,
+      this._deB64(ctB64)
+    );
+    return this._deUtf8(plain);
+  },
+
+  async trocarRefresh(refresh, nomeDica) {
+    const r = await comTempo(fetch(this.SUPABASE_URL + "/auth/v1/token?grant_type=refresh_token", {
+      method: "POST",
+      headers: { apikey: this.ANON, "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: refresh }),
+    }), 15000, "tempo esgotado");
+    if (!r.ok) return false;
+    const o = await r.json();
+    const access = o.access_token;
+    const newRefresh = o.refresh_token;
+    const userId = o.user && o.user.id;
+    if (!access || !newRefresh || !userId) return false;
+    let nome = nomeDica || (o.user && o.user.user_metadata && o.user.user_metadata.username) || "";
+    try {
+      const pr = await comTempo(fetch(this.SUPABASE_URL + "/rest/v1/profiles?select=username&user_id=eq." + encodeURIComponent(userId), {
+        headers: { apikey: this.ANON, Authorization: "Bearer " + access },
+      }), 8000);
+      if (pr.ok) {
+        const arr = await pr.json();
+        if (Array.isArray(arr) && arr[0] && arr[0].username) nome = arr[0].username;
+      }
+    } catch (e) { /* usa dica */ }
+    this.salvar({
+      access,
+      refresh: newRefresh,
+      expira: Date.now() + (o.expires_in || 3600) * 1000,
+      user_id: userId,
+      nome: nome || (o.user && o.user.email ? o.user.email.split("@")[0] : "Conta W4LLE"),
+    });
+    return true;
+  },
+
+  sair() {
+    const s = this.ler();
+    this.salvar(null);
+    if (s && s.access) {
+      fetch(this.SUPABASE_URL + "/auth/v1/logout?scope=local", {
+        method: "POST",
+        headers: { apikey: this.ANON, Authorization: "Bearer " + s.access, "Content-Type": "application/json" },
+        body: "{}",
+      }).catch(() => {});
+    }
+  },
+
+  /** Inicia pareamento em tempo real (retorna função para cancelar ao sair da tela). */
+  iniciarPareamento(codigo, onEstado) {
+    let fechado = false;
+    let ws = null;
+    let hb = null;
+    let recon = null;
+    let rotacao = null;
+    let ref = 1;
+    let processando = false;
+    let topic = "";
+
+    const enviar = (t, event, payload) => {
+      if (!ws || ws.readyState !== 1) return;
+      try { ws.send(JSON.stringify({ topic: t, event, payload, ref: String(ref++) })); } catch (e) { /* ignore */ }
+    };
+    const fechar = () => {
+      fechado = true;
+      clearInterval(hb);
+      clearTimeout(recon);
+      clearTimeout(rotacao);
+      if (ws) { try { ws.close(1000); } catch (e) { /* ignore */ } ws = null; }
+    };
+
+    const conectar = () => {
+      if (fechado) return;
+      const url = this.SUPABASE_URL.replace(/^https:\/\//, "wss://") + "/realtime/v1/websocket?apikey=" + encodeURIComponent(this.ANON) + "&vsn=1.0.0";
+      try { ws = new WebSocket(url); } catch (e) { onEstado("erro", "WebSocket indisponível nesta TV."); return; }
+      ws.onopen = () => {
+        if (fechado) { try { ws.close(); } catch (e) { /* ignore */ } return; }
+        enviar(topic, "phx_join", { config: { broadcast: { self: false }, private: false } });
+        clearInterval(hb);
+        hb = setInterval(() => enviar("phoenix", "heartbeat", {}), 25000);
+        onEstado("aguardando", "Aguardando conexão pelo celular…");
+      };
+      ws.onmessage = async (ev) => {
+        if (fechado || processando) return;
+        let m;
+        try { m = JSON.parse(ev.data); } catch (e) { return; }
+        if (m.event !== "broadcast" || !m.payload) return;
+        const p = m.payload;
+        if (p.event !== "sessao" || !p.payload || !p.payload.iv || !p.payload.ct) return;
+        processando = true;
+        onEstado("entrando", "Conectando sua conta…");
+        let ok = false;
+        try {
+          const texto = await this.decifrar(codigo, p.payload.iv, p.payload.ct);
+          const dados = JSON.parse(texto);
+          if (dados && dados.refresh_token) {
+            ok = await this.trocarRefresh(dados.refresh_token, dados.nome || null);
+          }
+        } catch (e) { ok = false; }
+        enviar(topic, "broadcast", { type: "broadcast", event: "resposta", payload: { ok } });
+        await sleep(800);
+        if (fechado) return;
+        if (ok) {
+          fechar();
+          onEstado("pronto", this.label());
+        } else {
+          processando = false;
+          onEstado("erro", "Não foi possível entrar. Tente novamente.");
+        }
+      };
+      ws.onclose = () => {
+        clearInterval(hb);
+        if (!fechado && !processando) {
+          recon = setTimeout(conectar, 3000);
+        }
+      };
+      ws.onerror = () => { /* onclose cuida da reconexão */ };
+    };
+
+    this.canalDo(codigo).then((canal) => {
+      if (fechado) return;
+      topic = "realtime:" + canal;
+      conectar();
+      rotacao = setTimeout(() => {
+        if (!fechado && !processando) onEstado("expirado");
+      }, 10 * 60 * 1000);
+    }).catch(() => {
+      if (!fechado) onEstado("erro", "Falha ao preparar o pareamento.");
+    });
+
+    return fechar;
+  },
+};
+
 // ======================= casca (topo com as abas) =======================
 
 const ABAS = [{ id: "canais", t: "Canais" }, { id: "eventos", t: "Eventos" }];
@@ -524,13 +800,21 @@ function casca(ui, abaAtual, abaixo) {
   const top = h("div.top");
   top.appendChild(h("img.logo", { src: "logo.png" }));
   top.appendChild(h("div.brand", { html: "BAD WOLF <b>ESPORTES</b>" }));
-  const abas = h("div.abas", { "data-zona": "abas", "data-eixo": "h", "data-baixo": abaixo, style: { display: "flex" } });
+  const abas = h("div.abas", { "data-zona": "abas", "data-eixo": "h", "data-baixo": abaixo });
   ABAS.forEach((a) => {
     const el = h("div.tab.foc" + (a.id === abaAtual ? ".sel" : ""), { text: a.t, "data-aba": a.id });
     el._ok = () => { if (a.id !== abaAtual) trocarAba(a.id); else Foco.mover("down"); };
     if (a.id === abaAtual) abas._ultimo = el;
     abas.appendChild(el);
   });
+  const on = Conta.conectado();
+  const contaEl = h("div.tab.tab-conta.foc" + (on ? ".on" : "") + (abaAtual === "conta" ? ".sel" : ""), { "data-aba": "conta" }, [
+    h("span.dot"),
+    h("span", { text: Conta.label() }),
+  ]);
+  contaEl._ok = () => { if (abaAtual !== "conta") trocarAba("conta"); else Foco.mover("down"); };
+  if (abaAtual === "conta") abas._ultimo = contaEl;
+  abas.appendChild(contaEl);
   top.appendChild(abas);
   const rel = h("div.clock", { text: hora(Date.now()) });
   top.appendChild(rel);
@@ -542,7 +826,7 @@ function casca(ui, abaAtual, abaixo) {
 
 function trocarAba(id) {
   Telas.limpar();
-  Telas.abrir(id === "eventos" ? TelaEventos() : TelaCanais());
+  Telas.abrir(id === "eventos" ? TelaEventos() : id === "conta" ? TelaConta() : TelaCanais());
 }
 
 /** Voltar dentro de uma aba: vai para as abas; nas abas, Canais; em Canais, pergunta se quer sair. */
@@ -554,6 +838,112 @@ function voltarParaAbas(aba) {
   const t = $(".tab.sel");
   if (t) { Foco.definir(t); return true; }
   return false;
+}
+
+// ======================= TelaConta (Conta W4LLE + QR Pairing) =======================
+
+function TelaConta() {
+  let pararWs = null;
+  let caixaUi = null;
+
+  const limpar = () => {
+    if (pararWs) { pararWs(); pararWs = null; }
+  };
+
+  const render = () => {
+    limpar();
+    caixaUi.innerHTML = "";
+    casca(caixaUi, "conta", "conta-acoes");
+    const tela = h("div.screen.conta");
+    const card = h("div.conta-card");
+    const u = Conta.usuario();
+    let alvo = null;
+
+    if (u) {
+      const inicial = (u.nome || "W").trim().charAt(0).toUpperCase();
+      const btnSair = h("div.btn.btn-danger.foc", { text: "Sair da conta" });
+      btnSair._ok = () => {
+        dialogo("Sair da conta W4LLE?", "Seus favoritos salvos nesta TV continuam mantidos.", [
+          { t: "Cancelar", f: () => {} },
+          { t: "Sair", f: () => { Conta.sair(); toast("Você saiu da conta"); render(); } },
+        ]);
+      };
+      card.appendChild(h("div.conta-perfil", null, [
+        h("div.conta-avatar", { text: inicial }),
+        h("div.conta-infocol", null, [
+          h("div.conta-badge.ok", { text: "● Conectado" }),
+          h("h2", { text: u.nome }),
+          h("div.conta-sub", { text: "Conta W4LLE conectada nesta TV LG." }),
+          h("div.btns", { "data-zona": "conta-acoes", "data-eixo": "h", "data-cima": "abas" }, [btnSair]),
+        ]),
+      ]));
+      alvo = btnSair;
+    } else {
+      const codigo = Conta.novoCodigo();
+      const codeStr = Conta.mostrarCodigo(codigo);
+      const qrBox = h("div.conta-qrbox");
+      const qrImg = h("img", { src: Conta.qrUrl(codigo), alt: "QR Code " + codeStr });
+      qrImg.onerror = () => {
+        qrBox.innerHTML = "";
+        qrBox.appendChild(h("div.qr-fallback", { text: "Acesse badwolf.pages.dev/entrar e digite o código abaixo" }));
+      };
+      qrBox.appendChild(qrImg);
+
+      const statusText = h("span", { text: "Preparando conexão…" });
+      const statusEl = h("div.conta-status", null, [h("span.pulse"), statusText]);
+
+      const btnNovo = h("div.btn.foc", { text: "Gerar novo código" });
+      btnNovo._ok = () => render();
+
+      card.appendChild(h("div.conta-grid", null, [
+        h("div.conta-qrcol", null, [
+          qrBox,
+          h("div.conta-code", { text: codeStr }),
+          h("div.conta-url", { text: "badwolf.pages.dev/entrar" }),
+        ]),
+        h("div.conta-infocol", null, [
+          h("div.conta-badge", { text: "Conta W4LLE · Opcional" }),
+          h("h2", { text: "Conectar sua conta na TV" }),
+          h("div.conta-sub", { text: "Entre ou crie sua conta grátis usando o celular. Sem digitar senha na TV." }),
+          h("div.conta-steps", null, [
+            h("div.conta-step", null, [h("span.conta-step-num", { text: "1" }), h("span", { html: "Aponte a câmera do celular para o <b>QR Code</b>" })]),
+            h("div.conta-step", null, [h("span.conta-step-num", { text: "2" }), h("span", { html: "Entre ou <b>crie sua conta grátis</b> na página" })]),
+            h("div.conta-step", null, [h("span.conta-step-num", { text: "3" }), h("span", { html: "A TV conecta automaticamente na hora" })]),
+          ]),
+          statusEl,
+          h("div.btns", { "data-zona": "conta-acoes", "data-eixo": "h", "data-cima": "abas" }, [btnNovo]),
+        ]),
+      ]));
+
+      pararWs = Conta.iniciarPareamento(codigo, (estado, msg) => {
+        if (estado === "expirado") { render(); return; }
+        statusEl.className = "conta-status" + (estado === "erro" ? " err" : estado === "pronto" ? " ok" : "");
+        if (estado === "pronto") {
+          statusText.textContent = "Conectado como " + msg + "!";
+          toast("TV conectada como " + msg + "!");
+          render();
+        } else if (msg) {
+          statusText.textContent = msg;
+        }
+      });
+      alvo = btnNovo;
+    }
+
+    tela.appendChild(card);
+    caixaUi.appendChild(tela);
+    if (alvo) Foco.definir(alvo);
+    return alvo;
+  };
+
+  return {
+    montar(ui) {
+      caixaUi = ui;
+      return render();
+    },
+    esconder() { limpar(); },
+    sair() { limpar(); },
+    voltar() { return voltarParaAbas("conta"); },
+  };
 }
 
 /** Linha de canal (lista do ao vivo e "onde assistir"). */
@@ -1839,5 +2229,5 @@ const Atualizador = {
   },
 };
 
-window.BadWolf = { Cat, Player, Telas, Foco, Usuario, Esporte, Placar, Atualizador, versao: VERSAO_APP };
+window.BadWolf = { Cat, Player, Telas, Foco, Usuario, Conta, Esporte, Placar, Atualizador, versao: VERSAO_APP };
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", iniciar); else iniciar();

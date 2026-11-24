@@ -2,7 +2,9 @@ package dev.guisousa.minhatv.desktop
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -15,7 +17,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
@@ -58,6 +62,7 @@ import coil3.memory.MemoryCache
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.request.crossfade
 import dev.guisousa.minhatv.data.AppDirs
+import dev.guisousa.minhatv.data.Conta
 import dev.guisousa.minhatv.data.ContentType
 import dev.guisousa.minhatv.data.Log
 import dev.guisousa.minhatv.data.Repository
@@ -65,6 +70,7 @@ import dev.guisousa.minhatv.data.Settings
 import dev.guisousa.minhatv.data.UserLibrary
 import dev.guisousa.minhatv.desktop.player.PlayerController
 import dev.guisousa.minhatv.desktop.player.PlayerScreen
+import dev.guisousa.minhatv.desktop.ui.AuthModal
 import dev.guisousa.minhatv.desktop.ui.CategoryScreen
 import dev.guisousa.minhatv.desktop.ui.campoDeTextoFocado
 import dev.guisousa.minhatv.desktop.ui.HomeScreen
@@ -134,7 +140,7 @@ fun main() {
         ) {
             LaunchedEffect(Unit) {
                 window.minimumSize = java.awt.Dimension(960, 600)
-                window.background = java.awt.Color.BLACK
+                window.background = java.awt.Color(0x06, 0x07, 0x0A)
                 // voltou para o app: traz o que mudou na conta nos outros aparelhos (no máximo 1x por minuto)
                 window.addWindowFocusListener(object : java.awt.event.WindowAdapter() {
                     override fun windowGainedFocus(e: java.awt.event.WindowEvent?) = Repository.sincronizarConta()
@@ -157,9 +163,14 @@ fun main() {
 private fun handleKey(nav: Nav, key: Key, alt: Boolean): Boolean {
     val p = nav.player
     val inPlayer = nav.top == Route.Player
-    val typing = (nav.top == null && nav.tab == Tab.SEARCH) || campoDeTextoFocado
+    val typing = (nav.top == null && nav.tab == Tab.SEARCH) || campoDeTextoFocado || nav.authModalTab != null
     if (key == Key.F11 || (key == Key.Enter && alt)) { nav.fullscreen = !nav.fullscreen; return true }
     if (key == Key.Escape) {
+        if (nav.authModalTab != null) {
+            Conta.marcarBoasVindasVistas()
+            nav.closeAuth()
+            return true
+        }
         // Esc sai da tela cheia primeiro (como no navegador); de novo, volta uma tela
         if (nav.fullscreen) { nav.fullscreen = false; return true }
         return nav.back()
@@ -195,31 +206,39 @@ private fun handleKey(nav: Nav, key: Key, alt: Boolean): Boolean {
 
 @Composable
 private fun App(nav: Nav) {
+    LaunchedEffect(Unit) {
+        if (!Conta.conectado && !Conta.jaViuBoasVindas) nav.openAuth(0)
+    }
     MaterialTheme(colorScheme = darkColorScheme(primary = Palette.Brand, background = Palette.Background, surface = Palette.Surface)) {
         BoxWithConstraints(Modifier.fillMaxSize().background(Palette.Background)) {
             // a interface cresce com a janela (1280 dp de largura = tamanho normal)
             val scale = (maxWidth.value / 1280f).coerceIn(0.8f, 1.6f)
             val base = LocalDensity.current
             CompositionLocalProvider(LocalDensity provides Density(base.density * scale, base.fontScale), LocalNav provides nav) {
-                val top = nav.top
-                if (top == Route.Player) PlayerScreen()
-                else Column(Modifier.fillMaxSize()) {
-                    TopBar(nav)
-                    Box(Modifier.weight(1f).fillMaxWidth()) {
-                        when (top) {
-                            is Route.MovieDetails -> MovieDetails(top.e)
-                            is Route.ShowDetails -> ShowDetails(top.s)
-                            is Route.Category -> CategoryScreen(top)
-                            else -> when (nav.tab) {
-                                Tab.HOME -> HomeScreen()
-                                Tab.LIVE -> LiveScreen()
-                                Tab.MOVIES -> VodScreen(ContentType.MOVIE)
-                                Tab.SHOWS -> VodScreen(ContentType.SERIES)
-                                Tab.MYLIST -> MyListScreen()
-                                Tab.SEARCH -> SearchScreen()
-                                Tab.SETTINGS -> SettingsScreen()
+                Box(Modifier.fillMaxSize()) {
+                    val top = nav.top
+                    if (top == Route.Player) PlayerScreen()
+                    else Column(Modifier.fillMaxSize()) {
+                        TopBar(nav)
+                        Box(Modifier.weight(1f).fillMaxWidth()) {
+                            when (top) {
+                                is Route.MovieDetails -> MovieDetails(top.e)
+                                is Route.ShowDetails -> ShowDetails(top.s)
+                                is Route.Category -> CategoryScreen(top)
+                                else -> when (nav.tab) {
+                                    Tab.HOME -> HomeScreen()
+                                    Tab.LIVE -> LiveScreen()
+                                    Tab.MOVIES -> VodScreen(ContentType.MOVIE)
+                                    Tab.SHOWS -> VodScreen(ContentType.SERIES)
+                                    Tab.MYLIST -> MyListScreen()
+                                    Tab.SEARCH -> SearchScreen()
+                                    Tab.SETTINGS -> SettingsScreen()
+                                }
                             }
                         }
+                    }
+                    nav.authModalTab?.let { tab ->
+                        AuthModal(initialTab = tab, onDismiss = { nav.closeAuth() })
                     }
                 }
             }
@@ -229,6 +248,7 @@ private fun App(nav: Nav) {
 
 @Composable
 private fun TopBar(nav: Nav) {
+    val usuario by Conta.usuario.collectAsState()
     Row(Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically) {
         if (nav.stack.isNotEmpty()) {
             IconBtn(Ic.Back, { nav.back() }, size = 40.dp)
@@ -260,8 +280,60 @@ private fun TopBar(nav: Nav) {
             Spacer(Modifier.width(8.dp))
         }
         IconBtn(Ic.Search, { nav.selectTab(Tab.SEARCH) }, size = 40.dp, tint = if (nav.tab == Tab.SEARCH) Palette.Brand else Palette.Text)
-        Spacer(Modifier.width(4.dp))
+        Spacer(Modifier.width(6.dp))
+        AccountPill(usuario = usuario, onClick = {
+            if (usuario != null) nav.selectTab(Tab.SETTINGS) else nav.openAuth(0)
+        })
+        Spacer(Modifier.width(6.dp))
         TabItem(Tab.SETTINGS.title, nav.tab == Tab.SETTINGS) { nav.selectTab(Tab.SETTINGS) }
+    }
+}
+
+@Composable
+private fun AccountPill(usuario: Conta.Usuario?, onClick: () -> Unit) {
+    val (src, hovered) = rememberHover()
+    val shape = RoundedCornerShape(999.dp)
+    if (usuario != null) {
+        val label = usuario.nome.ifBlank { "Conta" }
+        val inicial = label.first().uppercase()
+        Row(
+            Modifier
+                .clip(shape)
+                .background(if (hovered) Palette.SurfaceHigh else Palette.Surface)
+                .border(1.dp, Palette.Hairline, shape)
+                .hoverable(src)
+                .pointerHoverIcon(PointerIcon.Hand)
+                .clickable(interactionSource = src, indication = null, onClick = onClick)
+                .padding(start = 6.dp, end = 12.dp, top = 5.dp, bottom = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                Modifier.size(24.dp).clip(CircleShape).background(Palette.BrandSoft).border(1.dp, Palette.Brand.copy(alpha = 0.6f), CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(inicial, color = Palette.Brand, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+            Spacer(Modifier.width(8.dp))
+            Text(label, color = Palette.Text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            Spacer(Modifier.width(6.dp))
+            Box(Modifier.size(6.dp).clip(CircleShape).background(Palette.Success))
+        }
+    } else {
+        Row(
+            Modifier
+                .clip(shape)
+                .background(if (hovered) Palette.Brand.copy(alpha = 0.22f) else Palette.BrandSoft)
+                .border(1.dp, Palette.Brand.copy(alpha = if (hovered) 0.85f else 0.45f), shape)
+                .hoverable(src)
+                .pointerHoverIcon(PointerIcon.Hand)
+                .clickable(interactionSource = src, indication = null, onClick = onClick)
+                .padding(horizontal = 14.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Ic.Person, null, Modifier.size(16.dp), tint = Palette.Brand)
+            Spacer(Modifier.width(6.dp))
+            Text("Entrar", color = Palette.Brand, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        }
     }
 }
 

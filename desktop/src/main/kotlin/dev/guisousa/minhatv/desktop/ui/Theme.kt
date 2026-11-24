@@ -6,20 +6,24 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.unit.dp
 
-/** Cores do app (as mesmas do app da TV: ui/Components.kt). */
+/** Cores do app — Design System "Obsidian Cinema" (Bad Wolf TV). */
 object Palette {
-    val Background = Color(0xFF000000)
-    val Surface = Color(0xFF141414)
-    val SurfaceHigh = Color(0xFF232323)
-    val Text = Color(0xFFFFFFFF)
-    val TextDim = Color(0xFFA3A3A3)
-    val TextFaint = Color(0xFF6B6B6B)
-    val Focus = Color(0xFFFFFFFF)
-    val OnFocus = Color(0xFF000000)
-    val Live = Color(0xFFE24B4A)
+    val Background = Color(0xFF06070A)
+    val Surface = Color(0xFF111318)
+    val SurfaceHigh = Color(0xFF1A1E28)
+    val SurfaceGlass = Color(0xD6111318)
+    val Text = Color(0xFFF8FAFC)
+    val TextDim = Color(0xFF94A3B8)
+    val TextFaint = Color(0xFF64748B)
+    val Focus = Color(0xFFF8FAFC)
+    val OnFocus = Color(0xFF041218)
+    val Live = Color(0xFFFF3B5C)
+    val Success = Color(0xFF22C55E)
     val Error = Color(0xFFFF6B6B)
-    val Hairline = Color(0x22FFFFFF)
+    val Hairline = Color(0x14FFFFFF)
     val Brand = Color(0xFF00E5FF)
+    val BrandSoft = Color(0x2400E5FF)
+    val BrandText = Color(0xFF041218)
     val Synopsis = Color(0xFFCFCFD4)
 }
 
@@ -51,4 +55,5 @@ object Ic {
     val Close = icon("close", "M19,6.41L17.59,5 12,10.59 6.41,5 5,6.41 10.59,12 5,17.59 6.41,19 12,13.41 17.59,19 19,17.59 13.41,12z")
     val Eye = icon("eye", "M12,4.5C7,4.5 2.73,7.61 1,12c1.73,4.39 6,7.5 11,7.5s9.27,-3.11 11,-7.5c-1.73,-4.39 -6,-7.5 -11,-7.5zM12,17c-2.76,0 -5,-2.24 -5,-5s2.24,-5 5,-5 5,2.24 5,5 -2.24,5 -5,5zM12,9c-1.66,0 -3,1.34 -3,3s1.34,3 3,3 3,-1.34 3,-3 -1.34,-3 -3,-3z")
     val Restart = icon("restart", "M12,5V1L7,6l5,5V7c3.31,0 6,2.69 6,6s-2.69,6 -6,6 -6,-2.69 -6,-6H4c0,4.42 3.58,8 8,8s8,-3.58 8,-8 -3.58,-8 -8,-8z")
+    val Person = icon("person", "M12,12c2.21,0 4,-1.79 4,-4s-1.79,-4 -4,-4 -4,1.79 -4,4 1.79,4 4,4zM12,14c-2.67,0 -8,1.34 -8,4v2h16v-2c0,-2.66 -5.33,-4 -8,-4z")
 }

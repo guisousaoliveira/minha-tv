@@ -243,6 +243,7 @@ fun SettingsScreen() {
 
 @Composable
 private fun ContaGroup() {
+    val nav = LocalNav.current
     val u by Conta.usuario.collectAsState()
     val ultima by Nuvem.ultima.collectAsState()
     val sincronizando by Nuvem.sincronizando.collectAsState()
@@ -261,7 +262,15 @@ private fun ContaGroup() {
                 }
             }
         } else {
-            LoginForm()
+            Line(
+                "Entre ou crie sua conta grátis",
+                "Opcional. Sincronize onde parou, Minha lista e Já assisti entre TV, celular, PC e site.",
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PillButton("Entrar", { nav.openAuth(0) }, Ic.Person, primary = true)
+                    PillButton("Criar conta", { nav.openAuth(1) })
+                }
+            }
         }
     }
 }
@@ -271,79 +280,11 @@ private fun horaDe(ms: Long): String =
         .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
 
 @Composable
-private fun LoginForm() {
-    var nome by rememberSaveable { mutableStateOf("") }
-    var senha by remember { mutableStateOf("") }
-    var erro by remember { mutableStateOf<String?>(null) }
-    var entrando by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
-    fun entrar() {
-        if (entrando) return
-        entrando = true
-        erro = null
-        scope.launch {
-            erro = Conta.entrarComSenha(nome, senha)
-            entrando = false
-            if (erro == null) senha = ""
-        }
-    }
-    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp)) {
-        Text("Entre com a sua conta W4LLE", color = Palette.Text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-        Text(
-            "A mesma do site, da TV e do celular. Assistiu num, continua no outro do mesmo ponto; Minha lista e Já assisti também.",
-            color = Palette.TextDim, fontSize = 13.sp,
-        )
-        Spacer(Modifier.height(14.dp))
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Campo(nome, { nome = it; erro = null }, "Usuário", Modifier.weight(1f), onEnter = ::entrar)
-            Campo(senha, { senha = it; erro = null }, "Senha", Modifier.weight(1f), senha = true, onEnter = ::entrar)
-            PillButton(if (entrando) "Entrando…" else "Entrar", ::entrar, primary = true, enabled = !entrando)
-        }
-        erro?.let {
-            Spacer(Modifier.height(10.dp))
-            Text(it, color = Palette.Error, fontSize = 13.sp)
-        }
-    }
-}
-
-@Composable
-private fun Campo(
-    valor: String, onChange: (String) -> Unit, dica: String, modifier: Modifier = Modifier,
-    senha: Boolean = false, onEnter: () -> Unit = {},
-) {
-    val focus = LocalFocusManager.current
-    var focado by remember { mutableStateOf(false) }
-    Box(
-        modifier.height(44.dp).background(Palette.SurfaceHigh, RoundedCornerShape(22.dp))
-            .border(1.dp, if (focado) Color(0x66FFFFFF) else Palette.Hairline, RoundedCornerShape(22.dp))
-            .padding(horizontal = 18.dp),
-        contentAlignment = Alignment.CenterStart,
-    ) {
-        if (valor.isEmpty()) Text(dica, color = Palette.TextFaint, fontSize = 15.sp)
-        BasicTextField(
-            valor, onChange,
-            Modifier.fillMaxWidth()
-                .onFocusChanged { focado = it.isFocused; campoDeTextoFocado = it.isFocused }
-                .onPreviewKeyEvent { ev ->
-                    if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                    when (ev.key) {
-                        Key.Enter, Key.NumPadEnter -> { onEnter(); true }
-                        Key.Tab -> { focus.moveFocus(if (ev.isShiftPressed) FocusDirection.Previous else FocusDirection.Next); true }
-                        else -> false
-                    }
-                },
-            singleLine = true,
-            textStyle = TextStyle(color = Palette.Text, fontSize = 15.sp), cursorBrush = SolidColor(Palette.Text),
-            visualTransformation = if (senha) PasswordVisualTransformation() else VisualTransformation.None,
-        )
-    }
-}
-
-@Composable
 private fun Group(title: String, content: @Composable () -> Unit) {
     Text(title.uppercase(), color = Palette.Brand, fontSize = 12.sp, letterSpacing = 2.sp, fontWeight = FontWeight.Bold)
     Spacer(Modifier.height(8.dp))
-    Column(Modifier.fillMaxWidth().background(Palette.Surface, RoundedCornerShape(10.dp)).padding(vertical = 4.dp)) { content() }
+    val shape = RoundedCornerShape(14.dp)
+    Column(Modifier.fillMaxWidth().background(Palette.Surface, shape).border(1.dp, Palette.Hairline, shape).padding(vertical = 4.dp)) { content() }
     Spacer(Modifier.height(26.dp))
 }
 

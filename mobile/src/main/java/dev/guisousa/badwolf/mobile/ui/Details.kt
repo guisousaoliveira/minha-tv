@@ -1,7 +1,9 @@
 package dev.guisousa.badwolf.mobile.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,13 +17,13 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -47,6 +49,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -70,23 +73,33 @@ fun seriesQueue(all: List<Entry>): List<Entry> {
 @Composable
 private fun MainButton(text: String, icon: ImageVector? = Icons.Filled.PlayArrow, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Button(
-        onClick = onClick, modifier = modifier.height(50.dp), shape = RoundedCornerShape(50),
-        colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
+        onClick = onClick,
+        modifier = modifier.height(50.dp),
+        shape = PillShape,
+        colors = ButtonDefaults.buttonColors(containerColor = Palette.Brand, contentColor = Palette.BrandText),
     ) {
-        if (icon != null) { Icon(icon, null); Spacer(Modifier.width(6.dp)) }
-        Text(text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (icon != null) {
+            Icon(icon, null, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(6.dp))
+        }
+        Text(text, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
 @Composable
 private fun SmallButton(text: String, icon: ImageVector? = null, onClick: () -> Unit) {
     OutlinedButton(
-        onClick = onClick, shape = RoundedCornerShape(50),
+        onClick = onClick,
+        shape = PillShape,
         colors = ButtonDefaults.outlinedButtonColors(containerColor = Palette.SurfaceHigh, contentColor = Palette.Text),
-        border = null, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 9.dp),
+        border = BorderStroke(1.dp, Palette.Hairline),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 9.dp),
     ) {
-        if (icon != null) { Icon(icon, null, Modifier.size(18.dp)); Spacer(Modifier.width(4.dp)) }
-        Text(text, fontSize = 14.sp, maxLines = 1)
+        if (icon != null) {
+            Icon(icon, null, Modifier.size(18.dp))
+            Spacer(Modifier.width(5.dp))
+        }
+        Text(text, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
     }
 }
 
@@ -105,23 +118,77 @@ private fun VersionButton(e: Entry, available: Set<String>, onChange: () -> Unit
 
 private fun versionInfo(available: Set<String>?): String? = available?.singleOrNull()?.let { Repository.versionName(it) }
 
-/** Topo dos detalhes: imagem grande com capa e título por cima, botão principal largo e os outros em pílulas. */
+/** Topo dos detalhes: imagem grande com capa e título por cima, botão principal em ciano e os outros em pílulas. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun DetailTop(
-    nav: Nav, kicker: String, title: String, poster: String?, backdrop: String?, meta: List<String>, overview: String?,
+    nav: Nav,
+    kicker: String,
+    title: String,
+    poster: String?,
+    backdrop: String?,
+    meta: List<String>,
+    overview: String?,
     buttons: @Composable () -> Unit,
 ) {
-    Box(Modifier.fillMaxWidth().height(420.dp)) {
+    Box(Modifier.fillMaxWidth().height(430.dp)) {
         Backdrop(backdrop ?: poster, Modifier.fillMaxSize())
-        IconButton(onClick = { nav.back() }, modifier = Modifier.statusBarsPadding().padding(8.dp).clip(RoundedCornerShape(50)).background(Color(0x80000000))) {
-            Icon(Icons.Filled.ArrowBack, "Voltar", tint = Color.White)
+        Box(
+            Modifier.fillMaxSize().background(
+                Brush.verticalGradient(
+                    0.42f to Color.Transparent,
+                    0.82f to Color(0xD906070A),
+                    1f to Palette.Background,
+                ),
+            ),
+        )
+        IconButton(
+            onClick = { nav.back() },
+            modifier = Modifier
+                .statusBarsPadding()
+                .padding(12.dp)
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(Palette.SurfaceGlass)
+                .border(1.dp, Palette.Hairline, CircleShape),
+        ) {
+            Icon(Icons.Filled.ArrowBack, "Voltar", tint = Palette.Text, modifier = Modifier.size(20.dp))
         }
-        Row(Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.Bottom) {
-            Logo(poster, Modifier.width(108.dp).aspectRatio(2f / 3f).clip(CardShape), fallback = title, crop = true)
+        Row(
+            Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(horizontal = 20.dp),
+            verticalAlignment = Alignment.Bottom,
+        ) {
+            Logo(
+                poster,
+                Modifier
+                    .width(112.dp)
+                    .aspectRatio(2f / 3f)
+                    .clip(CardShape)
+                    .border(1.dp, Palette.Hairline, CardShape),
+                fallback = title,
+                crop = true,
+            )
             Column(Modifier.weight(1f).padding(start = 14.dp)) {
-                Text(kicker.uppercase(), fontSize = 12.sp, color = Palette.Brand, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
-                Text(title, fontSize = 24.sp, lineHeight = 28.sp, fontWeight = FontWeight.ExtraBold, color = Palette.Text, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                Box(
+                    Modifier
+                        .clip(PillShape)
+                        .background(Palette.BrandSoft)
+                        .border(1.dp, Palette.Brand.copy(alpha = 0.35f), PillShape)
+                        .padding(horizontal = 9.dp, vertical = 2.dp),
+                ) {
+                    Text(kicker.uppercase(), fontSize = 10.5.sp, color = Palette.Brand, fontWeight = FontWeight.Bold, letterSpacing = 1.6.sp)
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    title,
+                    fontSize = 24.sp,
+                    lineHeight = 28.sp,
+                    letterSpacing = (-0.4).sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = Palette.Text,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
                 Spacer(Modifier.height(6.dp))
                 Meta(meta)
             }
@@ -132,11 +199,23 @@ private fun DetailTop(
         if (!overview.isNullOrBlank()) {
             var expanded by remember { mutableStateOf(false) }
             Text(
-                overview, fontSize = 14.sp, color = Palette.TextDim, lineHeight = 21.sp,
-                maxLines = if (expanded) Int.MAX_VALUE else 4, overflow = TextOverflow.Ellipsis,
+                overview,
+                fontSize = 14.sp,
+                color = Palette.TextDim,
+                lineHeight = 21.sp,
+                maxLines = if (expanded) Int.MAX_VALUE else 4,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(top = 16.dp).combinedClickableCompat { expanded = !expanded },
             )
-            if (!expanded && overview.length > 180) Text("Toque para ler mais", fontSize = 12.sp, color = Palette.Brand, modifier = Modifier.padding(top = 4.dp).combinedClickableCompat { expanded = true })
+            if (!expanded && overview.length > 180) {
+                Text(
+                    "Toque para ler mais",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Palette.Brand,
+                    modifier = Modifier.padding(top = 4.dp).combinedClickableCompat { expanded = true },
+                )
+            }
         }
     }
 }
@@ -162,7 +241,11 @@ fun MovieDetailScreen(e: Entry, nav: Nav) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 32.dp)) {
         item("top") {
             DetailTop(
-                nav, "Filme", e.name, info?.p ?: e.logo, destaque?.fundo ?: info?.b,
+                nav,
+                "Filme",
+                e.name,
+                info?.p ?: e.logo,
+                destaque?.fundo ?: info?.b,
                 listOfNotNull(
                     (info?.a ?: e.year)?.toString(),
                     destaque?.generos?.take(2)?.joinToString(", ")?.ifBlank { null } ?: info?.g?.take(2)?.joinToString(", ")?.ifBlank { null },
@@ -174,15 +257,25 @@ fun MovieDetailScreen(e: Entry, nav: Nav) {
                 MainButton(if (resume > 0) "Continuar de ${clock(resume)}" else "Assistir") { PlaybackQueue.start(context, listOf(e), 0) }
                 if (resume > 0) SmallButton("Do início") { Repository.clearResume(e.url); PlaybackQueue.start(context, listOf(e), 0) }
                 VersionButton(e, versions)
-                SmallButton(if (e.url in favs) "Na Minha lista" else "Minha lista", if (e.url in favs) Icons.Filled.Check else Icons.Filled.Add) { toggleFav(context, e) }
-                SmallButton(if (seen) "Já assisti ✓" else "Marcar como visto") { if (seen) Repository.unmarkWatched(e.url) else Repository.markWatched(e.url) }
+                SmallButton(if (e.url in favs) "Na Minha lista" else "Minha lista", if (e.url in favs) Icons.Filled.Check else Icons.Filled.Add) {
+                    toggleFav(context, e)
+                }
+                SmallButton(if (seen) "Já assisti ✓" else "Marcar como visto") {
+                    if (seen) Repository.unmarkWatched(e.url) else Repository.markWatched(e.url)
+                }
             }
         }
         if (!similar.isNullOrEmpty()) item("similar") {
             SectionTitle("Mais como este")
             Box {
-                MediaRow(similar, 112.dp) { _, m ->
-                    PosterCard(m.name, m.logo, progress = Repository.progress(m.url), seen = m.url.hashCode().toString() in watched, onLongClick = { toggleFav(context, m) }) { nav.openMovie(m) }
+                MediaRow(similar, 120.dp) { _, m ->
+                    PosterCard(
+                        m.name,
+                        m.logo,
+                        progress = Repository.progress(m.url),
+                        seen = m.url.hashCode().toString() in watched,
+                        onLongClick = { toggleFav(context, m) },
+                    ) { nav.openMovie(m) }
                 }
             }
         }
@@ -208,7 +301,14 @@ fun SeriesDetailScreen(show: Show, nav: Nav) {
             LaunchedEffect(show.key, attempt) { while (true) { delay(1_000); secs++ } }
             Box(Modifier.fillMaxSize()) {
                 Loading()
-                if (secs >= 2) Text("Buscando os episódios… $secs s", fontSize = 14.sp, color = Palette.TextDim, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 48.dp))
+                if (secs >= 2) {
+                    Text(
+                        "Buscando os episódios… $secs s",
+                        fontSize = 14.sp,
+                        color = Palette.TextDim,
+                        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 48.dp),
+                    )
+                }
             }
         }
         return
@@ -245,7 +345,11 @@ fun SeriesDetailScreen(show: Show, nav: Nav) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 32.dp)) {
         item("top") {
             DetailTop(
-                nav, "Série", show.name, info?.p ?: show.logo, destaque?.fundo ?: info?.b,
+                nav,
+                "Série",
+                show.name,
+                info?.p ?: show.logo,
+                destaque?.fundo ?: info?.b,
                 listOfNotNull(
                     info?.a?.toString(),
                     if (seasonCount > 0) "$seasonCount temporada${if (seasonCount > 1) "s" else ""}" else null,
@@ -259,13 +363,20 @@ fun SeriesDetailScreen(show: Show, nav: Nav) {
                 VersionButton(target, result.versions) { attempt++ }
                 SmallButton(if (inList) "Na Minha lista" else "Minha lista", if (inList) Icons.Filled.Check else Icons.Filled.Add) {
                     val added = Repository.toggleShowFavorite(show, target.url)
-                    android.widget.Toast.makeText(context, if (added) "Adicionado à Minha lista" else "Removido da Minha lista", android.widget.Toast.LENGTH_SHORT).show()
+                    android.widget.Toast.makeText(
+                        context,
+                        if (added) "Adicionado à Minha lista" else "Removido da Minha lista",
+                        android.widget.Toast.LENGTH_SHORT,
+                    ).show()
                 }
             }
         }
         if (seasons.size > 1) item("seasons") {
             Box(Modifier.padding(top = 18.dp, bottom = 6.dp)) {
-                Chips(seasons.map { (s, _) -> if (s == 0) "Extras" else "Temporada $s" }, if (season == 0) "Extras" else "Temporada $season") { label ->
+                Chips(
+                    seasons.map { (s, _) -> if (s == 0) "Extras" else "Temporada $s" },
+                    if (season == 0) "Extras" else "Temporada $season",
+                ) { label ->
                     season = if (label == "Extras") 0 else label.removePrefix("Temporada ").toIntOrNull() ?: season
                 }
             }
@@ -283,27 +394,49 @@ fun SeriesDetailScreen(show: Show, nav: Nav) {
 private fun EpisodeRow(e: Entry, i: Int, fallbackImage: String?, seen: Boolean, progress: Float?, onClick: () -> Unit) {
     val context = LocalContext.current
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp).clip(CardShape).background(Palette.Surface)
-            .combinedClickable(onClick = onClick, onLongClick = { toggleFav(context, e) }).padding(8.dp),
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 5.dp)
+            .clip(CardShape)
+            .background(Palette.Surface)
+            .border(1.dp, Palette.Hairline, CardShape)
+            .combinedClickable(onClick = onClick, onLongClick = { toggleFav(context, e) })
+            .padding(9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.width(128.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp))) {
+        Box(
+            Modifier
+                .width(128.dp)
+                .aspectRatio(16f / 9f)
+                .clip(RoundedCornerShape(10.dp))
+                .border(1.dp, Palette.Hairline, RoundedCornerShape(10.dp)),
+        ) {
             Logo(e.logo ?: fallbackImage, Modifier.fillMaxSize().alpha(0.55f), fallback = e.name, crop = true)
-            Text((e.episode ?: (i + 1)).toString(), fontSize = 26.sp, fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.align(Alignment.Center))
+            Text(
+                (e.episode ?: (i + 1)).toString(),
+                fontSize = 24.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = Palette.Text,
+                modifier = Modifier.align(Alignment.Center),
+            )
             if (progress != null) ProgressLine(progress, Modifier.align(Alignment.BottomCenter))
         }
         Column(Modifier.weight(1f).padding(start = 12.dp)) {
-            Text("Episódio ${e.episode ?: (i + 1)}", fontSize = 15.sp, color = Palette.Text, fontWeight = FontWeight.Medium)
+            Text("Episódio ${e.episode ?: (i + 1)}", fontSize = 15.sp, color = Palette.Text, fontWeight = FontWeight.SemiBold)
             val d = Repository.duration(e.url)
             val sub = when {
                 seen -> "Visto"
                 progress != null && d > 0 -> "Faltam ${clock(d - Repository.getResume(e.url))}"
                 else -> null
             }
-            if (sub != null) Text(sub, fontSize = 12.sp, color = Palette.TextDim)
+            if (sub != null) Text(sub, fontSize = 12.sp, color = if (seen) Palette.Brand else Palette.TextDim, modifier = Modifier.padding(top = 2.dp))
         }
         IconButton(onClick = { if (seen) Repository.unmarkWatched(e.url) else Repository.markWatched(e.url) }) {
-            Icon(Icons.Filled.Check, contentDescription = if (seen) "Desmarcar visto" else "Marcar como visto", tint = if (seen) Palette.Brand else Palette.TextFaint)
+            Icon(
+                Icons.Filled.Check,
+                contentDescription = if (seen) "Desmarcar visto" else "Marcar como visto",
+                tint = if (seen) Palette.Brand else Palette.TextFaint,
+            )
         }
     }
 }

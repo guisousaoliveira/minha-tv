@@ -33,6 +33,7 @@ data class Sessao(
     val expira: Long = 0,
     val userId: String? = null,
     val nome: String = "",
+    val jaViuBoasVindas: Boolean = false,
 )
 
 /**
@@ -61,6 +62,12 @@ object Conta {
     val usuario: StateFlow<Usuario?> = _usuario
 
     val conectado get() = _usuario.value != null
+
+    val jaViuBoasVindas: Boolean get() = sessao.jaViuBoasVindas
+
+    fun marcarBoasVindasVistas() {
+        if (!sessao.jaViuBoasVindas) guardar(sessao.copy(jaViuBoasVindas = true))
+    }
 
     private fun guardar(s: Sessao) {
         sessao = s
@@ -96,7 +103,8 @@ object Conta {
                 if (r.code == 400 || r.code == 401) limpar()
                 return false
             }
-            guardar(sessaoDe(text, sessao.nome) ?: return false)
+            val s = sessaoDe(text, sessao.nome) ?: return false
+            guardar(s.copy(jaViuBoasVindas = true))
             return true
         }
     }
@@ -122,6 +130,25 @@ object Conta {
         }
     }.getOrNull()
 
+    private fun entrarComSenhaLocked(nome: String, senha: String): String? {
+        val body = buildJsonObject { put("email", "$nome@w4lle.tv"); put("password", senha) }.toString()
+        return runCatching {
+            post("/auth/v1/token?grant_type=password", body).use { r ->
+                val text = r.body?.string().orEmpty()
+                if (r.code == 400 || r.code == 401) return "Usuário ou senha incorretos."
+                // 402: o Supabase do W4LLE passou do limite do plano e pausou o serviço (vale para o site também)
+                if (r.code == 402) return "O servidor da conta W4LLE está pausado (passou do limite do plano). Tente mais tarde."
+                if (!r.isSuccessful) return "Não consegui entrar agora (erro ${r.code}). Tente de novo."
+                val s = sessaoDe(text, nome) ?: return "Resposta inesperada do servidor."
+                val exibir = buscarNome(s.userId!!, s.access!!) ?: nome
+                guardar(s.copy(nome = exibir, jaViuBoasVindas = true))
+                _usuario.value = Usuario(s.userId, exibir)
+                Log.i("conta: entrou como $exibir")
+                null
+            }
+        }.getOrElse { Log.w("conta: login falhou", it); "Sem internet? Não consegui falar com o servidor." }
+    }
+
     /**
      * Entra com usuário e senha da conta W4LLE. O site usa "usuario@w4lle.tv" como e-mail por baixo
      * (lib/auth.js do W4LLE). Devolve null se entrou, ou a mensagem do erro.
@@ -129,28 +156,54 @@ object Conta {
     suspend fun entrarComSenha(usuario: String, senha: String): String? = withContext(Dispatchers.IO) {
         val nome = usuario.trim().lowercase().replace(Regex("\\s+"), "")
         if (nome.isEmpty() || senha.isEmpty()) return@withContext "Digite o usuário e a senha."
-        val body = buildJsonObject { put("email", "$nome@w4lle.tv"); put("password", senha) }.toString()
+        tokenLock.withLock { entrarComSenhaLocked(nome, senha) }
+    }
+
+    /**
+     * Cria uma nova conta grátis W4LLE / Bad Wolf (POST /auth/v1/signup).
+     * Se o servidor já devolver refresh_token, autentica na hora; caso contrário faz login em seguida.
+     * Devolve null se deu certo, ou a mensagem do erro.
+     */
+    suspend fun cadastrarComSenha(usuario: String, senha: String): String? = withContext(Dispatchers.IO) {
+        val nome = usuario.trim().lowercase().replace(Regex("\\s+"), "")
+        if (nome.length < 3) return@withContext "O usuário precisa ter pelo menos 3 caracteres."
+        if (!nome.matches(Regex("[a-z0-9._-]+"))) return@withContext "Use apenas letras, números, ponto, traço ou sublinhado no usuário."
+        if (senha.length < 6) return@withContext "A senha precisa ter pelo menos 6 caracteres."
+        val body = buildJsonObject {
+            put("email", "$nome@w4lle.tv")
+            put("password", senha)
+            put("data", buildJsonObject { put("username", nome) })
+        }.toString()
         tokenLock.withLock {
             runCatching {
-                post("/auth/v1/token?grant_type=password", body).use { r ->
+                post("/auth/v1/signup", body).use { r ->
                     val text = r.body?.string().orEmpty()
-                    if (r.code == 400 || r.code == 401) return@withLock "Usuário ou senha incorretos."
-                    // 402: o Supabase do W4LLE passou do limite do plano e pausou o serviço (vale para o site também)
                     if (r.code == 402) return@withLock "O servidor da conta W4LLE está pausado (passou do limite do plano). Tente mais tarde."
-                    if (!r.isSuccessful) return@withLock "Não consegui entrar agora (erro ${r.code}). Tente de novo."
-                    val s = sessaoDe(text, nome) ?: return@withLock "Resposta inesperada do servidor."
-                    val exibir = buscarNome(s.userId!!, s.access!!) ?: nome
-                    guardar(s.copy(nome = exibir))
-                    _usuario.value = Usuario(s.userId, exibir)
-                    Log.i("conta: entrou como $exibir")
-                    null
+                    if (r.code == 400 || r.code == 422) {
+                        val lower = text.lowercase()
+                        if ("already" in lower || "exists" in lower || "registered" in lower) {
+                            return@withLock "Esse usuário já existe. Tente entrar ou escolha outro nome."
+                        }
+                        return@withLock "Não foi possível criar a conta. Confira o usuário e a senha."
+                    }
+                    if (!r.isSuccessful) return@withLock "Não consegui criar a conta agora (erro ${r.code}). Tente de novo."
+                    val s = sessaoDe(text, nome)
+                    if (s != null) {
+                        val exibir = buscarNome(s.userId!!, s.access!!) ?: nome
+                        guardar(s.copy(nome = exibir, jaViuBoasVindas = true))
+                        _usuario.value = Usuario(s.userId, exibir)
+                        Log.i("conta: criou e entrou como $exibir")
+                        null
+                    } else {
+                        entrarComSenhaLocked(nome, senha)
+                    }
                 }
-            }.getOrElse { Log.w("conta: login falhou", it); "Sem internet? Não consegui falar com o servidor." }
+            }.getOrElse { Log.w("conta: cadastro falhou", it); "Sem internet? Não consegui falar com o servidor." }
         }
     }
 
     private fun limpar() {
-        guardar(Sessao())
+        guardar(Sessao(jaViuBoasVindas = sessao.jaViuBoasVindas))
         _usuario.value = null
     }
 

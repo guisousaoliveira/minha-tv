@@ -2,8 +2,16 @@ package dev.guisousa.badwolf.mobile.ui
 
 import android.content.Context
 import android.widget.Toast
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -25,24 +33,28 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -50,45 +62,54 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import dev.guisousa.badwolf.mobile.R
+import dev.guisousa.badwolf.mobile.data.Conta
 import dev.guisousa.badwolf.mobile.data.Entry
 import dev.guisousa.badwolf.mobile.data.Repository
 import dev.guisousa.badwolf.mobile.data.Show
 
-/** Cores do app da TV (app/.../ui/Components.kt), escuro, com o ciano da marca. */
+/** Tokens unificados do Design System Obsidian Cinema (Bad Wolf TV). */
 object Palette {
-    val Background = Color(0xFF000000)
-    val Surface = Color(0xFF141416)
-    val SurfaceHigh = Color(0xFF222226)
-    val Text = Color(0xFFFFFFFF)
-    val TextDim = Color(0xFFB0B0B6)
-    /** Legível no celular ao sol (antes #6B6B6B sumia). */
-    val TextFaint = Color(0xFF8A8A92)
-    val Live = Color(0xFFE24B4A)
-    val Error = Color(0xFFFF6B6B)
-    val Hairline = Color(0x1FFFFFFF)
+    val Background = Color(0xFF06070A)
+    val Surface = Color(0xFF111318)
+    val SurfaceHigh = Color(0xFF1A1E28)
+    val SurfaceGlass = Color(0xD6111318) // rgba(17, 19, 24, 0.84)
     val Brand = Color(0xFF00E5FF)
+    val BrandSoft = Color(0x2400E5FF) // rgba(0, 229, 255, 0.14)
+    val BrandText = Color(0xFF041218)
+    val Live = Color(0xFFFF3B5C)
+    val Success = Color(0xFF22C55E)
+    val Error = Color(0xFFFF6B6B)
+    val Text = Color(0xFFF8FAFC)
+    val TextDim = Color(0xFF94A3B8)
+    val TextFaint = Color(0xFF64748B)
+    val Hairline = Color(0x14FFFFFF) // rgba(255, 255, 255, 0.08)
 }
 
-/** Cantos de todo o app: cartões, capas e botões no mesmo raio. */
-val CardShape = RoundedCornerShape(12.dp)
+/** Raios padronizados do Obsidian Cinema. */
+val CardShape = RoundedCornerShape(14.dp)
+val ModalShape = RoundedCornerShape(20.dp)
+val InputShape = RoundedCornerShape(12.dp)
+val PillShape = RoundedCornerShape(999.dp)
 
 @Composable
 fun BadWolfTheme(content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = darkColorScheme(
             primary = Palette.Brand,
-            onPrimary = Color.Black,
+            onPrimary = Palette.BrandText,
             secondary = Palette.Brand,
+            onSecondary = Palette.BrandText,
             background = Palette.Background,
             onBackground = Palette.Text,
-            surface = Palette.Background,
+            surface = Palette.Surface,
             onSurface = Palette.Text,
-            surfaceVariant = Palette.Surface,
+            surfaceVariant = Palette.SurfaceHigh,
             onSurfaceVariant = Palette.TextDim,
             surfaceContainer = Palette.Surface,
             surfaceContainerHigh = Palette.SurfaceHigh,
-            secondaryContainer = Palette.SurfaceHigh,
-            onSecondaryContainer = Palette.Text,
+            secondaryContainer = Palette.BrandSoft,
+            onSecondaryContainer = Palette.Brand,
             outline = Palette.Hairline,
             error = Palette.Error,
         ),
@@ -113,11 +134,19 @@ fun toggleFav(context: Context, s: Show) {
 
 @Composable
 fun Logo(url: String?, modifier: Modifier = Modifier, fallback: String = "", crop: Boolean = false) {
-    Box(modifier.background(Color(0xFF1B1B1F)), contentAlignment = Alignment.Center) {
-        Text(initials(fallback), color = Palette.TextFaint, fontSize = 15.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.padding(6.dp))
+    Box(modifier.background(Palette.SurfaceHigh), contentAlignment = Alignment.Center) {
+        Text(
+            initials(fallback),
+            color = Palette.TextFaint,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(6.dp),
+        )
         if (!url.isNullOrBlank()) {
             AsyncImage(
-                model = url, contentDescription = null,
+                model = url,
+                contentDescription = null,
                 contentScale = if (crop) ContentScale.Crop else ContentScale.Fit,
                 modifier = Modifier.fillMaxSize().padding(if (crop) 0.dp else 6.dp),
             )
@@ -128,16 +157,112 @@ fun Logo(url: String?, modifier: Modifier = Modifier, fallback: String = "", cro
 private fun initials(s: String): String =
     s.split(' ', '-', '.', ':').filter { it.isNotBlank() && it[0].isLetterOrDigit() }.take(2).joinToString("") { it.take(1).uppercase() }
 
-/** Barra do topo das abas: título grande e a lupa da busca. */
+/** Pílula de conta no topo: mostra a inicial com ponto verde quando conectado, ou "Entrar". */
 @Composable
-fun TopBar(title: String, onSearch: (() -> Unit)?, modifier: Modifier = Modifier) {
+fun AccountPill(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val usuario by Conta.usuario.collectAsState()
+    val u = usuario
     Row(
-        modifier.fillMaxWidth().statusBarsPadding().padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 4.dp),
+        modifier
+            .clip(PillShape)
+            .background(if (u != null) Palette.SurfaceGlass else Palette.BrandSoft)
+            .border(
+                BorderStroke(1.dp, if (u != null) Palette.Hairline else Palette.Brand.copy(alpha = 0.35f)),
+                PillShape,
+            )
+            .clickable(onClick = onClick)
+            .padding(
+                start = if (u != null) 4.dp else 10.dp,
+                end = if (u != null) 10.dp else 12.dp,
+                top = 4.dp,
+                bottom = 4.dp,
+            ),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text(title, fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Palette.Text, modifier = Modifier.weight(1f), maxLines = 1)
-        if (onSearch != null) IconButton(onClick = onSearch) {
-            Icon(Icons.Filled.Search, contentDescription = "Buscar", tint = Palette.Text, modifier = Modifier.size(26.dp))
+        if (u != null) {
+            val inicial = u.nome.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "W"
+            Box(
+                Modifier
+                    .size(26.dp)
+                    .clip(CircleShape)
+                    .background(Palette.Brand),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(inicial, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, color = Palette.BrandText)
+            }
+            Box(Modifier.size(7.dp).clip(CircleShape).background(Palette.Success))
+            Text(
+                u.nome.ifBlank { "Conta" },
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Palette.Text,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.width(56.dp),
+            )
+        } else {
+            Icon(Icons.Filled.Person, contentDescription = "Conta", tint = Palette.Brand, modifier = Modifier.size(16.dp))
+            Text("Entrar", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Palette.Brand, maxLines = 1)
+        }
+    }
+}
+
+/** Barra do topo das abas: badge discreta da marca (opcional), título, busca e pílula de conta. */
+@Composable
+fun TopBar(
+    title: String,
+    onSearch: (() -> Unit)?,
+    onAccount: (() -> Unit)? = null,
+    showBrandBadge: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier
+            .fillMaxWidth()
+            .statusBarsPadding()
+            .padding(start = 20.dp, end = 16.dp, top = 10.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        if (showBrandBadge) {
+            Box(
+                Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(Palette.Surface)
+                    .border(1.dp, Palette.Hairline, CircleShape)
+                    .padding(4.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Image(painterResource(R.drawable.logo_lobo), null, Modifier.fillMaxSize())
+            }
+        }
+        Text(
+            title,
+            fontSize = 26.sp,
+            fontWeight = FontWeight.ExtraBold,
+            letterSpacing = (-0.3).sp,
+            color = Palette.Text,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (onSearch != null) {
+            Box(
+                Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(Palette.SurfaceGlass)
+                    .border(1.dp, Palette.Hairline, CircleShape)
+                    .clickable(onClick = onSearch),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Filled.Search, contentDescription = "Buscar", tint = Palette.Text, modifier = Modifier.size(20.dp))
+            }
+        }
+        if (onAccount != null) {
+            AccountPill(onClick = onAccount)
         }
     }
 }
@@ -145,32 +270,62 @@ fun TopBar(title: String, onSearch: (() -> Unit)?, modifier: Modifier = Modifier
 /** Título de fileira, com "Ver tudo" opcional. */
 @Composable
 fun SectionTitle(text: String, modifier: Modifier = Modifier, action: String? = null, onAction: (() -> Unit)? = null) {
-    Row(modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 22.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(text, fontSize = 19.sp, fontWeight = FontWeight.Bold, color = Palette.Text, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-        if (action != null && onAction != null) Text(
-            action, fontSize = 14.sp, color = Palette.Brand, fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onAction).padding(horizontal = 8.dp, vertical = 4.dp),
+    Row(
+        modifier
+            .fillMaxWidth()
+            .padding(start = 20.dp, end = 12.dp, top = 22.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = (-0.2).sp,
+            color = Palette.Text,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
+        if (action != null && onAction != null) {
+            Text(
+                action,
+                fontSize = 13.sp,
+                color = Palette.Brand,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = onAction)
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            )
+        }
     }
 }
 
 @Composable
 fun Loading(modifier: Modifier = Modifier) {
-    Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Palette.Brand, strokeWidth = 3.dp) }
+    Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        CircularProgressIndicator(color = Palette.Brand, strokeWidth = 3.dp)
+    }
 }
 
 @Composable
 fun Message(text: String, modifier: Modifier = Modifier, detail: String? = null) {
-    Column(modifier.fillMaxSize().padding(32.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(
+        modifier.fillMaxSize().padding(32.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
         Text(text, color = Palette.Text, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
-        if (detail != null) Text(detail, color = Palette.TextDim, fontSize = 14.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 6.dp))
+        if (detail != null) {
+            Text(detail, color = Palette.TextDim, fontSize = 14.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 6.dp))
+        }
     }
 }
 
-/** Barrinha de "quanto já viu". */
+/** Barrinha de "quanto já viu" ou progresso do EPG. */
 @Composable
 fun ProgressLine(progress: Float, modifier: Modifier = Modifier) {
-    Box(modifier.fillMaxWidth().height(3.dp).background(Color(0x55FFFFFF))) {
+    Box(modifier.fillMaxWidth().height(3.dp).background(Color(0x33FFFFFF))) {
         Box(Modifier.fillMaxWidth(progress.coerceIn(0f, 1f)).height(3.dp).background(Palette.Brand))
     }
 }
@@ -179,23 +334,48 @@ fun ProgressLine(progress: Float, modifier: Modifier = Modifier) {
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun PosterCard(
-    title: String, image: String?, modifier: Modifier = Modifier, progress: Float? = null, seen: Boolean = false,
-    badge: String? = null, onLongClick: (() -> Unit)? = null, onClick: () -> Unit,
+    title: String,
+    image: String?,
+    modifier: Modifier = Modifier,
+    progress: Float? = null,
+    seen: Boolean = false,
+    badge: String? = null,
+    onLongClick: (() -> Unit)? = null,
+    onClick: () -> Unit,
 ) {
     Column(modifier) {
         Box(
-            Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(CardShape)
+            Modifier
+                .fillMaxWidth()
+                .aspectRatio(2f / 3f)
+                .clip(CardShape)
+                .border(1.dp, Palette.Hairline, CardShape)
                 .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         ) {
             Logo(image, Modifier.fillMaxSize(), fallback = title, crop = true)
             val selo = if (seen) "Visto" else badge
-            if (selo != null) Box(
-                Modifier.align(Alignment.TopStart).padding(6.dp).clip(RoundedCornerShape(6.dp)).background(Color(0xD9000000)).padding(horizontal = 6.dp, vertical = 2.dp),
-            ) { Text(selo, fontSize = 10.sp, color = if (seen) Palette.Brand else Palette.Text, fontWeight = FontWeight.Bold) }
+            if (selo != null) {
+                Box(
+                    Modifier
+                        .align(Alignment.TopStart)
+                        .padding(6.dp)
+                        .clip(PillShape)
+                        .background(Palette.SurfaceGlass)
+                        .border(1.dp, if (seen) Palette.Brand.copy(alpha = 0.45f) else Palette.Hairline, PillShape)
+                        .padding(horizontal = 7.dp, vertical = 2.dp),
+                ) {
+                    Text(selo, fontSize = 10.sp, color = if (seen) Palette.Brand else Palette.Text, fontWeight = FontWeight.Bold)
+                }
+            }
             if (progress != null) ProgressLine(progress, Modifier.align(Alignment.BottomCenter))
         }
         Text(
-            title, fontSize = 12.sp, color = Palette.TextDim, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            title,
+            fontSize = 12.sp,
+            color = Palette.TextDim,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(top = 6.dp, start = 2.dp, end = 2.dp),
         )
     }
@@ -209,34 +389,67 @@ fun <T> MediaRow(items: List<T>, itemWidth: Dp, content: @Composable (Int, T) ->
     }
 }
 
-/** Fileira de categorias no topo das abas (pílulas). */
+/** Fileira de categorias no topo das abas (pílulas Obsidian Cinema). */
 @Composable
 fun Chips(options: List<String>, selected: String?, onSelect: (String) -> Unit) {
     LazyRow(contentPadding = PaddingValues(horizontal = 20.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         itemsIndexed(options) { _, o ->
             val sel = o == selected
             Text(
-                o, fontSize = 14.sp, maxLines = 1, fontWeight = if (sel) FontWeight.Bold else FontWeight.Medium,
-                color = if (sel) Color.Black else Palette.Text,
-                modifier = Modifier.clip(RoundedCornerShape(50)).background(if (sel) Palette.Text else Palette.SurfaceHigh)
-                    .clickable { onSelect(o) }.padding(horizontal = 16.dp, vertical = 8.dp),
+                o,
+                fontSize = 13.sp,
+                maxLines = 1,
+                fontWeight = if (sel) FontWeight.Bold else FontWeight.Medium,
+                color = if (sel) Palette.BrandText else Palette.TextDim,
+                modifier = Modifier
+                    .clip(PillShape)
+                    .background(if (sel) Palette.Brand else Palette.Surface)
+                    .border(
+                        1.dp,
+                        if (sel) Palette.Brand else Palette.Hairline,
+                        PillShape,
+                    )
+                    .clickable { onSelect(o) }
+                    .padding(horizontal = 15.dp, vertical = 7.dp),
             )
         }
     }
 }
 
-/** Bolinha vermelha do "ao vivo". */
+/** Bolinha vermelha do "ao vivo" com pulso suave opcional. */
 @Composable
-fun LiveDot(modifier: Modifier = Modifier) {
-    Box(modifier.size(8.dp).clip(CircleShape).background(Palette.Live))
+fun LiveDot(modifier: Modifier = Modifier, pulse: Boolean = false) {
+    if (pulse) {
+        val transition = rememberInfiniteTransition(label = "livePulse")
+        val alpha by transition.animateFloat(
+            initialValue = 1f,
+            targetValue = 0.35f,
+            animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
+            label = "liveDotAlpha",
+        )
+        Box(modifier.size(8.dp).alpha(alpha).clip(CircleShape).background(Palette.Live))
+    } else {
+        Box(modifier.size(8.dp).clip(CircleShape).background(Palette.Live))
+    }
 }
 
-/** Fundo grande no topo dos detalhes, escurecendo para baixo. */
+/** Fundo grande no topo dos detalhes, escurecendo para o fundo obsidiana. */
 @Composable
 fun Backdrop(url: String?, modifier: Modifier = Modifier) {
     Box(modifier.fillMaxWidth()) {
-        if (!url.isNullOrBlank()) AsyncImage(model = url, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color(0x66000000), 0.35f to Color.Transparent, 1f to Palette.Background)))
+        if (!url.isNullOrBlank()) {
+            AsyncImage(model = url, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        }
+        Box(
+            Modifier.fillMaxSize().background(
+                Brush.verticalGradient(
+                    0f to Color(0x8006070A),
+                    0.35f to Color.Transparent,
+                    0.78f to Color(0xCC06070A),
+                    1f to Palette.Background,
+                ),
+            ),
+        )
     }
 }
 
@@ -253,34 +466,72 @@ fun clock(ms: Long): String {
 
 // ---------- Ajustes ----------
 
-/** Grupo de ajustes num cartão (título em cima, linhas dentro). */
+/** Grupo de ajustes num cartão Obsidian com borda hairline. */
 @Composable
 fun SettingsCard(title: String, content: @Composable () -> Unit) {
-    Text(title.uppercase(), fontSize = 12.sp, color = Palette.Brand, fontWeight = FontWeight.Bold, letterSpacing = 1.sp,
-        modifier = Modifier.padding(start = 28.dp, top = 22.dp, bottom = 8.dp))
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).clip(CardShape).background(Palette.Surface)) { content() }
+    Text(
+        title.uppercase(),
+        fontSize = 11.sp,
+        color = Palette.Brand,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = 1.2.sp,
+        modifier = Modifier.padding(start = 24.dp, top = 22.dp, bottom = 8.dp),
+    )
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .clip(CardShape)
+            .background(Palette.Surface)
+            .border(1.dp, Palette.Hairline, CardShape),
+    ) { content() }
 }
 
 /** Linha de ajuste: título, detalhe e, opcional, um interruptor ou um texto à direita. */
 @Composable
 fun SettingsRow(
-    title: String, detail: String? = null, icon: ImageVector? = null, value: String? = null,
-    toggle: Boolean? = null, danger: Boolean = false, onClick: () -> Unit,
+    title: String,
+    detail: String? = null,
+    icon: ImageVector? = null,
+    value: String? = null,
+    toggle: Boolean? = null,
+    danger: Boolean = false,
+    onClick: () -> Unit,
 ) {
-    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         if (icon != null) {
-            Icon(icon, null, tint = if (danger) Palette.Error else Palette.TextDim, modifier = Modifier.size(22.dp))
+            Icon(icon, null, tint = if (danger) Palette.Error else Palette.TextDim, modifier = Modifier.size(21.dp))
             Spacer(Modifier.width(14.dp))
         }
         Column(Modifier.weight(1f)) {
-            Text(title, fontSize = 16.sp, color = if (danger) Palette.Error else Palette.Text, fontWeight = FontWeight.Medium)
-            if (detail != null) Text(detail, fontSize = 13.sp, color = Palette.TextDim, lineHeight = 18.sp, modifier = Modifier.padding(top = 2.dp))
+            Text(title, fontSize = 15.sp, color = if (danger) Palette.Error else Palette.Text, fontWeight = FontWeight.SemiBold)
+            if (detail != null) {
+                Text(detail, fontSize = 12.sp, color = Palette.TextDim, lineHeight = 17.sp, modifier = Modifier.padding(top = 2.dp))
+            }
         }
-        if (value != null) Text(value, fontSize = 14.sp, color = Palette.Brand, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
-        if (toggle != null) Switch(
-            checked = toggle, onCheckedChange = { onClick() }, modifier = Modifier.padding(start = 8.dp),
-            colors = SwitchDefaults.colors(checkedThumbColor = Color.Black, checkedTrackColor = Palette.Brand, uncheckedTrackColor = Palette.SurfaceHigh),
-        )
+        if (value != null) {
+            Text(value, fontSize = 13.sp, color = Palette.Brand, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
+        }
+        if (toggle != null) {
+            Switch(
+                checked = toggle,
+                onCheckedChange = { onClick() },
+                modifier = Modifier.padding(start = 8.dp),
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Palette.BrandText,
+                    checkedTrackColor = Palette.Brand,
+                    uncheckedThumbColor = Palette.TextDim,
+                    uncheckedTrackColor = Palette.SurfaceHigh,
+                    uncheckedBorderColor = Palette.Hairline,
+                ),
+            )
+        }
     }
 }
 

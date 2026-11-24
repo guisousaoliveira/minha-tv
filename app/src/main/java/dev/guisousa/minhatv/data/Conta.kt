@@ -77,6 +77,13 @@ object Conta {
 
     val conectado get() = _usuario.value != null
 
+    val jaViuBoasVindas: Boolean
+        get() = ::prefs.isInitialized && prefs.getBoolean("boas_vindas_vistas", false)
+
+    fun marcarBoasVindasVistas() {
+        if (::prefs.isInitialized) prefs.edit().putBoolean("boas_vindas_vistas", true).apply()
+    }
+
     // ---------- Sessão ----------
 
     private fun post(path: String, body: String, bearer: String? = null): Response {
@@ -140,14 +147,15 @@ object Conta {
             if (!runCatching { renovar(refresh) }.getOrDefault(false)) return@withLock false
             val id = prefs.getString("user_id", null) ?: return@withLock false
             val nome = buscarNome(id, prefs.getString("access", null)!!) ?: nomeDica ?: ""
-            prefs.edit().putString("nome", nome).apply()
+            prefs.edit().putString("nome", nome).putBoolean("boas_vindas_vistas", true).apply()
             _usuario.value = Usuario(id, nome)
             true
         }
     }
 
     private fun limpar() {
-        prefs.edit().clear().apply()
+        val viuBoasVindas = jaViuBoasVindas
+        prefs.edit().clear().putBoolean("boas_vindas_vistas", viuBoasVindas).apply()
         _usuario.value = null
     }
 

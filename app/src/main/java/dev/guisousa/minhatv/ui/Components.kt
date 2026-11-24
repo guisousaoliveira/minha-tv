@@ -64,23 +64,28 @@ import coil.compose.AsyncImage
 import dev.guisousa.minhatv.data.GroupInfo
 import dev.guisousa.minhatv.data.Library
 
+/** Paleta de cores — Design System "Obsidian Cinema" (Bad Wolf TV). */
 object Palette {
-    val Background = Color(0xFF000000)
-    val Surface = Color(0xFF141414)
-    val SurfaceHigh = Color(0xFF232323)
-    val Text = Color(0xFFFFFFFF)
-    val TextDim = Color(0xFFA3A3A3)
-    /** Texto apagado (contadores, horários): #9A9A9A ainda se lê bem a 3 m. */
-    val TextFaint = Color(0xFF9A9A9A)
-    /** Sinopses: um pouco abaixo do branco, para não cansar. */
-    val TextBody = Color(0xFFD0D0D0)
-    val Focus = Color(0xFFFFFFFF)
-    val OnFocus = Color(0xFF000000)
-    val Live = Color(0xFFE24B4A)
+    val Background = Color(0xFF06070A)
+    val Surface = Color(0xFF111318)
+    val SurfaceHigh = Color(0xFF1A1E28)
+    val SurfaceGlass = Color(0xD6111318)
+    val Text = Color(0xFFF8FAFC)
+    val TextDim = Color(0xFF94A3B8)
+    /** Texto auxiliar (contadores, horários). */
+    val TextFaint = Color(0xFF64748B)
+    /** Sinopses: confortável para leitura na TV. */
+    val TextBody = Color(0xFFD0D5DD)
+    val Focus = Color(0xFFF8FAFC)
+    val OnFocus = Color(0xFF041218)
+    val Live = Color(0xFFFF3B5C)
+    val Success = Color(0xFF22C55E)
     val Error = Color(0xFFFF6B6B)
-    val Hairline = Color(0x22FFFFFF)
-    /** Ciano da marca (o mesmo do W4LLE): uso contido, em detalhes e no que está selecionado. */
+    val Hairline = Color(0x14FFFFFF)
+    /** Ciano elétrico da marca Bad Wolf TV. */
     val Brand = Color(0xFF00E5FF)
+    val BrandSoft = Color(0x2400E5FF)
+    val BrandText = Color(0xFF041218)
 }
 
 @Composable
@@ -161,7 +166,7 @@ fun FocusBox(
             }
             .clip(shape)
             .background(bg)
-            .then(if (focused && frame) Modifier.border(3.dp, Palette.Focus, shape) else Modifier)
+            .then(if (focused && frame) Modifier.border(2.5.dp, Palette.Brand, shape) else Modifier)
             .combinedClickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
