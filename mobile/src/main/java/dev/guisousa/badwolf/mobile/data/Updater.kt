@@ -10,62 +10,28 @@ import android.provider.Settings
 import android.widget.Toast
 import androidx.core.content.FileProvider
 import dev.guisousa.badwolf.mobile.BuildConfig
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import okhttp3.OkHttpClient
-import okhttp3.Request
+import dev.guisousa.minhatv.core.AppPlatform
+import dev.guisousa.minhatv.core.AppRelease
+import dev.guisousa.minhatv.core.UpdaterCore
 import java.io.File
-import java.util.concurrent.TimeUnit
 
-/**
- * Confere se saiu versão nova no GitHub (o mesmo release da TV, que também leva o APK do celular)
- * e instala. Igual ao Updater do app da TV, mas baixando o "Mobile-BadWolfTV.apk".
- */
+/** Confere se saiu versão nova do app de celular no GitHub (via :core UpdaterCore) e instala. */
 object Updater {
-
-    private const val LATEST = "https://api.github.com/repos/guisousaoliveira/minha-tv/releases/latest"
-    private const val APK = "Mobile-BadWolfTV.apk"
 
     data class Release(val code: Int, val name: String, val apkUrl: String)
 
     val currentName: String get() = BuildConfig.VERSION_NAME
 
-    private val http by lazy {
-        OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
-    }
+    suspend fun check(): Release? =
+        UpdaterCore.check(AppPlatform.ANDROID_MOBILE, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE)
+            ?.let { Release(it.code, it.name, it.downloadUrl) }
 
-    /** Nova versão disponível, ou null (sem internet também dá null). */
-    suspend fun check(): Release? = withContext(Dispatchers.IO) {
-        runCatching {
-            val req = Request.Builder().url(LATEST).header("Accept", "application/vnd.github+json").build()
-            val text = http.newCall(req).execute().use { if (it.isSuccessful) it.body!!.string() else null } ?: return@runCatching null
-            val o = Json.parseToJsonElement(text).jsonObject
-            val tag = o["tag_name"]?.jsonPrimitive?.content ?: return@runCatching null
-            val code = tag.substringAfterLast('.').toIntOrNull() ?: return@runCatching null
-            val apk = o["assets"]?.jsonArray?.map { it.jsonObject }
-                ?.firstOrNull { it["name"]?.jsonPrimitive?.content == APK }
-                ?.get("browser_download_url")?.jsonPrimitive?.content ?: return@runCatching null
-            if (code > BuildConfig.VERSION_CODE) Release(code, tag.removePrefix("v"), apk) else null
-        }.getOrNull()
-    }
-
-    /** Baixa o APK novo para o cache do app. */
-    suspend fun download(context: Context, r: Release): File = withContext(Dispatchers.IO) {
+    suspend fun download(context: Context, r: Release): File {
         val dir = File(context.cacheDir, "updates").apply { mkdirs() }
         dir.listFiles()?.forEach { it.delete() }
-        val file = File(dir, "BadWolf-${r.code}.apk")
-        http.newCall(Request.Builder().url(r.apkUrl).build()).execute().use { resp ->
-            if (!resp.isSuccessful) throw java.io.IOException("download falhou (${resp.code})")
-            file.outputStream().use { out -> resp.body!!.byteStream().copyTo(out) }
-        }
-        file
+        return UpdaterCore.download(AppRelease(r.code, r.name, r.apkUrl), File(dir, "BadWolf-${r.code}.apk"))
     }
 
-    /** Abre o instalador do Android (pede a permissão de instalar, na 1ª vez). */
     fun install(activity: Activity, file: File) {
         if (Build.VERSION.SDK_INT >= 26 && !activity.packageManager.canRequestPackageInstalls()) {
             Toast.makeText(activity, "Permita que o Bad Wolf instale atualizações e toque em Atualizar de novo.", Toast.LENGTH_LONG).show()

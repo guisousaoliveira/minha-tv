@@ -206,7 +206,24 @@ fun SettingsScreen() {
                     Line("Limpar buscas recentes", null) { PillButton("Limpar", { UserLibrary.limparBuscas() }) }
                 }
                 Group("Sobre") {
-                    Line("Bad Wolf TV para Windows", "Versão ${System.getProperty("jpackage.app-version") ?: "dev"} · player VLC embutido") {}
+                    val updAvail by dev.guisousa.minhatv.data.Updater.available.collectAsState()
+                    val updStatus by dev.guisousa.minhatv.data.Updater.status.collectAsState()
+                    val updBusy by dev.guisousa.minhatv.data.Updater.busy.collectAsState()
+                    Line(
+                        "Bad Wolf TV para Windows",
+                        updStatus ?: "Versão ${dev.guisousa.minhatv.data.Updater.currentVersion} · player VLC embutido",
+                    ) {
+                        if (updAvail != null) {
+                            PillButton(
+                                if (updBusy) "Baixando…" else "Atualizar para ${updAvail!!.name}",
+                                { dev.guisousa.minhatv.data.Updater.installNow() },
+                                Ic.Restart,
+                                primary = true,
+                            )
+                        } else {
+                            PillButton("Verificar atualização", { dev.guisousa.minhatv.data.Updater.checkAsync(manual = true) }, Ic.Restart)
+                        }
+                    }
                     Line("Seus dados", AppDirs.data.absolutePath) {
                         PillButton("Abrir pasta", { runCatching { java.awt.Desktop.getDesktop().open(AppDirs.data.also { it.mkdirs() }) } })
                     }

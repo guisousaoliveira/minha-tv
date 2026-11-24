@@ -1773,6 +1773,7 @@ async function carregarCatalogo() {
     return;
   }
   trocarAba("canais");
+  setTimeout(() => Atualizador.verificar(), 3000);
   // confere o catálogo de novo a cada 3 h, só se a tela estiver parada no menu (nada de recarregar no meio do filme)
   setInterval(() => {
     if (Player.ativo) return;
@@ -1784,5 +1785,59 @@ async function carregarCatalogo() {
   }, 60 * 60 * 1000); // o guia muda ao longo do dia: confere a cada 1 h
 }
 
-window.BadWolf = { Cat, Player, Telas, Foco, Usuario, Esporte, Placar, versao: VERSAO_APP };
+/**
+ * Verificador unificado de atualizações via GitHub Releases (mesmo contrato do :core UpdaterCore).
+ * Compatível com LG webOS (auto-instala se houver Homebrew Channel; senão avisa com link) e reutilizável em Tizen.
+ */
+const Atualizador = {
+  LATEST: "https://api.github.com/repos/guisousaoliveira/minha-tv/releases/latest",
+  ASSET: "BadWolfEsportes-LG.ipk",
+  comparar(a, b) {
+    const pa = String(a || "").replace(/^v/, "").split("-")[0].split(".").map((n) => parseInt(n, 10) || 0);
+    const pb = String(b || "").replace(/^v/, "").split("-")[0].split(".").map((n) => parseInt(n, 10) || 0);
+    const len = Math.max(pa.length, pb.length);
+    for (let i = 0; i < len; i++) {
+      const d = (pa[i] || 0) - (pb[i] || 0);
+      if (d !== 0) return d;
+    }
+    return 0;
+  },
+  async verificar() {
+    if (!VERSAO_APP || VERSAO_APP === "dev") return null;
+    try {
+      const r = await comTempo(fetch(this.LATEST, { headers: { Accept: "application/vnd.github+json" } }), 12000);
+      if (!r.ok) return null;
+      const o = await r.json();
+      const versao = String(o.tag_name || "").replace(/^v/, "");
+      if (!versao || this.comparar(versao, VERSAO_APP) <= 0) return null;
+      const asset = (o.assets || []).find((x) => x.name === this.ASSET);
+      if (!asset || !asset.browser_download_url) return null;
+      this.oferecer({ versao, url: asset.browser_download_url });
+      return { versao, url: asset.browser_download_url };
+    } catch (e) { return null; }
+  },
+  instalarHomebrew(url) {
+    try {
+      if (window.webOS && window.webOS.service && window.webOS.service.request) {
+        toast("Baixando e instalando atualização…");
+        window.webOS.service.request("luna://org.webosbrew.hbchannel.service", {
+          method: "install",
+          parameters: { ipkUrl: url },
+          onSuccess: () => toast("Atualização instalada! Reabra o aplicativo."),
+          onFailure: () => toast("Instale manualmente o arquivo " + this.ASSET + " no GitHub Releases."),
+        });
+        return true;
+      }
+    } catch (e) { /* sem Homebrew Channel */ }
+    return false;
+  },
+  oferecer(rel) {
+    if (Player.ativo) { toast("Nova versão " + rel.versao + " disponível!"); return; }
+    const temHb = !!(window.webOS && window.webOS.service && window.webOS.service.request);
+    toast("Nova versão " + rel.versao + " disponível (atual: " + VERSAO_APP + ")" + (temHb ? " · instalando via Homebrew…" : " · baixe " + this.ASSET + " no GitHub"));
+    if (temHb) this.instalarHomebrew(rel.url);
+  },
+};
+
+window.BadWolf = { Cat, Player, Telas, Foco, Usuario, Esporte, Placar, Atualizador, versao: VERSAO_APP };
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", iniciar); else iniciar();

@@ -133,6 +133,15 @@ jobs:
             webos-esportes/BadWolfEsportes-LG.ipk
             webos-esportes/BadWolfEsportes-simulador.zip
 
+      - name: Juntar os IPKs ao release
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          files: |
+            webos/BadWolfTV-LG.ipk
+            webos-esportes/BadWolfEsportes-LG.ipk
+
   preview:
     needs: build
     runs-on: ubuntu-latest

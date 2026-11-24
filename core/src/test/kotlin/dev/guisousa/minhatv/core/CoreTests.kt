@@ -67,4 +67,29 @@ class CoreTests {
         assertEquals(listOf("principais", "esportes", "filmes"), ordemAoVivo(cats).map { it.id })
         assertEquals(listOf("B", "A"), canaisPorIds(listOf(20L, 10L, 99L, 20L), mapOf(10L to "A", 20L to "B")))
     }
+
+    @Test
+    fun updaterParsesCorrectAssetPerPlatform() {
+        val sample = """
+            {
+              "tag_name": "v1.0.160",
+              "html_url": "https://github.com/guisousaoliveira/minha-tv/releases/tag/v1.0.160",
+              "body": "Melhorias no ao vivo",
+              "assets": [
+                {"name": "MinhaTV.apk", "browser_download_url": "https://ex/MinhaTV.apk"},
+                {"name": "Mobile-BadWolfTV.apk", "browser_download_url": "https://ex/Mobile.apk"},
+                {"name": "BadWolfTV-Windows.exe", "browser_download_url": "https://ex/Win.exe"},
+                {"name": "BadWolfTV-LG.ipk", "browser_download_url": "https://ex/LG.ipk"},
+                {"name": "BadWolfEsportes-LG.ipk", "browser_download_url": "https://ex/Esportes.ipk"}
+              ]
+            }
+        """.trimIndent()
+        assertEquals("https://ex/MinhaTV.apk", UpdaterCore.parseRelease(sample, AppPlatform.ANDROID_TV, "1.0.150", 150)?.downloadUrl)
+        assertEquals("https://ex/Mobile.apk", UpdaterCore.parseRelease(sample, AppPlatform.ANDROID_MOBILE, "1.0.150", 150)?.downloadUrl)
+        assertEquals("https://ex/Win.exe", UpdaterCore.parseRelease(sample, AppPlatform.WINDOWS, "1.0.150")?.downloadUrl)
+        assertEquals("https://ex/LG.ipk", UpdaterCore.parseRelease(sample, AppPlatform.WEBOS_TV, "1.0.150")?.downloadUrl)
+        assertEquals("https://ex/Esportes.ipk", UpdaterCore.parseRelease(sample, AppPlatform.WEBOS_ESPORTES, "1.0.150")?.downloadUrl)
+        assertNull(UpdaterCore.parseRelease(sample, AppPlatform.WINDOWS, "1.0.160"))
+        assertTrue(UpdaterCore.compareVersions("1.0.160", "1.0.99") > 0)
+    }
 }

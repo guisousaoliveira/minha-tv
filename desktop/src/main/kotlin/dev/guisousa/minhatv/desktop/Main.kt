@@ -22,6 +22,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -114,6 +115,7 @@ fun main() {
     Thread.setDefaultUncaughtExceptionHandler { t, e -> Log.e("erro na thread ${t.name}", e) }
     setupImages()
     Repository.init()
+    dev.guisousa.minhatv.data.Updater.checkAsync()
     val player = PlayerController()
     player.preparar()
     application {
@@ -246,6 +248,17 @@ private fun TopBar(nav: Nav) {
             listOf(Tab.HOME, Tab.LIVE, Tab.MOVIES, Tab.SHOWS, Tab.MYLIST).forEach { t -> TabItem(t.title, nav.tab == t) { nav.selectTab(t) } }
         }
         Spacer(Modifier.weight(1f))
+        val upd by dev.guisousa.minhatv.data.Updater.available.collectAsState()
+        val updBusy by dev.guisousa.minhatv.data.Updater.busy.collectAsState()
+        upd?.let { rel ->
+            dev.guisousa.minhatv.desktop.ui.PillButton(
+                if (updBusy) "Baixando…" else "Atualizar ${rel.name}",
+                { dev.guisousa.minhatv.data.Updater.installNow() },
+                Ic.Restart,
+                primary = true,
+            )
+            Spacer(Modifier.width(8.dp))
+        }
         IconBtn(Ic.Search, { nav.selectTab(Tab.SEARCH) }, size = 40.dp, tint = if (nav.tab == Tab.SEARCH) Palette.Brand else Palette.Text)
         Spacer(Modifier.width(4.dp))
         TabItem(Tab.SETTINGS.title, nav.tab == Tab.SETTINGS) { nav.selectTab(Tab.SETTINGS) }
