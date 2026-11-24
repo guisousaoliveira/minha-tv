@@ -174,8 +174,12 @@ const Cat = {
   categorias: { canais: [] },
   canais: [], canalPorId: {},
   guia: null,
+  transmissoes: [],
   token() { return store("token") || CFG.token || ""; },
-  base() { return SERVIDOR + "/" + encodeURIComponent(this.token()) + "/app/v2/"; },
+  base() {
+    const tk = this.token();
+    return tk ? SERVIDOR + "/" + encodeURIComponent(tk) + "/app/v2/" : SERVIDOR + "/app/v2/";
+  },
 
   async baixar(caminho, tempo) {
     const r = await comTempo(fetch(this.base() + caminho, { cache: "no-store" }), tempo || 30000, "o servidor não respondeu");
@@ -223,11 +227,16 @@ const Cat = {
     const [cats, canais] = await Promise.all([this.parte("categorias"), this.parte("canais")]);
     progresso(2, 3);
     let guia = {};
-    try { guia = await this.parte("guia"); } catch (e) { /* sem guia: os eventos ficam vazios */ }
+    let transmissoes = [];
+    await Promise.all([
+      this.parte("guia").then((g) => { guia = g || {}; }).catch(() => {}),
+      this.parte("transmissoes").then((t) => { transmissoes = Array.isArray(t) ? t : []; }).catch(() => {}),
+    ]);
     progresso(3, 3);
     this.categorias = cats || this.categorias;
     this.canais = canais || [];
     this.guia = guia || {};
+    this.transmissoes = transmissoes;
     this.canalPorId = {};
     this.canais.forEach((c) => { this.canalPorId[c.id] = c; });
     Esporte.preparar();
@@ -699,6 +708,61 @@ const Placar = {
       opcoes: porBase[base].sort((a, b) => (ordemQ[qual(a)] || 0) - (ordemQ[qual(b)] || 0)).map((c) => ({ canal: c, q: qual(c) })),
     }));
   },
+  /** Transmissões oficiais (TV + streaming com logo) vindas de transmissoes.json (ge.globo). */
+  transmissoes(jogo) {
+    const lista = Cat.transmissoes || [];
+    if (!lista.length || !jogo) return [];
+    const k1 = this.chaves(jogo.casa.completo + " " + jogo.casa.nome);
+    const k2 = this.chaves(jogo.fora.completo + " " + jogo.fora.nome);
+    if (!k1.length || !k2.length) return [];
+    const tem = (t, ks) => ks.some((k) => t.indexOf(k) >= 0);
+    const diaMs = (s) => {
+      const p = (s || "").split("-");
+      return p.length === 3 ? new Date(+p[0], +p[1] - 1, +p[2], 12, 0, 0).getTime() : 0;
+    };
+    const achado = lista.find((it) => {
+      if (Math.abs(diaMs(it.d) - jogo.ini) > 36 * 3600 * 1000) return false;
+      const c = semAcento(it.c), f = semAcento(it.f);
+      return (tem(c, k1) && tem(f, k2)) || (tem(c, k2) && tem(f, k1));
+    });
+    return achado && Array.isArray(achado.t) ? achado.t : [];
+  },
+  /** Canais IPTV da grade que combinam com as emissoras oficiais (quando o EPG não listou o jogo). */
+  canaisPorEmissora(trans) {
+    if (!trans || !trans.length) return [];
+    const REGRAS = [
+      { em: /prime\s*v[ií]deo|amazon/i, ch: /\b(prime\s*video|amazon\s*prime)\b/i },
+      { em: /premiere/i, ch: /\bpremiere\b/i },
+      { em: /sportv/i, ch: /\bsportv\b/i },
+      { em: /\bespn\b/i, ch: /\bespn\b/i },
+      { em: /\btnt\b/i, ch: /\btnt(\s*sports)?\b/i },
+      { em: /caz[eé]/i, ch: /\bcaz[eé]/i },
+      { em: /paramount/i, ch: /\bparamount/i },
+      { em: /disney/i, ch: /\bdisney\b/i },
+      { em: /hbo\s*max|\bmax\b/i, ch: /\b(hbo\s*max|max\s*\d+)\b/i },
+      { em: /\bglobo\b/i, ch: /\bglobo\s*(sp|rj)\b/i },
+      { em: /\brecord\b/i, ch: /\brecord\s*(sp|tv)\b/i },
+      { em: /\bsbt\b/i, ch: /\bsbt\b/i },
+      { em: /\bband\b/i, ch: /\bband\b/i },
+    ];
+    const porBase = {};
+    const ordemQ = { FHD: 0, HD: 1, SD: 2, "4K": 3 };
+    const qual = (c) => { const m = / (4K|FHD|HD|SD)$/.exec(c.n); return m ? m[1] : ""; };
+    trans.forEach((tr) => {
+      const r = REGRAS.find((x) => x.em.test(tr.n || ""));
+      if (!r) return;
+      (Cat.canais || []).forEach((canal) => {
+        const base = canal.b || canal.n;
+        if (r.ch.test(semAcento(base))) {
+          (porBase[base] || (porBase[base] = [])).push(canal);
+        }
+      });
+    });
+    return Object.keys(porBase).slice(0, 6).map((base) => ({
+      base,
+      opcoes: porBase[base].sort((a, b) => (ordemQ[qual(a)] || 0) - (ordemQ[qual(b)] || 0)).slice(0, 2).map((c) => ({ canal: c, q: qual(c) })),
+    }));
+  },
 };
 
 // ======================= Eventos =======================
@@ -727,6 +791,8 @@ function TelaEventos() {
     cabeca.innerHTML = "";
     if (!item) return;
     let opcoes;
+    let trans = [];
+    let sugeridos = false;
     if (item.jogo) {
       const j = item.jogo;
       cabeca.appendChild(h("div.liga", null, [j.logoLiga ? h("span.ligalogo", { bg: j.logoLiga }) : null, j.liga]));
@@ -736,7 +802,21 @@ function TelaEventos() {
         h("div.time", null, [escudo(j.fora.logo, j.fora.nome), h("div.tnome", { text: j.fora.nome })]),
       ]));
       cabeca.appendChild(h("div.sub" + (j.estado === "in" ? ".vivo" : ""), { text: estadoJogo(j) }));
+      trans = Placar.transmissoes(j);
+      if (trans.length) {
+        cabeca.appendChild(h("div.trans-box", null, [
+          h("div.trans-tit", { text: "Transmissão oficial" }),
+          h("div.trans-lista", null, trans.map((tr) => h("div.trans-chip", null, [
+            tr.i ? h("span.trans-logo", { bg: tr.i }) : null,
+            h("span.trans-nome", { text: tr.n }),
+          ]))),
+        ]));
+      }
       opcoes = Placar.onde(j);
+      if (!opcoes.length && trans.length) {
+        opcoes = Placar.canaisPorEmissora(trans);
+        if (opcoes.length) sugeridos = true;
+      }
     } else {
       const ev = item.ev;
       if (ev.liga) cabeca.appendChild(h("div.liga", { text: ev.liga }));
@@ -746,11 +826,15 @@ function TelaEventos() {
     }
     if (!opcoes.length) {
       const longe = item.jogo && item.jogo.estado === "pre" && item.jogo.ini - Date.now() > 20 * 3600 * 1000;
-      cabeca.appendChild(h("div.hint", { text: longe ? "Onde assistir aparece aqui perto do jogo, quando o guia dos canais trouxer a programação do dia."
-        : item.jogo && item.jogo.estado === "post" ? "Jogo encerrado." : "Não achei este jogo no guia dos canais. Procure na aba Canais." }));
+      const msg = trans.length
+        ? "Transmissão oficial exibida acima (sem canal correspondente no guia IPTV)."
+        : longe ? "Onde assistir aparece aqui perto do jogo, quando o guia dos canais trouxer a programação do dia."
+        : item.jogo && item.jogo.estado === "post" ? "Jogo encerrado."
+        : "Não achei este jogo no guia dos canais. Procure na aba Canais.";
+      cabeca.appendChild(h("div.hint", { text: msg }));
       return;
     }
-    cabeca.appendChild(h("div.hint", { text: "Onde assistir · OK no canal para abrir" }));
+    cabeca.appendChild(h("div.hint", { text: sugeridos ? "Canais relacionados · OK para abrir" : "Onde assistir · OK no canal para abrir" }));
     const fila = [];
     opcoes.forEach((o) => o.opcoes.forEach((op) => fila.push(op.canal)));
     opcoes.forEach((o) => {
@@ -764,6 +848,8 @@ function TelaEventos() {
   };
 
   const linhaJogo = (j) => {
+    const trans = Placar.transmissoes(j);
+    const emissoras = trans.map((tr) => tr.n).slice(0, 2).join(" · ");
     const el = h("div.evento.jogo.foc" + (j.estado === "in" ? ".vivo" : ""), { "data-chave": "j" + j.id }, [
       h("div.ev-hora", { text: j.estado === "in" ? (j.detalhe || "AO VIVO") : j.estado === "post" ? "FIM" : hora(j.ini) }),
       h("div.ev-times", null, [
@@ -771,7 +857,10 @@ function TelaEventos() {
         h("div.ev-placar", { text: placar(j) }),
         h("div.lado.fora", null, [h("span", { text: j.fora.nome }), escudo(j.fora.logo, j.fora.nome)]),
       ]),
-      h("div.ev-liga", { text: j.liga }),
+      h("div.ev-meta", null, [
+        h("div.ev-liga", { text: j.liga }),
+        emissoras ? h("div.ev-onde", { text: emissoras }) : null,
+      ]),
     ]);
     el._item = { jogo: j };
     return el;
@@ -1640,7 +1729,7 @@ async function iniciar() {
     else if (!document.hidden && Player.ativo) { const p = Player.video.play(); if (p && p.catch) p.catch(() => {}); }
   });
   await Cache.abrir();
-  if (!Cat.token()) { pedirChave(); return; }
+  if (!Cat.token() && !/^http:\/\/(127\.0\.0\.1|localhost|192\.168\.|10\.)/i.test(SERVIDOR)) { pedirChave(); return; }
   carregarCatalogo();
 }
 

@@ -256,9 +256,17 @@ html, body {
 .evento .lado.fora { justify-content: flex-end; }
 .evento .lado.fora span { margin: 0 10px 0 0; text-align: right; }
 .evento .ev-placar { flex: none; width: 92px; text-align: center; font-size: 22px; font-weight: 800; color: var(--brand); }
-.evento .ev-liga { flex: none; width: 120px; text-align: right; font-size: 15px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-left: 10px; }
+.evento .ev-meta { flex: none; width: 150px; text-align: right; margin-left: 10px; overflow: hidden; }
+.evento .ev-liga { font-size: 14px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.evento .ev-onde { font-size: 14px; font-weight: 700; color: var(--brand); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 3px; }
 .evento.focus .lado, .evento.focus .ev-liga { color: #000; }
-.evento.focus .ev-placar { color: #006b7a; }
+.evento.focus .ev-placar, .evento.focus .ev-onde { color: #006b7a; }
+.trans-box { margin-top: 12px; }
+.trans-tit { font-size: 14px; letter-spacing: 1px; text-transform: uppercase; color: var(--text-faint); margin-bottom: 8px; }
+.trans-lista { display: flex; flex-wrap: wrap; gap: 8px; }
+.trans-chip { display: inline-flex; align-items: center; padding: 6px 12px; border-radius: 10px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.14); }
+.trans-logo { width: 28px; height: 28px; border-radius: 6px; background: #fff center/contain no-repeat; margin-right: 9px; flex: none; display: inline-block; }
+.trans-nome { font-size: 17px; font-weight: 700; color: #fff; }
 .escudo { width: 40px; height: 40px; flex: none; background: center/contain no-repeat; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 800; color: var(--text-dim); }
 .evcabeca .liga { display: flex; align-items: center; }
 .evcabeca .ligalogo { width: 30px; height: 30px; background: center/contain no-repeat; margin-right: 10px; display: inline-block; }
