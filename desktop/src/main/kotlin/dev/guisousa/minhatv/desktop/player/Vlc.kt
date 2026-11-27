@@ -36,10 +36,17 @@ object Vlc {
                 Log.w("VLC embutido não encontrado ($res); procurando o VLC instalado")
             }
             if (!NativeDiscovery().discover()) Log.w("NativeDiscovery não achou o VLC")
-            MediaPlayerFactory(
+            val base = arrayOf(
                 "--quiet", "--no-video-title-show", "--no-osd", "--no-snapshot-preview", "--no-stats",
                 "--no-sub-autodetect-file", "--avcodec-hw=any", "--aout=mmdevice,directsound",
-            ).also { Log.i("libVLC ${it.application().version()}") }
+            )
+            // Filme com áudio Dolby (AC3/E-AC3/DTS): sem isto o VLC manda o som "cru" para a saída (passthrough) e
+            // monitor/TV no HDMI que diz aceitar mas não decodifica fica mudo. Assim o VLC sempre decodifica.
+            val semPassthrough = arrayOf("--mmdevice-passthrough=0", "--no-spdif")
+            runCatching { MediaPlayerFactory(*base, *semPassthrough) }
+                .onFailure { Log.w("VLC não aceitou as opções de áudio; abrindo sem elas", it) }
+                .getOrElse { MediaPlayerFactory(*base) }
+                .also { Log.i("libVLC ${it.application().version()}") }
         } catch (t: Throwable) {
             Log.e("não consegui carregar o VLC", t)
             erro = "Não consegui iniciar o player (VLC): ${t.message}"
